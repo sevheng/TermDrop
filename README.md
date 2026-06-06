@@ -1,7 +1,48 @@
-# Tauri + Vue 3
+# SSH Client
 
-This template should help get you started developing with Tauri + Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+A lightweight SSH client and SFTP browser built with Tauri v2 and Vue 3.
 
-## Recommended IDE Setup
+## Features
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- **Multi-tab SSH terminal** powered by xterm.js with ANSI support
+- **SFTP file browser** with upload, download, delete, rename, and progress bars
+- **Host configuration** management with OS keyring password storage
+- **Persistent settings** for font size, theme, and download path
+- **Automatic reconnect** on connection loss with keep-alive
+
+## Tech Stack
+
+- **Shell:** Tauri v2 (Rust)
+- **UI:** Vue 3 + TailwindCSS + Pinia
+- **Terminal:** xterm.js + xterm-addon-fit
+- **SSH/SFTP:** ssh2 crate
+- **Storage:** SQLite + OS keyring
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://rustup.rs/) stable
+
+## Development
+
+```bash
+npm install
+npm run tauri dev
+```
+
+## Build
+
+```bash
+npm run tauri build
+```
+
+Output:
+- Windows: `src-tauri/target/release/bundle/msi/*.msi`
+- macOS: `src-tauri/target/release/bundle/dmg/*.dmg`
+- Linux: `src-tauri/target/release/bundle/appimage/*.AppImage` or `*.deb`
+
+## Security
+
+- Passwords are stored in the OS keyring only — never in SQLite
+- No cloud sync or telemetry
+- All data stays local
