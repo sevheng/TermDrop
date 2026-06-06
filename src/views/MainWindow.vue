@@ -20,22 +20,34 @@
         </button>
       </div>
       
-      <!-- Terminal area -->
-      <div class="flex-1 relative">
-        <TerminalTab
-          v-if="store.activeTabId"
-          :key="store.activeTabId"
-          :sessionId="store.activeTabId"
-        />
-        <div
-          v-else
-          class="flex items-center justify-center h-full text-gray-500"
-        >
-          <div class="text-center">
-            <TerminalIcon :size="48" class="mx-auto mb-4 opacity-50" />
-            <p class="text-lg">Select a host to connect</p>
+      <!-- Terminal + SFTP area -->
+      <div class="flex-1 flex overflow-hidden">
+        <!-- Terminal tabs — v-show preserves xterm instances -->
+        <div class="flex-1 relative">
+          <TerminalTab
+            v-for="tab in store.tabs"
+            :key="tab.id"
+            :sessionId="tab.id"
+            :class="tab.id === store.activeTabId ? 'block' : 'hidden'"
+            class="w-full h-full"
+          />
+          <div
+            v-if="!store.activeTabId"
+            class="flex items-center justify-center h-full text-gray-500"
+          >
+            <div class="text-center">
+              <TerminalIcon :size="48" class="mx-auto mb-4 opacity-50" />
+              <p class="text-lg">Select a host to connect</p>
+            </div>
           </div>
         </div>
+        
+        <!-- SFTP Panel -->
+        <SftpPanel
+          v-if="store.activeTab?.sftpSessionId"
+          :sftpSessionId="store.activeTab.sftpSessionId"
+          class="w-80 border-l border-gray-700 shrink-0"
+        />
       </div>
     </div>
   </div>
@@ -44,6 +56,7 @@
 <script setup>
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
+import SftpPanel from '../components/SftpPanel.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon } from 'lucide-vue-next'
 
