@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State, Window};
+use tauri::{Emitter, Manager, State, Window};
 use rusqlite::Connection;
 
 mod db;
@@ -73,6 +73,7 @@ async fn ssh_connect(
     let handle = ssh::connect(
         window,
         session_id.clone(),
+        host_id,
         host.host,
         host.port as u16,
         host.username,
@@ -106,6 +107,55 @@ fn ssh_disconnect(
     if let Some(session) = sessions.remove(&session_id) {
         let _ = session.disconnect_tx.send(());
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn ssh_reconnect(
+    window: Window,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let host_id = {
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        let session = sessions.get(&session_id).ok_or("Session not found")?;
+        session.host_id
+    };
+
+    let host = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::get_host_by_id(&conn, host_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Host not found")?
+    };
+
+    let password = crypto::get_password(host_id)?;
+
+    // Remove old session
+    {
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        if let Some(old) = sessions.remove(&session_id) {
+            let _ = old.disconnect_tx.send(());
+        }
+    }
+
+    // Open new connection with same session_id
+    let handle = ssh::connect(
+        window.clone(),
+        session_id.clone(),
+        host_id,
+        host.host,
+        host.port as u16,
+        host.username,
+        password,
+    )?;
+
+    {
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        sessions.insert(session_id.clone(), handle);
+    }
+
+    let _ = window.emit("ssh-reconnected", session_id);
     Ok(())
 }
 
@@ -263,6 +313,7 @@ fn main() {
             ssh_connect,
             ssh_write,
             ssh_disconnect,
+            ssh_reconnect,
             sftp_connect,
             sftp_list,
             sftp_upload,

@@ -5,6 +5,7 @@ use tauri::{Emitter, Window};
 use tokio::sync::mpsc;
 
 pub struct SshSessionHandle {
+    pub host_id: i64,
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
 }
@@ -12,6 +13,7 @@ pub struct SshSessionHandle {
 pub fn connect(
     window: Window,
     session_id: String,
+    host_id: i64,
     host: String,
     port: u16,
     username: String,
@@ -79,6 +81,7 @@ pub fn connect(
         let _ = window.emit("ssh-connected", session_id.clone());
 
         let mut buf = [0u8; 4096];
+        let mut last_write = std::time::Instant::now();
         loop {
             if disconnect_rx.try_recv().is_ok() {
                 break;
@@ -95,6 +98,12 @@ pub fn connect(
                         Err(_) => break,
                     }
                 }
+                last_write = std::time::Instant::now();
+            }
+
+            if last_write.elapsed().as_secs() > 30 {
+                let _ = channel.write(b"\r");
+                last_write = std::time::Instant::now();
             }
 
             match channel.read(&mut buf) {
@@ -121,5 +130,5 @@ pub fn connect(
         let _ = window.emit("ssh-disconnected", session_id);
     });
 
-    Ok(SshSessionHandle { write_tx, disconnect_tx })
+    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx })
 }
