@@ -1,14 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Manager, State, Window};
 use rusqlite::Connection;
 
 mod db;
 mod crypto;
+mod ssh;
 
 pub struct AppState {
     db: Mutex<Connection>,
+    sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
 }
 
 #[tauri::command]
@@ -48,6 +51,61 @@ fn store_password(host_id: i64, password: String) -> Result<(), String> {
     crypto::store_password(host_id, &password)
 }
 
+#[tauri::command]
+async fn ssh_connect(
+    window: Window,
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<String, String> {
+    let host = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::get_host_by_id(&conn, host_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Host not found")?
+    };
+
+    let password = crypto::get_password(host_id)?;
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let handle = ssh::connect(
+        window,
+        session_id.clone(),
+        host.host,
+        host.port as u16,
+        host.username,
+        password,
+    )?;
+
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions.insert(session_id.clone(), handle);
+
+    Ok(session_id)
+}
+
+#[tauri::command]
+fn ssh_write(
+    state: State<'_, AppState>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get(&session_id).ok_or("Session not found")?;
+    session.write_tx.send(data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn ssh_disconnect(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(session) = sessions.remove(&session_id) {
+        let _ = session.disconnect_tx.send(());
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -59,6 +117,7 @@ fn main() {
                         .join("ssh-client.db")
                 ).expect("Failed to open database"),
             ),
+            sessions: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -73,6 +132,9 @@ fn main() {
             delete_host,
             get_host_by_id,
             store_password,
+            ssh_connect,
+            ssh_write,
+            ssh_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
