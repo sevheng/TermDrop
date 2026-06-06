@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ssh-client",
   "version": "0.1.0",
-  "identifier": "com.root.ssh-client",
+  "identifier": "com.termdrop.ssh-client",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "ssh-client",
-        "width": 800,
-        "height": 600
+        "title": "SSH Client",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
       }
     ],
     "security": {
