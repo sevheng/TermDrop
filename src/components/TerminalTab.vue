@@ -1,5 +1,22 @@
 <template>
-  <div ref="terminalContainer" class="w-full h-full bg-gray-900"></div>
+  <div class="relative w-full h-full">
+    <div ref="terminalContainer" class="w-full h-full bg-gray-900"></div>
+
+    <!-- Disconnect banner -->
+    <div
+      v-if="isDisconnected"
+      class="absolute inset-0 bg-gray-900/90 flex flex-col items-center justify-center z-10"
+    >
+      <p class="text-red-400 text-lg font-semibold mb-4">Connection lost</p>
+      <button
+        @click="reconnect"
+        :disabled="isReconnecting"
+        class="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded text-sm font-medium"
+      >
+        {{ isReconnecting ? 'Reconnecting...' : 'Reconnect' }}
+      </button>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -22,7 +39,12 @@ let term = null
 let fitAddon = null
 let unlistenData = null
 let unlistenError = null
+let unlistenDisconnected = null
+let unlistenReconnected = null
 let resizeObserver = null
+
+const isDisconnected = ref(false)
+const isReconnecting = ref(false)
 
 onMounted(async () => {
   const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
@@ -71,6 +93,22 @@ onMounted(async () => {
     }
   })
 
+  // Listen for SSH disconnections
+  unlistenDisconnected = await listen('ssh-disconnected', (event) => {
+    if (event.payload === props.sessionId) {
+      isDisconnected.value = true
+    }
+  })
+
+  // Listen for SSH reconnections
+  unlistenReconnected = await listen('ssh-reconnected', (event) => {
+    if (event.payload === props.sessionId) {
+      isDisconnected.value = false
+      isReconnecting.value = false
+      term.clear()
+    }
+  })
+
   // Send keystrokes to SSH
   term.onData((data) => {
     invoke('ssh_write', { sessionId: props.sessionId, data }).catch((err) => {
@@ -87,9 +125,21 @@ onMounted(async () => {
   resizeObserver.observe(terminalContainer.value)
 })
 
+async function reconnect() {
+  isReconnecting.value = true
+  try {
+    await invoke('ssh_reconnect', { sessionId: props.sessionId })
+  } catch (err) {
+    console.error('Reconnect failed:', err)
+    isReconnecting.value = false
+  }
+}
+
 onUnmounted(() => {
   if (unlistenData) unlistenData()
   if (unlistenError) unlistenError()
+  if (unlistenDisconnected) unlistenDisconnected()
+  if (unlistenReconnected) unlistenReconnected()
   if (resizeObserver) resizeObserver.disconnect()
   if (term) term.dispose()
 })
