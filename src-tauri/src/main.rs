@@ -219,6 +219,18 @@ fn sftp_disconnect(
     Ok(())
 }
 
+#[tauri::command]
+fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_setting(&conn, &key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::set_setting(&conn, &key, &value).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -238,6 +250,7 @@ fn main() {
             let state = app.state::<AppState>();
             let conn = state.db.lock().unwrap();
             db::init_db(&conn).expect("Failed to initialize database");
+            db::init_settings(&conn).expect("Failed to initialize settings");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -257,6 +270,8 @@ fn main() {
             sftp_delete,
             sftp_rename,
             sftp_disconnect,
+            get_setting,
+            set_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
