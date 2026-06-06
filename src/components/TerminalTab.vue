@@ -25,9 +25,12 @@ let unlistenError = null
 let resizeObserver = null
 
 onMounted(async () => {
+  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
+  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
+
   term = new Terminal({
     cursorBlink: true,
-    fontSize: 14,
+    fontSize,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
       background: '#111827',
