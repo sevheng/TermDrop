@@ -1,5 +1,5 @@
 <template>
-  <div class="w-64 h-full bg-gray-800 border-r border-gray-700 flex flex-col">
+  <div class="h-full w-full flex flex-col">
     <div class="p-4 border-b border-gray-700 flex items-center justify-between">
       <h2 class="text-sm font-semibold text-gray-200">Hosts</h2>
       <button @click="openModal()" class="text-gray-400 hover:text-white">
@@ -7,12 +7,36 @@
       </button>
     </div>
 
+    <!-- Search -->
+    <div class="px-3 py-2 border-b border-gray-700">
+      <div class="relative">
+        <Search :size="14" class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search hosts..."
+          class="w-full bg-gray-700 border border-gray-600 rounded pl-7 pr-2 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+    </div>
+
     <div class="flex-1 overflow-y-auto p-2">
+      <!-- Empty state -->
+      <div v-if="filteredHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-gray-500">
+        <Server :size="32" class="mb-2 opacity-50" />
+        <p class="text-sm">
+          {{ store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts' }}
+        </p>
+        <p v-if="store.hosts.length === 0" class="text-xs mt-1">
+          Click + to add your first host
+        </p>
+      </div>
+
       <div
-        v-for="host in store.hosts"
+        v-for="host in filteredHosts"
         :key="host.id"
         class="group flex items-center justify-between p-2 rounded hover:bg-gray-700 cursor-pointer"
-        @click="store.connect(host.id)"
+        @click="connectHost(host.id)"
       >
         <div class="flex items-center gap-2 min-w-0">
           <Server :size="14" class="text-gray-400 shrink-0" />
@@ -25,139 +49,129 @@
           <button @click.stop="editHost(host)" class="text-gray-400 hover:text-white p-1">
             <Pencil :size="12" />
           </button>
-          <button @click.stop="deleteHost(host.id)" class="text-gray-400 hover:text-red-400 p-1">
+          <button @click.stop="deleteHost(host)" class="text-gray-400 hover:text-red-400 p-1">
             <Trash2 :size="12" />
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Add/Edit Modal -->
-    <div v-if="showModal" class="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div class="bg-gray-800 rounded-lg p-6 w-96 border border-gray-700">
-        <h3 class="text-lg font-semibold text-white mb-4">{{ editingId ? 'Edit Host' : 'Add Host' }}</h3>
-        
-        <div class="space-y-3">
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">Name</label>
-            <input v-model="form.name" type="text" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-          </div>
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">Host</label>
-            <input v-model="form.host" type="text" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-          </div>
-          <div class="flex gap-3">
-            <div class="flex-1">
-              <label class="block text-xs text-gray-400 mb-1">Port</label>
-              <input v-model.number="form.port" type="number" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-            </div>
-            <div class="flex-1">
-              <label class="block text-xs text-gray-400 mb-1">Username</label>
-              <input v-model="form.username" type="text" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-            </div>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">Auth Type</label>
-            <select v-model="form.auth_type" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-              <option value="password">Password</option>
-              <option value="key">SSH Key</option>
-            </select>
-          </div>
-          <div v-if="form.auth_type === 'password'">
-            <label class="block text-xs text-gray-400 mb-1">Password</label>
-            <input v-model="form.password" type="password" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-          </div>
-          <div v-if="form.auth_type === 'key'">
-            <label class="block text-xs text-gray-400 mb-1">Key Path</label>
-            <input v-model="form.key_path" type="text" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="~/.ssh/id_rsa" />
-          </div>
-        </div>
+    <HostModal
+      :show="showModal"
+      :host="editingHost"
+      @close="showModal = false"
+      @save="handleSave"
+    />
 
-        <div class="flex justify-end gap-2 mt-6">
-          <button @click="showModal = false" class="px-4 py-2 text-sm text-gray-300 hover:text-white">Cancel</button>
-          <button @click="saveHost" class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded">Save</button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      :show="confirmDialog.show"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :danger="confirmDialog.danger"
+      confirm-text="Delete"
+      @confirm="confirmDialog.onConfirm"
+      @cancel="confirmDialog.show = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Plus, Server, Pencil, Trash2 } from 'lucide-vue-next'
+import { Plus, Server, Pencil, Trash2, Search } from 'lucide-vue-next'
+import HostModal from './HostModal.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 const store = useConnectionStore()
 
 const showModal = ref(false)
-const editingId = ref(null)
-const form = ref({
-  name: '',
-  host: '',
-  port: 22,
-  username: '',
-  auth_type: 'password',
-  key_path: '',
-  password: '',
+const editingHost = ref(null)
+const searchQuery = ref('')
+const confirmDialog = ref({
+  show: false,
+  title: '',
+  message: '',
+  danger: false,
+  onConfirm: () => {},
 })
+
+const filteredHosts = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return store.hosts
+  return store.hosts.filter(h =>
+    h.name.toLowerCase().includes(q) ||
+    h.host.toLowerCase().includes(q) ||
+    h.username.toLowerCase().includes(q)
+  )
+})
+
+function openConfirm(options) {
+  confirmDialog.value = {
+    show: true,
+    title: options.title || 'Confirm',
+    message: options.message || '',
+    danger: options.danger || false,
+    onConfirm: () => {
+      confirmDialog.value.show = false
+      options.onConfirm()
+    },
+  }
+}
 
 onMounted(() => {
   store.loadHosts()
 })
 
 function openModal() {
-  editingId.value = null
-  form.value = {
-    name: '',
-    host: '',
-    port: 22,
-    username: '',
-    auth_type: 'password',
-    key_path: '',
-    password: '',
-  }
+  editingHost.value = null
   showModal.value = true
 }
 
 function editHost(host) {
-  editingId.value = host.id
-  form.value = {
-    name: host.name,
-    host: host.host,
-    port: host.port,
-    username: host.username,
-    auth_type: host.auth_type,
-    key_path: host.key_path || '',
-    password: '',
-  }
+  editingHost.value = host
   showModal.value = true
 }
 
-async function saveHost() {
-  const hostData = {
-    name: form.value.name,
-    host: form.value.host,
-    port: form.value.port,
-    username: form.value.username,
-    auth_type: form.value.auth_type,
-    key_path: form.value.key_path || null,
-  }
-
-  if (editingId.value) {
-    await store.updateHost(editingId.value, hostData)
+async function handleSave({ id, hostData, password }) {
+  if (id) {
+    await store.updateHost(id, hostData)
+    if (password) {
+      await store.storePassword(id, password).catch((err) => {
+        console.warn('Failed to store password in keyring:', err)
+      })
+    }
   } else {
-    const id = await store.addHost(hostData)
-    if (form.value.password && form.value.auth_type === 'password') {
-      await store.storePassword(id, form.value.password)
+    const newId = await store.addHost(hostData)
+    if (password) {
+      await store.storePassword(newId, password).catch((err) => {
+        console.warn('Failed to store password in keyring:', err)
+      })
     }
   }
   showModal.value = false
   await store.loadHosts()
 }
 
-async function deleteHost(id) {
-  if (confirm('Delete this host?')) {
-    await store.removeHost(id)
+async function connectHost(id) {
+  try {
+    await store.connect(id)
+  } catch (err) {
+    console.error('Connection failed:', err)
   }
+}
+
+function deleteHost(host) {
+  openConfirm({
+    title: 'Delete Host',
+    message: `Delete host "${host.name}" (${host.host})? This cannot be undone.`,
+    danger: true,
+    onConfirm: async () => {
+      const openTab = store.tabs.find(t => t.hostId === host.id)
+      if (openTab) {
+        await store.disconnect(openTab.id)
+      }
+      await store.removeHost(host.id)
+    },
+  })
 }
 </script>

@@ -8,6 +8,7 @@ export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
   const tabs = ref([])
   const activeTabId = ref(null)
+  const tabListeners = ref(new Map())
 
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value)
@@ -37,32 +38,90 @@ export const useConnectionStore = defineStore('connection', () => {
     await invoke('store_password', { hostId, password })
   }
 
-  async function connect(hostId) {
-    const sessionId = await invoke('ssh_connect', { hostId })
-    const sftpId = await invoke('sftp_connect', { hostId })
+  async function connect(hostId, providedPassword = null) {
     const host = hosts.value.find(h => h.id === hostId)
-    tabs.value.push({
+    const isKeyAuth = host?.auth_type === 'key'
+
+    let sessionId
+    const sshArgs = { hostId }
+    if (!isKeyAuth && providedPassword) {
+      sshArgs.password = providedPassword
+    }
+    try {
+      sessionId = await invoke('ssh_connect', sshArgs)
+    } catch (err) {
+      const errStr = String(err)
+      if (!isKeyAuth && (errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')) && !providedPassword) {
+        const password = window.prompt('Password not found in keyring. Enter password for this host:')
+        if (password) {
+          await storePassword(hostId, password).catch(() => {})
+          return connect(hostId, password)
+        }
+      }
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SSH connection failed: ' + err, type: 'error' } }))
+      throw err
+    }
+
+    const tab = {
       id: sessionId,
-      sftpSessionId: sftpId,
+      sftpSessionId: null,
       hostId,
       name: host?.name || host?.host || 'Unknown',
-    })
+      connected: true,
+    }
+    tabs.value.push(tab)
     activeTabId.value = sessionId
 
-    const unlisten = await listen('ssh-disconnected', (event) => {
-      if (event.payload === sessionId) {
-        tabs.value = tabs.value.filter(t => t.id !== sessionId)
-        if (activeTabId.value === sessionId) {
-          activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
-        }
-        unlisten()
+    // Try SFTP in background — don't block tab creation
+    try {
+      const sftpArgs = { hostId }
+      if (!isKeyAuth && providedPassword) {
+        sftpArgs.password = providedPassword
       }
+      const sftpId = await invoke('sftp_connect', sftpArgs)
+      const idx = tabs.value.findIndex(t => t.id === sessionId)
+      if (idx !== -1) {
+        tabs.value[idx] = { ...tabs.value[idx], sftpSessionId: sftpId }
+      }
+    } catch (err) {
+      console.warn('SFTP connection failed:', err)
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
+    }
+
+    const unlistenDisconnect = await listen('ssh-disconnected', (event) => {
+      if (event.payload === sessionId) {
+        const idx = tabs.value.findIndex(t => t.id === sessionId)
+        if (idx !== -1) {
+          tabs.value[idx] = { ...tabs.value[idx], connected: false }
+        }
+      }
+    })
+
+    const unlistenReconnected = await listen('ssh-reconnected', (event) => {
+      if (event.payload === sessionId) {
+        const idx = tabs.value.findIndex(t => t.id === sessionId)
+        if (idx !== -1) {
+          tabs.value[idx] = { ...tabs.value[idx], connected: true }
+        }
+      }
+    })
+
+    tabListeners.value.set(sessionId, {
+      disconnect: unlistenDisconnect,
+      reconnected: unlistenReconnected,
     })
 
     return sessionId
   }
 
   async function disconnect(sessionId) {
+    const listeners = tabListeners.value.get(sessionId)
+    if (listeners) {
+      listeners.disconnect()
+      listeners.reconnected()
+      tabListeners.value.delete(sessionId)
+    }
+
     const tab = tabs.value.find(t => t.id === sessionId)
     if (tab) {
       await invoke('sftp_disconnect', { sftpSessionId: tab.sftpSessionId }).catch(() => {})
@@ -94,7 +153,9 @@ export const useConnectionStore = defineStore('connection', () => {
     })
     if (!selected) return null
     const localPath = Array.isArray(selected) ? selected[0] : selected
-    await invoke('sftp_upload', { sftpSessionId, localPath, remotePath })
+    const fileName = localPath.split(/[\\/]/).pop()
+    const fullRemotePath = remotePath ? `${remotePath}/${fileName}` : fileName
+    await invoke('sftp_upload', { sftpSessionId, localPath, remotePath: fullRemotePath })
     return localPath
   }
 
@@ -108,6 +169,14 @@ export const useConnectionStore = defineStore('connection', () => {
 
   async function sftpRename(sftpSessionId, oldPath, newPath) {
     await invoke('sftp_rename', { sftpSessionId, oldPath, newPath })
+  }
+
+  async function sftpMkdir(sftpSessionId, remotePath) {
+    await invoke('sftp_mkdir', { sftpSessionId, remotePath })
+  }
+
+  async function sftpRmdir(sftpSessionId, remotePath) {
+    await invoke('sftp_rmdir', { sftpSessionId, remotePath })
   }
 
   return {
@@ -129,5 +198,7 @@ export const useConnectionStore = defineStore('connection', () => {
     sftpDownload,
     sftpDelete,
     sftpRename,
+    sftpMkdir,
+    sftpRmdir,
   }
 })

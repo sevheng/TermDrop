@@ -37,6 +37,23 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
         )",
         [],
     )?;
+
+    // Migrate old tables missing new columns
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(hosts)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !columns.contains(&"auth_type".to_string()) {
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN auth_type TEXT CHECK(auth_type IN ('password', 'key')) DEFAULT 'password'",
+            [],
+        )?;
+    }
+    if !columns.contains(&"key_path".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN key_path TEXT", [])?;
+    }
+
     Ok(())
 }
 

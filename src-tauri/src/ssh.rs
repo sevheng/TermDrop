@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::path::Path;
 use std::time::Duration;
 use ssh2::Session;
 use tauri::{Emitter, Window};
@@ -10,6 +11,16 @@ pub struct SshSessionHandle {
     pub disconnect_tx: mpsc::UnboundedSender<()>,
 }
 
+fn expand_key_path(key_path: &str) -> std::path::PathBuf {
+    if key_path.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&key_path[2..]))
+            .unwrap_or_else(|| Path::new(key_path).to_path_buf())
+    } else {
+        Path::new(key_path).to_path_buf()
+    }
+}
+
 pub fn connect(
     window: Window,
     session_id: String,
@@ -17,7 +28,8 @@ pub fn connect(
     host: String,
     port: u16,
     username: String,
-    password: String,
+    password: Option<String>,
+    key_path: Option<String>,
 ) -> Result<SshSessionHandle, String> {
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
@@ -33,6 +45,12 @@ pub fn connect(
             }
         };
 
+        if let Err(e) = tcp.set_nonblocking(true) {
+            let payload = serde_json::json!({"session_id": &session_id, "error": format!("set_nonblocking: {}", e)});
+            let _ = window.emit("ssh-error", payload);
+            return;
+        }
+
         let mut session = match Session::new() {
             Ok(s) => s,
             Err(e) => {
@@ -45,45 +63,120 @@ pub fn connect(
         session.set_tcp_stream(tcp);
         session.set_blocking(false);
 
-        if let Err(e) = session.handshake() {
-            let payload = serde_json::json!({"session_id": &session_id, "error": format!("handshake: {}", e)});
+        // Retry handshake in non-blocking mode
+        loop {
+            match session.handshake() {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"session_id": &session_id, "error": format!("handshake: {}", io_err)});
+                    let _ = window.emit("ssh-error", payload);
+                    return;
+                }
+            }
+        }
+
+        // Retry auth in non-blocking mode
+        if let Some(key_path) = key_path {
+            let expanded = expand_key_path(&key_path);
+            loop {
+                match session.userauth_pubkey_file(&username, None, &expanded, None) {
+                    Ok(()) => break,
+                    Err(e) => {
+                        let io_err: std::io::Error = e.into();
+                        if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        let payload = serde_json::json!({"session_id": &session_id, "error": format!("key auth: {}", io_err)});
+                        let _ = window.emit("ssh-error", payload);
+                        return;
+                    }
+                }
+            }
+        } else if let Some(password) = password {
+            loop {
+                match session.userauth_password(&username, &password) {
+                    Ok(()) => break,
+                    Err(e) => {
+                        let io_err: std::io::Error = e.into();
+                        if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        let payload = serde_json::json!({"session_id": &session_id, "error": format!("auth: {}", io_err)});
+                        let _ = window.emit("ssh-error", payload);
+                        return;
+                    }
+                }
+            }
+        } else {
+            let payload = serde_json::json!({"session_id": &session_id, "error": "no credentials provided"});
             let _ = window.emit("ssh-error", payload);
             return;
         }
 
-        if let Err(e) = session.userauth_password(&username, &password) {
-            let payload = serde_json::json!({"session_id": &session_id, "error": format!("auth: {}", e)});
-            let _ = window.emit("ssh-error", payload);
-            return;
-        }
-
-        let mut channel = match session.channel_session() {
-            Ok(c) => c,
-            Err(e) => {
-                let payload = serde_json::json!({"session_id": &session_id, "error": format!("channel: {}", e)});
-                let _ = window.emit("ssh-error", payload);
-                return;
+        // Retry channel session in non-blocking mode
+        let mut channel = loop {
+            match session.channel_session() {
+                Ok(c) => break c,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"session_id": &session_id, "error": format!("channel: {}", io_err)});
+                    let _ = window.emit("ssh-error", payload);
+                    return;
+                }
             }
         };
 
-        if let Err(e) = channel.request_pty("xterm-256color", None, None) {
-            let payload = serde_json::json!({"session_id": &session_id, "error": format!("pty: {}", e)});
-            let _ = window.emit("ssh-error", payload);
-            return;
+        loop {
+            match channel.request_pty("xterm-256color", None, None) {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"session_id": &session_id, "error": format!("pty: {}", io_err)});
+                    let _ = window.emit("ssh-error", payload);
+                    return;
+                }
+            }
         }
 
-        if let Err(e) = channel.shell() {
-            let payload = serde_json::json!({"session_id": &session_id, "error": format!("shell: {}", e)});
-            let _ = window.emit("ssh-error", payload);
-            return;
+        loop {
+            match channel.shell() {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"session_id": &session_id, "error": format!("shell: {}", io_err)});
+                    let _ = window.emit("ssh-error", payload);
+                    return;
+                }
+            }
         }
 
         let _ = window.emit("ssh-connected", session_id.clone());
 
         let mut buf = [0u8; 4096];
         let mut last_write = std::time::Instant::now();
+        let mut intentional_disconnect = false;
         loop {
             if disconnect_rx.try_recv().is_ok() {
+                intentional_disconnect = true;
                 break;
             }
 
@@ -127,7 +220,9 @@ pub fn connect(
         let _ = channel.wait_eof();
         let _ = channel.close();
         let _ = channel.wait_close();
-        let _ = window.emit("ssh-disconnected", session_id);
+        if !intentional_disconnect {
+            let _ = window.emit("ssh-disconnected", session_id);
+        }
     });
 
     Ok(SshSessionHandle { host_id, write_tx, disconnect_tx })

@@ -76,6 +76,9 @@ async function save() {
   await invoke('set_setting', { key: 'font_size', value: String(fontSize.value) })
   await invoke('set_setting', { key: 'theme', value: theme.value })
   await invoke('set_setting', { key: 'download_path', value: downloadPath.value })
+  window.dispatchEvent(new CustomEvent('terminal-settings-changed', {
+    detail: { fontSize: fontSize.value, theme: theme.value }
+  }))
   emit('saved', { fontSize: fontSize.value, theme: theme.value, downloadPath: downloadPath.value })
   emit('close')
 }

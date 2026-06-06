@@ -59,6 +59,7 @@ async fn ssh_connect(
     window: Window,
     state: State<'_, AppState>,
     host_id: i64,
+    password: Option<String>,
 ) -> Result<String, String> {
     let host = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -67,7 +68,17 @@ async fn ssh_connect(
             .ok_or("Host not found")?
     };
 
-    let password = crypto::get_password(host_id)?;
+    let (password, key_path) = match host.auth_type.as_str() {
+        "password" => {
+            let pw = match password {
+                Some(p) => Some(p),
+                None => Some(crypto::get_password(host_id)?),
+            };
+            (pw, None)
+        }
+        "key" => (None, host.key_path.clone()),
+        _ => (password, host.key_path.clone()),
+    };
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let handle = ssh::connect(
@@ -78,6 +89,7 @@ async fn ssh_connect(
         host.port as u16,
         host.username,
         password,
+        key_path,
     )?;
 
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -115,6 +127,7 @@ async fn ssh_reconnect(
     window: Window,
     state: State<'_, AppState>,
     session_id: String,
+    password: Option<String>,
 ) -> Result<(), String> {
     let host_id = {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -129,7 +142,17 @@ async fn ssh_reconnect(
             .ok_or("Host not found")?
     };
 
-    let password = crypto::get_password(host_id)?;
+    let (password, key_path) = match host.auth_type.as_str() {
+        "password" => {
+            let pw = match password {
+                Some(p) => Some(p),
+                None => Some(crypto::get_password(host_id)?),
+            };
+            (pw, None)
+        }
+        "key" => (None, host.key_path.clone()),
+        _ => (password, host.key_path.clone()),
+    };
 
     // Remove old session
     {
@@ -148,6 +171,7 @@ async fn ssh_reconnect(
         host.port as u16,
         host.username,
         password,
+        key_path,
     )?;
 
     {
@@ -163,6 +187,7 @@ async fn ssh_reconnect(
 async fn sftp_connect(
     state: State<'_, AppState>,
     host_id: i64,
+    password: Option<String>,
 ) -> Result<String, String> {
     let host = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -171,7 +196,17 @@ async fn sftp_connect(
             .ok_or("Host not found")?
     };
 
-    let password = crypto::get_password(host_id)?;
+    let (password, key_path) = match host.auth_type.as_str() {
+        "password" => {
+            let pw = match password {
+                Some(p) => Some(p),
+                None => Some(crypto::get_password(host_id)?),
+            };
+            (pw, None)
+        }
+        "key" => (None, host.key_path.clone()),
+        _ => (password, host.key_path.clone()),
+    };
 
     let sftp_id = uuid::Uuid::new_v4().to_string();
     let handle = sftp::sftp_connect(
@@ -179,6 +214,7 @@ async fn sftp_connect(
         host.port as u16,
         host.username,
         password,
+        key_path,
     )?;
 
     let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
@@ -237,6 +273,17 @@ async fn sftp_download(
 }
 
 #[tauri::command]
+fn sftp_realpath(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<String, String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
+    sftp::sftp_realpath(handle, &remote_path)
+}
+
+#[tauri::command]
 fn sftp_delete(
     state: State<'_, AppState>,
     sftp_session_id: String,
@@ -257,6 +304,28 @@ fn sftp_rename(
     let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
     sftp::sftp_rename(handle, &old_path, &new_path)
+}
+
+#[tauri::command]
+fn sftp_mkdir(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
+    sftp::sftp_mkdir(handle, &remote_path)
+}
+
+#[tauri::command]
+fn sftp_rmdir(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
+    sftp::sftp_rmdir(handle, &remote_path)
 }
 
 #[tauri::command]
@@ -320,6 +389,9 @@ fn main() {
             sftp_download,
             sftp_delete,
             sftp_rename,
+            sftp_mkdir,
+            sftp_rmdir,
+            sftp_realpath,
             sftp_disconnect,
             get_setting,
             set_setting,
