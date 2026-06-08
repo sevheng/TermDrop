@@ -49,15 +49,6 @@
           </button>
         </div>
         <div class="flex items-center shrink-0">
-          <button
-            v-if="store.activeTab"
-            @click="showPortForwards = !showPortForwards"
-            class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
-            :class="showPortForwards ? 'text-blue-600 dark:text-blue-400' : ''"
-            title="Port forwards"
-          >
-            <Network :size="14" />
-          </button>
           <button @click="showShortcuts = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
@@ -101,23 +92,55 @@
           class="border-l border-gray-200 shrink-0 bg-white flex flex-col dark:border-gray-700 dark:bg-gray-800"
           :style="{ width: sftpWidth + 'px' }"
         >
-          <PortForwardPanel
-            v-if="showPortForwards"
-            :hostId="store.activeTab.hostId"
-            @add="showForwardModal = true"
-            class="w-full h-full"
-          />
-          <template v-else>
-            <SftpPanel
-              v-if="store.activeTab.sftpSessionId"
-              :sftpSessionId="store.activeTab.sftpSessionId"
+          <!-- Panel tabs -->
+          <div class="flex border-b border-gray-200 dark:border-gray-700">
+            <button
+              @click="showPortForwards = false"
+              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
+              :class="!showPortForwards
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+            >
+              SFTP
+              <span
+                v-if="!showPortForwards"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-600 rounded-full dark:bg-blue-400"
+              />
+            </button>
+            <button
+              @click="showPortForwards = true"
+              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
+              :class="showPortForwards
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+            >
+              Tunnels
+              <span
+                v-if="showPortForwards"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-600 rounded-full dark:bg-blue-400"
+              />
+            </button>
+          </div>
+
+          <div class="flex-1 overflow-hidden">
+            <PortForwardPanel
+              v-if="showPortForwards"
+              :hostId="store.activeTab.hostId"
+              @add="showForwardModal = true"
               class="w-full h-full"
             />
-            <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-              <Loader2 :size="24" class="animate-spin mb-2" />
-              <span class="text-sm">Connecting SFTP...</span>
-            </div>
-          </template>
+            <template v-else>
+              <SftpPanel
+                v-if="store.activeTab.sftpSessionId"
+                :sftpSessionId="store.activeTab.sftpSessionId"
+                class="w-full h-full"
+              />
+              <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 h-full">
+                <Loader2 :size="24" class="animate-spin mb-2" />
+                <span class="text-sm">Connecting SFTP...</span>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -163,7 +186,7 @@ import SettingsPanel from '../components/SettingsPanel.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ShortcutsHelp from '../components/ShortcutsHelp.vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Network } from 'lucide-vue-next'
+import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 
 const store = useConnectionStore()
