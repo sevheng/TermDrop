@@ -133,6 +133,19 @@
                 class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
+            <button
+              @click="rightPanelTab = 'security'"
+              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
+              :class="rightPanelTab === 'security'
+                ? 'text-[#007acc]'
+                : 'text-[#858585] hover:text-[#cccccc]'"
+            >
+              Security
+              <span
+                v-if="rightPanelTab === 'security'"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
+              />
+            </button>
           </div>
 
           <div class="flex-1 overflow-hidden">
@@ -149,6 +162,12 @@
                 :key="'docker-' + store.activeTab.hostId"
                 :hostId="store.activeTab.hostId"
                 @exec="onDockerExec"
+                class="w-full h-full"
+              />
+              <SecurityPanel
+                v-else-if="rightPanelTab === 'security' && store.activeTab"
+                :key="'security-' + store.activeTab.hostId"
+                :hostId="store.activeTab.hostId"
                 class="w-full h-full"
               />
               <SftpPanel
@@ -215,6 +234,7 @@ const PortForwardModal = defineAsyncComponent(() => import('../components/PortFo
 const SettingsPanel = defineAsyncComponent(() => import('../components/SettingsPanel.vue'))
 const ShortcutsHelp = defineAsyncComponent(() => import('../components/ShortcutsHelp.vue'))
 const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel.vue'))
+const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityPanel.vue'))
 
 const store = useConnectionStore()
 const showSettings = ref(false)
