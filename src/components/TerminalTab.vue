@@ -127,7 +127,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -135,6 +135,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
+import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps({
@@ -146,7 +147,13 @@ const props = defineProps({
     type: Number,
     default: null,
   },
+  isActive: {
+    type: Boolean,
+    default: false,
+  },
 })
+
+const store = useConnectionStore()
 
 const terminalContainer = ref(null)
 const contextMenuEl = ref(null)
@@ -305,7 +312,7 @@ async function fetchSystemStatus() {
       invoke('ssh_exec', { hostId: props.hostId, command: 'nproc' }).catch(() => ''),
     ])
     const osParts = [osName, kernel, arch].filter(Boolean)
-    status.value = {
+    const data = {
       load,
       ram,
       disk,
@@ -313,6 +320,8 @@ async function fetchSystemStatus() {
       os: osParts.join(' · '),
       cores,
     }
+    status.value = data
+    store.setSystemStatus(props.hostId, data)
     statusError.value = ''
   } catch (err) {
     statusError.value = ''
@@ -322,7 +331,11 @@ async function fetchSystemStatus() {
 function startStatusPolling() {
   if (statusInterval) clearInterval(statusInterval)
   if (!props.hostId) return
-  fetchSystemStatus()
+  // Read from cache immediately instead of firing SSH execs
+  const cached = store.getSystemStatus(props.hostId)
+  if (cached) {
+    status.value = cached
+  }
   statusInterval = setInterval(fetchSystemStatus, 5000)
 }
 
@@ -353,10 +366,10 @@ async function initTerminal() {
   term.open(terminalContainer.value)
   fitAddon.fit()
 
-  // Delayed fit to handle flex layout settling
-  setTimeout(() => {
+  // Fit after flex layout settles
+  requestAnimationFrame(() => {
     if (fitAddon) fitAddon.fit()
-  }, 150)
+  })
 
   // Custom keyboard shortcuts
   term.attachCustomKeyEventHandler((e) => {
@@ -463,12 +476,6 @@ function startActiveOperations() {
   if (terminalContainer.value) {
     resizeObserver.observe(terminalContainer.value)
   }
-  // Fit on activation in case size changed while inactive
-  if (fitAddon) {
-    setTimeout(() => fitAddon.fit(), 50)
-  }
-  // Start status polling if already connected
-  startStatusPolling()
 }
 
 function stopActiveOperations() {
@@ -515,14 +522,6 @@ onMounted(async () => {
   startActiveOperations()
 })
 
-onActivated(() => {
-  startActiveOperations()
-})
-
-onDeactivated(() => {
-  stopActiveOperations()
-})
-
 onUnmounted(() => {
   disposeTerminal()
 })
@@ -531,6 +530,27 @@ onUnmounted(() => {
 watch(() => props.sessionId, (newId, oldId) => {
   if (term && newId !== oldId) {
     term.clear()
+  }
+})
+
+// Handle active state changes (tab switching)
+watch(() => props.isActive, (active) => {
+  if (!term) return
+  if (active) {
+    term.focus()
+    requestAnimationFrame(() => {
+      if (fitAddon) fitAddon.fit()
+    })
+    if (terminalContainer.value && resizeObserver) {
+      resizeObserver.observe(terminalContainer.value)
+    }
+    startStatusPolling()
+  } else {
+    term.blur()
+    stopStatusPolling()
+    if (resizeObserver) {
+      resizeObserver.disconnect()
+    }
   }
 })
 </script>
