@@ -80,6 +80,38 @@
       <span v-if="showColumns.perms" class="w-16 shrink-0 text-right ml-1.5">Perms</span>
     </div>
 
+    <!-- Quick filter -->
+    <div class="px-2 py-1 border-b border-[#3c3c3c]">
+      <input
+        v-model="filterQuery"
+        type="text"
+        placeholder="Filter files..."
+        class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-2 py-0.5 text-xs text-[#cccccc] focus:outline-none focus:border-[#007acc] placeholder-[#6e6e6e]"
+      />
+    </div>
+
+    <!-- Bulk actions toolbar -->
+    <div
+      v-if="selectedFiles.size > 0"
+      class="px-2 py-1 border-b border-[#3c3c3c] bg-[#094771] flex items-center justify-between"
+    >
+      <span class="text-xs text-[#cccccc]">{{ selectedFiles.size }} selected</span>
+      <div class="flex items-center gap-1.5">
+        <button @click="bulkDownload" class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-2 py-0.5 rounded">Download</button>
+        <button @click="bulkDelete" class="text-xs bg-[#f44336] hover:bg-[#ff6659] text-white px-2 py-0.5 rounded">Delete</button>
+        <button @click="clearSelection" class="text-xs text-[#cccccc] hover:text-white px-1.5 py-0.5">✕</button>
+      </div>
+    </div>
+
+    <!-- Edited files toolbar -->
+    <div
+      v-if="editingFiles.size > 0"
+      class="px-2 py-1 border-b border-[#3c3c3c] bg-[#cca700]/20 flex items-center justify-between"
+    >
+      <span class="text-xs text-[#cca700]">{{ editingFiles.size }} file{{ editingFiles.size > 1 ? 's' : '' }} being edited</span>
+      <button @click="uploadAllEdits" class="text-xs bg-[#cca700] hover:bg-[#ffd700] text-black px-2 py-0.5 rounded font-medium">Upload All</button>
+    </div>
+
     <!-- File list -->
     <div class="flex-1 overflow-y-auto relative">
       <div
@@ -88,18 +120,29 @@
       >
         Loading...
       </div>
-      <div v-else-if="sortedFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
-        Empty directory
+      <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
+        {{ sortedFiles.length === 0 ? 'Empty directory' : 'No matching files' }}
       </div>
       <div v-else>
         <div
-          v-for="file in sortedFiles"
+          v-for="(file, index) in filteredFiles"
           :key="file.path"
           class="flex items-center px-2 py-0.5 hover:bg-[#2a2d2e] cursor-pointer text-sm"
-          :class="file.is_dir ? 'text-[#007acc]' : 'text-[#cccccc]'"
-          @dblclick="file.is_dir && navigateTo(file.path)"
+          :class="[
+            file.is_dir ? 'text-[#007acc]' : 'text-[#cccccc]',
+            selectedFiles.has(file.path) ? 'bg-[#094771]' : ''
+          ]"
+          @click="handleFileClick(file, index, $event)"
+          @dblclick="file.is_dir ? navigateTo(file.path) : onPreviewFile(file)"
           @contextmenu.prevent="showContextMenu($event, file)"
         >
+          <input
+            type="checkbox"
+            :checked="selectedFiles.has(file.path)"
+            class="accent-[#007acc] mr-1.5 shrink-0"
+            @click.stop
+            @change="handleFileClick(file, index, { ctrlKey: true })"
+          />
           <Folder v-if="file.is_dir" :size="12" class="shrink-0 mr-1.5" />
           <FileText v-else :size="12" class="shrink-0 mr-1.5 text-[#6e6e6e]" />
           <span class="truncate flex-1 min-w-0">{{ file.name }}</span>
@@ -117,7 +160,10 @@
       class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[8rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <button @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
+      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onPreview" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Preview</button>
+      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onEdit" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Edit</button>
+      <button v-if="contextMenu.file && contextMenu.file.is_dir" @click="onDownloadDir" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Folder</button>
+      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
       <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Copy Path</button>
       <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Rename</button>
       <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete</button>
@@ -143,6 +189,26 @@
       @cancel="promptDialog.show = false"
     />
 
+    <!-- File preview modal -->
+    <div
+      v-if="previewModal.show"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="previewModal.show = false"
+    >
+      <div class="bg-[#252526] border border-[#3c3c3c] rounded shadow-xl w-[40rem] h-[30rem] flex flex-col max-w-[90vw] max-h-[80vh]">
+        <div class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c]">
+          <span class="text-xs text-[#cccccc]">Preview: {{ previewModal.fileName }}</span>
+          <button @click="previewModal.show = false" class="text-[#858585] hover:text-[#cccccc]">×</button>
+        </div>
+        <div class="flex-1 overflow-auto p-3">
+          <div v-if="previewModal.loading" class="flex items-center justify-center h-full text-[#858585] text-sm">
+            Loading...
+          </div>
+          <pre v-else class="text-[11px] text-[#cccccc] font-mono whitespace-pre-wrap break-all">{{ previewModal.content }}</pre>
+        </div>
+      </div>
+    </div>
+
     <!-- Progress toasts -->
     <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] p-2 space-y-2">
       <div v-for="t in transfers" :key="t.file" class="text-xs">
@@ -164,6 +230,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
@@ -190,6 +257,9 @@ const showColumns = ref({
   modified: true,
   perms: true,
 })
+const filterQuery = ref('')
+const selectedFiles = ref(new Set())
+const lastSelectedIndex = ref(-1)
 let unlistenProgress = null
 let unlistenFileDrop = null
 
@@ -209,6 +279,15 @@ const promptDialog = ref({
   defaultValue: '',
   onConfirm: () => {},
 })
+
+const previewModal = ref({
+  show: false,
+  fileName: '',
+  content: '',
+  loading: false,
+})
+
+const editingFiles = ref(new Map()) // localPath -> { remotePath, lastModified, intervalId }
 
 function openConfirm(options) {
   confirmDialog.value = {
@@ -275,6 +354,12 @@ const sortedFiles = computed(() => {
     return sortOrder.value === 'asc' ? cmp : -cmp
   })
   return list
+})
+
+const filteredFiles = computed(() => {
+  const q = filterQuery.value.trim().toLowerCase()
+  if (!q) return sortedFiles.value
+  return sortedFiles.value.filter(f => f.name.toLowerCase().includes(q))
 })
 
 function setSort(key) {
@@ -352,6 +437,111 @@ function closeMenu() {
   showColumnMenu.value = false
 }
 
+function clearSelection() {
+  selectedFiles.value.clear()
+  lastSelectedIndex.value = -1
+}
+
+function handleFileClick(file, index, event) {
+  if (event.ctrlKey || event.metaKey) {
+    // Ctrl/Cmd + click: toggle
+    if (selectedFiles.value.has(file.path)) {
+      selectedFiles.value.delete(file.path)
+    } else {
+      selectedFiles.value.add(file.path)
+    }
+    lastSelectedIndex.value = index
+  } else if (event.shiftKey && lastSelectedIndex.value >= 0) {
+    // Shift + click: range select
+    const start = Math.min(lastSelectedIndex.value, index)
+    const end = Math.max(lastSelectedIndex.value, index)
+    for (let i = start; i <= end; i++) {
+      selectedFiles.value.add(filteredFiles.value[i].path)
+    }
+  } else {
+    // Plain click: select single, clear others
+    clearSelection()
+    selectedFiles.value.add(file.path)
+    lastSelectedIndex.value = index
+  }
+}
+
+async function bulkDelete() {
+  const paths = Array.from(selectedFiles.value)
+  const count = paths.length
+  openConfirm({
+    title: 'Delete Selected',
+    message: `Delete ${count} selected item${count > 1 ? 's' : ''}? This cannot be undone.`,
+    danger: true,
+    onConfirm: async () => {
+      let deleted = 0
+      let failed = 0
+      for (const path of paths) {
+        const file = files.value.find(f => f.path === path)
+        if (!file) continue
+        try {
+          if (file.is_dir) {
+            await store.sftpRmdir(props.sftpSessionId, path)
+          } else {
+            await store.sftpDelete(props.sftpSessionId, path)
+          }
+          deleted++
+        } catch (e) {
+          console.error('Delete failed:', e)
+          failed++
+        }
+      }
+      clearSelection()
+      await loadFiles()
+      if (failed > 0) {
+        showToast(`Deleted ${deleted}, failed ${failed}`, 'warning')
+      } else {
+        showToast(`Deleted ${deleted} item${deleted > 1 ? 's' : ''}`, 'success')
+      }
+    },
+  })
+}
+
+async function uploadAllEdits() {
+  for (const [localPath, edit] of editingFiles.value) {
+    try {
+      await invoke('sftp_upload', {
+        sftpSessionId: props.sftpSessionId,
+        localPath,
+        remotePath: edit.remotePath,
+      })
+      showToast(`Uploaded ${edit.fileName}`, 'success')
+    } catch (e) {
+      console.error('Upload edit failed:', e)
+      showToast(`Upload failed for ${edit.fileName}: ${e}`, 'error')
+    }
+  }
+  editingFiles.value.clear()
+}
+
+async function bulkDownload() {
+  const paths = Array.from(selectedFiles.value)
+  let completed = 0
+  let failed = 0
+  for (const path of paths) {
+    const file = files.value.find(f => f.path === path)
+    if (!file || file.is_dir) continue
+    try {
+      await store.sftpDownload(props.sftpSessionId, path)
+      completed++
+    } catch (e) {
+      console.error('Download failed:', e)
+      failed++
+    }
+  }
+  clearSelection()
+  if (failed > 0) {
+    showToast(`Downloaded ${completed}, failed ${failed}`, 'warning')
+  } else {
+    showToast(`Downloaded ${completed} file${completed > 1 ? 's' : ''}`, 'success')
+  }
+}
+
 onMounted(async () => {
   // Load saved column visibility
   const saved = localStorage.getItem('sftp-columns')
@@ -399,6 +589,8 @@ onUnmounted(() => {
   if (unlistenFileDrop) unlistenFileDrop()
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('contextmenu', closeMenu, true)
+  // Stop all edit polling intervals
+  editingFiles.value.clear()
 })
 
 watch(() => props.sftpSessionId, async () => {
@@ -423,12 +615,16 @@ async function loadFiles() {
 }
 
 function navigateTo(path) {
+  clearSelection()
+  filterQuery.value = ''
   currentPath.value = path
   loadFiles()
 }
 
 function goUp() {
   if (currentPath.value === '/') return
+  clearSelection()
+  filterQuery.value = ''
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()
   currentPath.value = parts.length === 0 ? '/' : '/' + parts.join('/')
@@ -453,6 +649,19 @@ async function onDownload() {
   } catch (e) {
     console.error('Download failed:', e)
     showToast('Download failed: ' + e, 'error')
+  }
+}
+
+async function onDownloadDir() {
+  const file = contextMenu.value.file
+  if (!file || !file.is_dir) return
+  contextMenu.value.show = false
+  try {
+    const savedPath = await invoke('sftp_download_dir', { sftpSessionId: props.sftpSessionId, remotePath: file.path })
+    showToast(`Downloaded folder to ${savedPath}`, 'success')
+  } catch (e) {
+    console.error('Download folder failed:', e)
+    showToast('Download folder failed: ' + e, 'error')
   }
 }
 
@@ -514,6 +723,77 @@ async function copyRemotePath() {
   } catch (e) {
     console.warn('Copy path failed:', e)
     showToast('Failed to copy path', 'error')
+  }
+}
+
+async function onPreviewFile(file) {
+  if (!file || file.is_dir) return
+  previewModal.value = { show: true, fileName: file.name, content: '', loading: true }
+  try {
+    const content = await invoke('sftp_read_file', { sftpSessionId: props.sftpSessionId, remotePath: file.path })
+    previewModal.value.content = content
+  } catch (e) {
+    console.error('Preview failed:', e)
+    previewModal.value.content = `Error: ${e}`
+  } finally {
+    previewModal.value.loading = false
+  }
+}
+
+async function onPreview() {
+  const file = contextMenu.value.file
+  if (!file || file.is_dir) return
+  contextMenu.value.show = false
+  await onPreviewFile(file)
+}
+
+async function onEdit() {
+  const file = contextMenu.value.file
+  if (!file || file.is_dir) return
+  contextMenu.value.show = false
+  try {
+    const localPath = await invoke('sftp_edit_file', {
+      sftpSessionId: props.sftpSessionId,
+      remotePath: file.path,
+    })
+    // Open in system editor
+    await openPath(localPath)
+    showToast(`Opened ${file.name} in editor`, 'success')
+
+    // Start polling for changes
+    const startTime = Math.floor(Date.now() / 1000)
+    editingFiles.value.set(localPath, {
+      remotePath: file.path,
+      lastModified: startTime,
+      fileName: file.name,
+    })
+
+    // Poll every 3 seconds
+    const intervalId = setInterval(async () => {
+      const edit = editingFiles.value.get(localPath)
+      if (!edit) {
+        clearInterval(intervalId)
+        return
+      }
+      try {
+        const newMtime = await invoke('check_file_modified', {
+          localPath,
+          lastModified: edit.lastModified,
+        })
+        if (newMtime) {
+          edit.lastModified = newMtime
+          // Show upload toast
+          showToast(`"${edit.fileName}" modified. Use Upload to sync changes.`, 'info')
+        }
+      } catch (e) {
+        // File might have been deleted, stop polling
+        editingFiles.value.delete(localPath)
+        clearInterval(intervalId)
+      }
+    }, 3000)
+  } catch (e) {
+    console.error('Edit failed:', e)
+    showToast('Edit failed: ' + e, 'error')
   }
 }
 

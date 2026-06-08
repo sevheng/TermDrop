@@ -274,6 +274,7 @@ async fn sftp_connect(
         host.username,
         password,
         key_path,
+        host_id,
     )?;
 
     let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
@@ -332,6 +333,133 @@ async fn sftp_download(
 }
 
 #[tauri::command]
+async fn sftp_download_dir(
+    window: Window,
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<String, String> {
+    // Get SFTP handle and host_id
+    let (handle, host_id) = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        let h = sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?;
+        let id = h.host_id;
+        (h, id)
+    };
+
+    // Get exec session for tar command
+    let exec_session = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No exec session for this host")?
+    };
+
+    let folder_name = Path::new(&remote_path).file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "archive".to_string());
+    let parent_path = Path::new(&remote_path).parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    let remote_temp = format!("/tmp/termdrop-{}.tar.gz", uuid::Uuid::new_v4());
+
+    // Create tar.gz on remote
+    {
+        let session = exec_session.lock().map_err(|e| e.to_string())?;
+        let mut channel = session.channel_session().map_err(|e| e.to_string())?;
+        let cmd = format!("tar -czf {} -C {} {}", remote_temp, parent_path, folder_name);
+        channel.exec(&cmd).map_err(|e| e.to_string())?;
+        let mut stdout = String::new();
+        use std::io::Read;
+        channel.read_to_string(&mut stdout).map_err(|e| e.to_string())?;
+        let mut stderr = String::new();
+        channel.stderr().read_to_string(&mut stderr).map_err(|e| e.to_string())?;
+        channel.wait_close().ok();
+        let status = channel.exit_status().unwrap_or(0);
+        if status != 0 {
+            return Err(format!("tar failed: {}", if stderr.is_empty() { stdout } else { stderr }));
+        }
+    }
+
+    // Download the archive
+    let download_dir = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+        .unwrap_or_else(|| std::env::temp_dir());
+    let archive_name = format!("{}.tar.gz", folder_name);
+    let local_archive = download_dir.join(&archive_name);
+    let local_archive_str = local_archive.to_string_lossy().to_string();
+
+    sftp::sftp_download(window, &handle, &remote_temp, &local_archive_str)?;
+
+    // Extract locally
+    let extract_dir = download_dir.join(&folder_name);
+    let extract_dir_str = extract_dir.to_string_lossy().to_string();
+    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("create dir: {}", e))?;
+
+    let output = std::process::Command::new("tar")
+        .args(["-xzf", &local_archive_str, "-C", &extract_dir_str, "--strip-components=1"])
+        .output()
+        .map_err(|e| format!("extract: {}", e))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("extract failed: {}", err));
+    }
+
+    // Clean up local archive
+    let _ = std::fs::remove_file(&local_archive);
+
+    // Clean up remote temp
+    let _ = sftp::sftp_delete(&handle, &remote_temp);
+
+    Ok(extract_dir_str)
+}
+
+#[tauri::command]
+async fn sftp_edit_file(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<String, String> {
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+
+    let file_name = Path::new(&remote_path).file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "edit".to_string());
+
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("termdrop-edit")
+        .join(&sftp_session_id);
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("create dir: {}", e))?;
+
+    let local_path = cache_dir.join(&file_name);
+    let local_path_str = local_path.to_string_lossy().to_string();
+
+    // Download the file
+    sftp::sftp_download_simple(&handle, &remote_path, &local_path_str)?;
+
+    Ok(local_path_str)
+}
+
+#[tauri::command]
+fn check_file_modified(local_path: String, last_modified: u64) -> Result<Option<u64>, String> {
+    let metadata = std::fs::metadata(&local_path)
+        .map_err(|e| format!("metadata: {}", e))?;
+    let mtime = metadata.modified()
+        .map_err(|e| format!("modified: {}", e))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("duration: {}", e))?
+        .as_secs();
+    if mtime > last_modified {
+        Ok(Some(mtime))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
 fn sftp_realpath(
     state: State<'_, AppState>,
     sftp_session_id: String,
@@ -385,6 +513,17 @@ fn sftp_rmdir(
     let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
     sftp::sftp_rmdir(handle, &remote_path)
+}
+
+#[tauri::command]
+fn sftp_read_file(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<String, String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
+    sftp::sftp_read_file(handle, &remote_path)
 }
 
 #[tauri::command]
@@ -829,11 +968,15 @@ fn main() {
             sftp_list,
             sftp_upload,
             sftp_download,
+            sftp_download_dir,
             sftp_delete,
             sftp_rename,
             sftp_mkdir,
             sftp_rmdir,
             sftp_realpath,
+            sftp_read_file,
+            sftp_edit_file,
+            check_file_modified,
             sftp_disconnect,
             update_host_group,
             batch_update_host_group,

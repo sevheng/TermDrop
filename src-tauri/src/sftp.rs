@@ -23,6 +23,7 @@ pub struct SftpFile {
 
 pub struct SftpSessionHandle {
     pub session: std::sync::Mutex<Session>,
+    pub host_id: i64,
 }
 
 fn expand_key_path(key_path: &str) -> std::path::PathBuf {
@@ -41,6 +42,7 @@ pub fn sftp_connect(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    host_id: i64,
 ) -> Result<SftpSessionHandle, String> {
     let addr = format!("{}:{}", host, port);
     let tcp = std::net::TcpStream::connect(&addr)
@@ -64,6 +66,7 @@ pub fn sftp_connect(
 
     Ok(SftpSessionHandle {
         session: std::sync::Mutex::new(session),
+        host_id,
     })
 }
 
@@ -230,6 +233,32 @@ pub fn sftp_download(
     Ok(())
 }
 
+pub fn sftp_download_simple(
+    handle: &SftpSessionHandle,
+    remote_path: &str,
+    local_path: &str,
+) -> Result<(), String> {
+    let session = handle.session.lock().map_err(|e| e.to_string())?;
+    let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
+    let mut remote_file = sftp.open(Path::new(remote_path))
+        .map_err(|e| format!("open remote: {}", e))?;
+
+    if let Some(parent) = Path::new(local_path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create dir: {}", e))?;
+    }
+    let mut local_file = std::fs::File::create(local_path)
+        .map_err(|e| format!("create local: {}", e))?;
+
+    let mut buf = vec![0u8; SFTP_BUF_SIZE];
+    loop {
+        let n = remote_file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        local_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn sftp_realpath(
     handle: &SftpSessionHandle,
     remote_path: &str,
@@ -300,6 +329,29 @@ fn sftp_rmdir_recursive(
     sftp.rmdir(path)
         .map_err(|e| format!("rmdir: {}", e))?;
     Ok(())
+}
+
+pub fn sftp_read_file(
+    handle: &SftpSessionHandle,
+    remote_path: &str,
+) -> Result<String, String> {
+    const MAX_SIZE: u64 = 1024 * 1024; // 1MB
+    let session = handle.session.lock().map_err(|e| e.to_string())?;
+    let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
+    let mut remote_file = sftp.open(Path::new(remote_path))
+        .map_err(|e| format!("open: {}", e))?;
+    let stat = remote_file.stat()
+        .map_err(|e| format!("stat: {}", e))?;
+    let size = stat.size.unwrap_or(0);
+    if size > MAX_SIZE {
+        return Err(format!("File too large: {} bytes (max {})", size, MAX_SIZE));
+    }
+    let mut content = Vec::with_capacity(size as usize);
+    use std::io::Read;
+    remote_file.read_to_end(&mut content)
+        .map_err(|e| format!("read: {}", e))?;
+    String::from_utf8(content)
+        .map_err(|_| "File contains non-UTF-8 data".to_string())
 }
 
 pub fn sftp_rmdir(
