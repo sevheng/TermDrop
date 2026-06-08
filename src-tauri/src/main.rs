@@ -12,6 +12,7 @@ mod crypto;
 mod ssh;
 mod sftp;
 mod port_forward;
+mod docker;
 
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
@@ -587,6 +588,90 @@ fn write_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn docker_ps(
+    state: State<'_, AppState>,
+    host_id: i64,
+    all: bool,
+) -> Result<Vec<docker::Container>, String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_ps(&session, all).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_start(
+    state: State<'_, AppState>,
+    host_id: i64,
+    container_id: String,
+) -> Result<(), String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_start(&session, &container_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_stop(
+    state: State<'_, AppState>,
+    host_id: i64,
+    container_id: String,
+) -> Result<(), String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_stop(&session, &container_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_restart(
+    state: State<'_, AppState>,
+    host_id: i64,
+    container_id: String,
+) -> Result<(), String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_restart(&session, &container_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_logs(
+    state: State<'_, AppState>,
+    host_id: i64,
+    container_id: String,
+    tail: usize,
+) -> Result<String, String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_logs(&session, &container_id, tail).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_inspect_shell(
+    state: State<'_, AppState>,
+    host_id: i64,
+    container_id: String,
+) -> Result<String, String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::docker_inspect_shell(&session, &container_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn docker_install(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<String, String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    docker::install_docker(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     let conn = state.db.get().map_err(db_err)?;
     db::get_setting(&conn, &key).map_err(|e| e.to_string())
@@ -664,6 +749,13 @@ fn main() {
             start_port_forward,
             stop_port_forward,
             get_port_forward_status,
+            docker_ps,
+            docker_start,
+            docker_stop,
+            docker_restart,
+            docker_logs,
+            docker_inspect_shell,
+            docker_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

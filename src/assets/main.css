@@ -1,8 +1,8 @@
+@import '../themes/vscode-dark.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import '../themes/vscode-dark.css';
 
 body {
   margin: 0;
