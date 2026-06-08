@@ -23,7 +23,7 @@
       <button @click="loadFiles" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↻</button>
       <div class="relative ml-auto">
         <button
-          @click="showColumnMenu = !showColumnMenu"
+          @click.stop="showColumnMenu = !showColumnMenu"
           class="text-xs text-[#858585] hover:text-[#cccccc] px-1.5 py-0.5"
           title="Toggle columns"
         >
@@ -31,6 +31,7 @@
         </button>
         <div
           v-if="showColumnMenu"
+          @click.stop
           class="absolute right-0 top-full mt-0.5 bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[7rem]"
         >
           <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
