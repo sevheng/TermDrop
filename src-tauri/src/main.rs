@@ -14,6 +14,7 @@ mod sftp;
 mod port_forward;
 mod docker;
 mod security;
+mod system;
 
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
@@ -700,6 +701,45 @@ async fn run_security_audit(
 }
 
 #[tauri::command]
+async fn get_processes(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<Vec<system::Process>, String> {
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    system::get_processes(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_network(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<system::NetworkInfo, String> {
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    system::get_network(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_disk_usage(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<system::DiskInfo, String> {
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+    system::get_disk_usage(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     let conn = state.db.get().map_err(db_err)?;
     db::get_setting(&conn, &key).map_err(|e| e.to_string())
@@ -785,6 +825,9 @@ fn main() {
             docker_inspect_shell,
             docker_install,
             run_security_audit,
+            get_processes,
+            get_network,
+            get_disk_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

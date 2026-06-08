@@ -2,11 +2,120 @@
   <div class="relative w-full h-full flex flex-col">
     <div ref="terminalContainer" class="flex-1 min-h-0" :class="terminalBgClass"></div>
 
+    <!-- Expanded System Panel -->
+    <div
+      v-if="props.hostId && statusExpanded"
+      class="shrink-0 border-t border-[#3c3c3c] bg-[#1e1e1e] h-48 flex flex-col"
+    >
+      <!-- Sub-tabs -->
+      <div class="flex border-b border-[#3c3c3c] px-2">
+        <button
+          v-for="t in ['processes', 'network', 'disk']"
+          :key="t"
+          @click="sysTab = t"
+          class="px-2 py-0.5 text-[10px] font-medium capitalize transition-colors"
+          :class="sysTab === t ? 'text-[#007acc]' : 'text-[#858585] hover:text-[#cccccc]'"
+        >
+          {{ t }}
+        </button>
+      </div>
+
+      <!-- Content -->
+      <div class="flex-1 overflow-y-auto p-1">
+        <div v-if="sysLoading" class="flex items-center justify-center h-full">
+          <Loader2 :size="14" class="animate-spin text-[#858585]" />
+        </div>
+
+        <!-- Processes -->
+        <div v-else-if="sysTab === 'processes'" class="text-[10px]">
+          <div class="grid grid-cols-12 gap-1 text-[#6e6e6e] font-medium border-b border-[#3c3c3c] pb-0.5 mb-0.5">
+            <span class="col-span-1">PID</span>
+            <span class="col-span-5">Command</span>
+            <span class="col-span-2 text-right">CPU</span>
+            <span class="col-span-2 text-right">Mem</span>
+            <span class="col-span-2 text-right">Time</span>
+          </div>
+          <div
+            v-for="p in processes"
+            :key="p.pid"
+            class="grid grid-cols-12 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+          >
+            <span class="col-span-1 font-mono">{{ p.pid }}</span>
+            <span class="col-span-5 truncate">{{ p.command }}</span>
+            <span class="col-span-2 text-right" :class="parseFloat(p.cpu) > 50 ? 'text-[#f44336]' : ''">{{ p.cpu }}%</span>
+            <span class="col-span-2 text-right">{{ p.mem }}%</span>
+            <span class="col-span-2 text-right text-[#858585]">{{ p.uptime }}</span>
+          </div>
+        </div>
+
+        <!-- Network -->
+        <div v-else-if="sysTab === 'network'" class="text-[10px]">
+          <div class="mb-1">
+            <span class="text-[#858585]">Established:</span>
+            <span class="text-[#cccccc] ml-1">{{ network?.established_count || 0 }}</span>
+          </div>
+          <div v-if="network?.ports?.length" class="mb-1">
+            <div class="text-[#6e6e6e] font-medium mb-0.5">Listening Ports</div>
+            <div
+              v-for="p in network.ports.slice(0, 8)"
+              :key="p.local"
+              class="grid grid-cols-3 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+            >
+              <span>{{ p.proto }}</span>
+              <span class="truncate">{{ p.local }}</span>
+              <span class="truncate text-[#858585]">{{ p.process }}</span>
+            </div>
+          </div>
+          <div v-if="network?.interfaces?.length">
+            <div class="text-[#6e6e6e] font-medium mb-0.5">Interfaces</div>
+            <div
+              v-for="iface in network.interfaces.filter(i => i.name !== 'lo').slice(0, 4)"
+              :key="iface.name"
+              class="grid grid-cols-4 gap-1 text-[#cccccc] py-0.5"
+            >
+              <span>{{ iface.name }}</span>
+              <span class="text-[#858585]">RX: {{ formatBytes(iface.rx_bytes) }}</span>
+              <span class="text-[#858585]">TX: {{ formatBytes(iface.tx_bytes) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Disk -->
+        <div v-else-if="sysTab === 'disk'" class="text-[10px]">
+          <div v-if="diskInfo?.mounts?.length" class="mb-1">
+            <div class="text-[#6e6e6e] font-medium mb-0.5">Filesystems</div>
+            <div
+              v-for="m in diskInfo.mounts"
+              :key="m.mount"
+              class="grid grid-cols-6 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+            >
+              <span class="col-span-2 truncate">{{ m.mount }}</span>
+              <span class="col-span-1">{{ m.size }}</span>
+              <span class="col-span-1">{{ m.used }}</span>
+              <span class="col-span-1" :class="parseInt(m.percent) > 80 ? 'text-[#f44336]' : parseInt(m.percent) > 60 ? 'text-[#cca700]' : 'text-[#89d185]'">{{ m.percent }}%</span>
+              <span class="col-span-1 text-[#858585] truncate">{{ m.filesystem }}</span>
+            </div>
+          </div>
+          <div v-if="diskInfo?.dirs?.length">
+            <div class="text-[#6e6e6e] font-medium mb-0.5 mt-1">Top Directories</div>
+            <div
+              v-for="d in diskInfo.dirs"
+              :key="d.path"
+              class="grid grid-cols-2 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+            >
+              <span class="truncate">{{ d.path }}</span>
+              <span class="text-[#858585]">{{ d.size }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- System Status Bar -->
     <div
       v-if="props.hostId"
-      class="shrink-0 border-t border-[#3c3c3c] bg-[#1e1e1e] transition-all"
-      :class="statusExpanded ? '' : ''"
+      class="shrink-0 border-t border-[#3c3c3c] bg-[#1e1e1e] cursor-pointer hover:bg-[#252526] transition-colors"
+      @click="statusExpanded = !statusExpanded"
     >
       <div class="flex items-center justify-between px-2 py-0.5">
         <div class="flex items-center gap-3 overflow-x-auto">
@@ -42,9 +151,9 @@
           <span v-if="statusError" class="text-[10px] text-[#f44336]">{{ statusError }}</span>
         </div>
         <button
-          @click="statusExpanded = !statusExpanded"
+          @click.stop="statusExpanded = !statusExpanded"
           class="text-[#858585] hover:text-[#cccccc] shrink-0 ml-2"
-          :title="statusExpanded ? 'Hide status' : 'Show status'"
+          :title="statusExpanded ? 'Hide system panel' : 'Show system panel'"
         >
           <ChevronUp v-if="statusExpanded" :size="12" />
           <ChevronDown v-else :size="12" />
@@ -133,7 +242,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown } from 'lucide-vue-next'
+import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2 } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
@@ -178,9 +287,16 @@ const searchVisible = ref(false)
 const searchQuery = ref('')
 const searchCaseSensitive = ref(false)
 
-const statusExpanded = ref(true)
+const statusExpanded = ref(false)
 const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '' })
 const statusError = ref('')
+
+const sysTab = ref('processes')
+const processes = ref([])
+const network = ref(null)
+const diskInfo = ref(null)
+const sysLoading = ref(false)
+let sysPollInterval = null
 
 const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
 
@@ -285,6 +401,13 @@ function onSettingsChanged(event) {
   applySettings(event.detail)
 }
 
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+}
+
 function showTooltip(event, text) {
   tooltip.value = {
     show: true,
@@ -343,6 +466,57 @@ function stopStatusPolling() {
   if (statusInterval) {
     clearInterval(statusInterval)
     statusInterval = null
+  }
+}
+
+async function fetchProcesses() {
+  if (!props.hostId) return
+  try {
+    processes.value = await invoke('get_processes', { hostId: props.hostId })
+  } catch (err) {
+    console.error('get_processes failed:', err)
+  }
+}
+
+async function fetchNetwork() {
+  if (!props.hostId) return
+  try {
+    network.value = await invoke('get_network', { hostId: props.hostId })
+  } catch (err) {
+    console.error('get_network failed:', err)
+  }
+}
+
+async function fetchDisk() {
+  if (!props.hostId) return
+  try {
+    diskInfo.value = await invoke('get_disk_usage', { hostId: props.hostId })
+  } catch (err) {
+    console.error('get_disk_usage failed:', err)
+  }
+}
+
+async function loadSystemData() {
+  if (!props.hostId) return
+  sysLoading.value = true
+  await Promise.all([fetchProcesses(), fetchNetwork(), fetchDisk()])
+  sysLoading.value = false
+}
+
+function startSysPolling() {
+  if (sysPollInterval) clearInterval(sysPollInterval)
+  if (!props.hostId) return
+  loadSystemData()
+  sysPollInterval = setInterval(() => {
+    fetchProcesses()
+    fetchNetwork()
+  }, 3000)
+}
+
+function stopSysPolling() {
+  if (sysPollInterval) {
+    clearInterval(sysPollInterval)
+    sysPollInterval = null
   }
 }
 
@@ -488,6 +662,7 @@ function stopActiveOperations() {
 
 function disposeTerminal() {
   stopActiveOperations()
+  stopSysPolling()
   if (unlistenData) { unlistenData(); unlistenData = null }
   if (unlistenError) { unlistenError(); unlistenError = null }
   if (unlistenConnected) { unlistenConnected(); unlistenConnected = null }
@@ -553,4 +728,12 @@ watch(() => props.isActive, (active) => {
     }
   }
 }, { immediate: true })
+
+watch(statusExpanded, (expanded) => {
+  if (expanded && props.isActive) {
+    startSysPolling()
+  } else {
+    stopSysPolling()
+  }
+})
 </script>
