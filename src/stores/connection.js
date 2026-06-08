@@ -15,6 +15,16 @@ export const useConnectionStore = defineStore('connection', () => {
     download_path: '',
   })
 
+  const systemStatus = ref(new Map())
+
+  function getSystemStatus(hostId) {
+    return systemStatus.value.get(hostId) || null
+  }
+
+  function setSystemStatus(hostId, data) {
+    systemStatus.value.set(hostId, { ...data, timestamp: Date.now() })
+  }
+
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value)
   })
@@ -315,5 +325,8 @@ export const useConnectionStore = defineStore('connection', () => {
     settings,
     loadSettings,
     saveSettings,
+    systemStatus,
+    getSystemStatus,
+    setSystemStatus,
   }
 })
