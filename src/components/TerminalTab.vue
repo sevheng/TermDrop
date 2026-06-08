@@ -476,6 +476,10 @@ onMounted(async () => {
   unlistenData = await listen('ssh-data', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.session_id === props.sessionId) {
+      // Hide overlay if data arrives (catches missed ssh-connected events)
+      if (connectionStage.value !== 'connected' && connectionStage.value !== 'error') {
+        connectionStage.value = 'connected'
+      }
       term.write(payload.data)
     } else if (typeof payload === 'string') {
       term.write(payload)
