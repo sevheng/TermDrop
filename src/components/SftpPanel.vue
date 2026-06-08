@@ -16,11 +16,37 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex gap-1.5 flex-wrap">
+    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex gap-1.5 flex-wrap items-center">
       <button @click="goUp" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↑ Up</button>
       <button @click="onUpload" class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-1.5 py-0.5 rounded">Upload</button>
       <button @click="onMkdir" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">+ Folder</button>
       <button @click="loadFiles" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↻</button>
+      <div class="relative ml-auto">
+        <button
+          @click="showColumnMenu = !showColumnMenu"
+          class="text-xs text-[#858585] hover:text-[#cccccc] px-1.5 py-0.5"
+          title="Toggle columns"
+        >
+          ☰
+        </button>
+        <div
+          v-if="showColumnMenu"
+          class="absolute right-0 top-full mt-0.5 bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[7rem]"
+        >
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
+            <input v-model="showColumns.size" type="checkbox" class="accent-[#007acc]" />
+            Size
+          </label>
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
+            <input v-model="showColumns.modified" type="checkbox" class="accent-[#007acc]" />
+            Modified
+          </label>
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
+            <input v-model="showColumns.perms" type="checkbox" class="accent-[#007acc]" />
+            Perms
+          </label>
+        </div>
+      </div>
     </div>
 
     <!-- Column headers -->
@@ -28,13 +54,13 @@
       <span class="flex-1 min-w-0 cursor-pointer hover:text-[#cccccc]" @click="setSort('name')">
         Name {{ sortIndicator('name') }}
       </span>
-      <span class="w-12 shrink-0 text-right cursor-pointer hover:text-[#cccccc]" @click="setSort('size')">
+      <span v-if="showColumns.size" class="w-12 shrink-0 text-right cursor-pointer hover:text-[#cccccc]" @click="setSort('size')">
         Size {{ sortIndicator('size') }}
       </span>
-      <span class="w-14 shrink-0 text-right cursor-pointer hover:text-[#cccccc] ml-1.5" @click="setSort('modified')">
+      <span v-if="showColumns.modified" class="w-14 shrink-0 text-right cursor-pointer hover:text-[#cccccc] ml-1.5" @click="setSort('modified')">
         Modified {{ sortIndicator('modified') }}
       </span>
-      <span class="w-16 shrink-0 text-right ml-1.5">Perms</span>
+      <span v-if="showColumns.perms" class="w-16 shrink-0 text-right ml-1.5">Perms</span>
     </div>
 
     <!-- File list -->
@@ -60,9 +86,9 @@
           <Folder v-if="file.is_dir" :size="12" class="shrink-0 mr-1.5" />
           <FileText v-else :size="12" class="shrink-0 mr-1.5 text-[#6e6e6e]" />
           <span class="truncate flex-1 min-w-0">{{ file.name }}</span>
-          <span class="w-12 shrink-0 text-right text-xs text-[#6e6e6e]">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
-          <span class="w-14 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5">{{ formatDate(file.modified) }}</span>
-          <span class="w-16 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
+          <span v-if="showColumns.size" class="w-12 shrink-0 text-right text-xs text-[#6e6e6e]">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
+          <span v-if="showColumns.modified" class="w-14 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5">{{ formatDate(file.modified) }}</span>
+          <span v-if="showColumns.perms" class="w-16 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
         </div>
       </div>
     </div>
@@ -141,6 +167,12 @@ const contextMenuEl = ref(null)
 const transfers = ref([])
 const sortKey = ref('name')
 const sortOrder = ref('asc')
+const showColumnMenu = ref(false)
+const showColumns = ref({
+  size: true,
+  modified: true,
+  perms: true,
+})
 let unlistenProgress = null
 let unlistenFileDrop = null
 
@@ -300,9 +332,19 @@ async function uploadDroppedFiles(paths) {
 
 function closeMenu() {
   contextMenu.value.show = false
+  showColumnMenu.value = false
 }
 
 onMounted(async () => {
+  // Load saved column visibility
+  const saved = localStorage.getItem('sftp-columns')
+  if (saved) {
+    try {
+      showColumns.value = { ...showColumns.value, ...JSON.parse(saved) }
+    } catch (e) {
+      console.warn('Failed to parse saved column visibility:', e)
+    }
+  }
   await resolveHomeDir()
   await loadFiles()
   unlistenProgress = await listen('sftp-progress', (event) => {
@@ -346,6 +388,10 @@ watch(() => props.sftpSessionId, async () => {
   await resolveHomeDir()
   await loadFiles()
 })
+
+watch(showColumns, (val) => {
+  localStorage.setItem('sftp-columns', JSON.stringify(val))
+}, { deep: true })
 
 async function loadFiles() {
   if (!props.sftpSessionId) return
