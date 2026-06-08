@@ -1,8 +1,13 @@
 use std::io::{Read, Write};
 use std::path::Path;
+use std::time::{Duration, Instant};
 use ssh2::Session;
 use serde::Serialize;
 use tauri::{Emitter, Window};
+
+const SFTP_BUF_SIZE: usize = 65536; // 64KB
+const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const PROGRESS_MIN_PERCENT_DELTA: f64 = 1.0; // at least 1% change
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SftpFile {
@@ -121,8 +126,10 @@ pub fn sftp_upload(
     let mut remote_file = sftp.create(Path::new(remote_path))
         .map_err(|e| format!("create remote: {}", e))?;
 
-    let mut buf = [0u8; 8192];
+    let mut buf = vec![0u8; SFTP_BUF_SIZE];
     let mut transferred = 0u64;
+    let mut last_emit = Instant::now();
+    let mut last_percent = 0.0;
     let mut reader = std::io::BufReader::new(local_file);
 
     loop {
@@ -131,13 +138,33 @@ pub fn sftp_upload(
         remote_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 
-        let payload = serde_json::json!({
-            "file": remote_path,
-            "bytes_transferred": transferred,
-            "total_bytes": total,
-        });
-        let _ = window.emit("sftp-progress", payload);
+        let percent = if total > 0 {
+            (transferred as f64 / total as f64) * 100.0
+        } else {
+            100.0
+        };
+        let elapsed = last_emit.elapsed();
+        let percent_delta = percent - last_percent;
+
+        if elapsed >= PROGRESS_MIN_INTERVAL || percent_delta >= PROGRESS_MIN_PERCENT_DELTA || transferred >= total {
+            let payload = serde_json::json!({
+                "file": remote_path,
+                "bytes_transferred": transferred,
+                "total_bytes": total,
+            });
+            let _ = window.emit("sftp-progress", payload);
+            last_emit = Instant::now();
+            last_percent = percent;
+        }
     }
+
+    // Final progress event
+    let payload = serde_json::json!({
+        "file": remote_path,
+        "bytes_transferred": transferred,
+        "total_bytes": total,
+    });
+    let _ = window.emit("sftp-progress", payload);
 
     Ok(())
 }
@@ -161,8 +188,10 @@ pub fn sftp_download(
     let mut local_file = std::fs::File::create(local_path)
         .map_err(|e| format!("create local: {}", e))?;
 
-    let mut buf = [0u8; 8192];
+    let mut buf = vec![0u8; SFTP_BUF_SIZE];
     let mut transferred = 0u64;
+    let mut last_emit = Instant::now();
+    let mut last_percent = 0.0;
 
     loop {
         let n = remote_file.read(&mut buf).map_err(|e| e.to_string())?;
@@ -170,13 +199,33 @@ pub fn sftp_download(
         local_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 
-        let payload = serde_json::json!({
-            "file": remote_path,
-            "bytes_transferred": transferred,
-            "total_bytes": total,
-        });
-        let _ = window.emit("sftp-progress", payload);
+        let percent = if total > 0 {
+            (transferred as f64 / total as f64) * 100.0
+        } else {
+            100.0
+        };
+        let elapsed = last_emit.elapsed();
+        let percent_delta = percent - last_percent;
+
+        if elapsed >= PROGRESS_MIN_INTERVAL || percent_delta >= PROGRESS_MIN_PERCENT_DELTA || transferred >= total {
+            let payload = serde_json::json!({
+                "file": remote_path,
+                "bytes_transferred": transferred,
+                "total_bytes": total,
+            });
+            let _ = window.emit("sftp-progress", payload);
+            last_emit = Instant::now();
+            last_percent = percent;
+        }
     }
+
+    // Final progress event
+    let payload = serde_json::json!({
+        "file": remote_path,
+        "bytes_transferred": transferred,
+        "total_bytes": total,
+    });
+    let _ = window.emit("sftp-progress", payload);
 
     Ok(())
 }

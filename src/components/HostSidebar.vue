@@ -227,7 +227,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Plus, Server, Search, Upload, Download,
@@ -245,7 +245,17 @@ const store = useConnectionStore()
 const showModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
+const debouncedQuery = ref('')
 const collapsedGroups = ref(new Set())
+
+// Debounce search input to reduce computed recalculations
+let searchDebounceTimer = null
+watch(searchQuery, (val) => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    debouncedQuery.value = val
+  }, 200)
+}, { immediate: true })
 const importInput = ref(null)
 const viewMode = ref(localStorage.getItem('host-view-mode') || 'grouped')
 const draggingHost = ref(false)
@@ -268,7 +278,7 @@ const confirmDialog = ref({
 })
 
 const filteredHosts = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
+  const q = debouncedQuery.value.trim().toLowerCase()
   if (!q) return store.hosts
   return store.hosts.filter(h =>
     h.name.toLowerCase().includes(q) ||
@@ -325,7 +335,12 @@ const groupedHosts = computed(() => {
   return sorted
 })
 
+const colorClassCache = new Map()
+
 function groupColorClass(name) {
+  if (colorClassCache.has(name)) {
+    return colorClassCache.get(name)
+  }
   const colors = [
     'hover:bg-blue-50 dark:hover:bg-blue-900/20',
     'hover:bg-green-50 dark:hover:bg-green-900/20',
@@ -341,7 +356,9 @@ function groupColorClass(name) {
     hash = ((hash << 5) - hash) + name.charCodeAt(i)
     hash |= 0
   }
-  return colors[Math.abs(hash) % colors.length]
+  const result = colors[Math.abs(hash) % colors.length]
+  colorClassCache.set(name, result)
+  return result
 }
 
 function toggleView() {

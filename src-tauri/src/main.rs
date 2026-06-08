@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Manager, State, Window};
-use rusqlite::Connection;
+use tauri::{Emitter, State, Window};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 
 mod db;
 mod crypto;
@@ -13,33 +14,38 @@ mod sftp;
 mod port_forward;
 
 pub struct AppState {
-    db: Mutex<Connection>,
+    db: Pool<SqliteConnectionManager>,
     sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
+    exec_sessions: Mutex<HashMap<i64, Arc<Mutex<ssh2::Session>>>>,
     sftp_sessions: Mutex<HashMap<String, Arc<sftp::SftpSessionHandle>>>,
     forward_manager: port_forward::ForwardManager,
 }
 
+fn db_err(e: r2d2::Error) -> String {
+    e.to_string()
+}
+
 #[tauri::command]
 fn get_hosts(state: State<'_, AppState>) -> Result<Vec<db::Host>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::get_hosts(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::add_host(&conn, &host).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::update_host(&conn, id, &host).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::delete_host(&conn, id).map_err(|e| e.to_string())?;
     crypto::delete_password(id).ok();
     Ok(())
@@ -47,7 +53,7 @@ fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 fn get_host_by_id(state: State<'_, AppState>, id: i64) -> Result<Option<db::Host>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::get_host_by_id(&conn, id).map_err(|e| e.to_string())
 }
 
@@ -64,7 +70,7 @@ async fn ssh_connect(
     password: Option<String>,
 ) -> Result<String, String> {
     let host = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(db_err)?;
         db::get_host_by_id(&conn, host_id)
             .map_err(|e| e.to_string())?
             .ok_or("Host not found")?
@@ -87,15 +93,30 @@ async fn ssh_connect(
         window,
         session_id.clone(),
         host_id,
-        host.host,
+        host.host.clone(),
         host.port as u16,
-        host.username,
-        password,
-        key_path,
+        host.username.clone(),
+        password.clone(),
+        key_path.clone(),
     )?;
 
-    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    sessions.insert(session_id.clone(), handle);
+    // Create a persistent exec session for this host
+    let exec_session = ssh::create_exec_session(
+        &host.host,
+        host.port as u16,
+        &host.username,
+        password.as_deref(),
+        key_path.as_deref(),
+    )?;
+
+    {
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        sessions.insert(session_id.clone(), handle);
+    }
+    {
+        let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.insert(host_id, Arc::new(Mutex::new(exec_session)));
+    }
 
     Ok(session_id)
 }
@@ -117,10 +138,26 @@ fn ssh_disconnect(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    if let Some(session) = sessions.remove(&session_id) {
-        let _ = session.disconnect_tx.send(());
+    let host_id = {
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        if let Some(session) = sessions.remove(&session_id) {
+            let _ = session.disconnect_tx.send(());
+            session.host_id
+        } else {
+            return Ok(());
+        }
+    };
+
+    // Only remove exec session if no other tabs use this host
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let still_connected = sessions.values().any(|s| s.host_id == host_id);
+    drop(sessions);
+
+    if !still_connected {
+        let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.remove(&host_id);
     }
+
     Ok(())
 }
 
@@ -138,7 +175,7 @@ async fn ssh_reconnect(
     };
 
     let host = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(db_err)?;
         db::get_host_by_id(&conn, host_id)
             .map_err(|e| e.to_string())?
             .ok_or("Host not found")?
@@ -164,21 +201,38 @@ async fn ssh_reconnect(
         }
     }
 
+    // Remove old exec session and create new one
+    {
+        let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.remove(&host_id);
+    }
+    let exec_session = ssh::create_exec_session(
+        &host.host,
+        host.port as u16,
+        &host.username,
+        password.as_deref(),
+        key_path.as_deref(),
+    )?;
+
     // Open new connection with same session_id
     let handle = ssh::connect(
         window.clone(),
         session_id.clone(),
         host_id,
-        host.host,
+        host.host.clone(),
         host.port as u16,
-        host.username,
-        password,
-        key_path,
+        host.username.clone(),
+        password.clone(),
+        key_path.clone(),
     )?;
 
     {
         let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         sessions.insert(session_id.clone(), handle);
+    }
+    {
+        let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.insert(host_id, Arc::new(Mutex::new(exec_session)));
     }
 
     let _ = window.emit("ssh-reconnected", session_id);
@@ -192,7 +246,7 @@ async fn sftp_connect(
     password: Option<String>,
 ) -> Result<String, String> {
     let host = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(db_err)?;
         db::get_host_by_id(&conn, host_id)
             .map_err(|e| e.to_string())?
             .ok_or("Host not found")?
@@ -346,8 +400,18 @@ async fn ssh_exec(
     host_id: i64,
     command: String,
 ) -> Result<String, String> {
+    // Try to reuse existing exec session
+    {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        if let Some(session_arc) = exec_sessions.get(&host_id) {
+            let session = session_arc.lock().map_err(|e| e.to_string())?;
+            return ssh::exec_with_session(&session, &command);
+        }
+    }
+
+    // Fall back: create a new session for this one-off command
     let host = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(db_err)?;
         db::get_host_by_id(&conn, host_id)
             .map_err(|e| e.to_string())?
             .ok_or("Host not found")?
@@ -362,30 +426,49 @@ async fn ssh_exec(
         _ => (None, host.key_path.clone()),
     };
 
-    ssh::exec(host.host, host.port as u16, host.username, password, key_path, command)
+    let session = ssh::create_exec_session(
+        &host.host,
+        host.port as u16,
+        &host.username,
+        password.as_deref(),
+        key_path.as_deref(),
+    )?;
+    ssh::exec_with_session(&session, &command)
 }
 
 #[tauri::command]
 fn update_host_group(state: State<'_, AppState>, id: i64, group: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::update_host_group(&conn, id, &group).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+fn batch_update_host_group(state: State<'_, AppState>, old_group: String, new_group: String) -> Result<usize, String> {
+    let conn = state.db.get().map_err(db_err)?;
+    db::update_hosts_group_by_name(&conn, &old_group, &new_group).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn batch_clear_host_group(state: State<'_, AppState>, group: String) -> Result<usize, String> {
+    let conn = state.db.get().map_err(db_err)?;
+    db::clear_hosts_group_by_name(&conn, &group).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn update_host_favorite(state: State<'_, AppState>, id: i64, favorite: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::update_host_favorite(&conn, id, favorite).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn update_host_last_connected(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::update_host_last_connected(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     let hosts = db::export_hosts(&conn).map_err(|e| e.to_string())?;
     serde_json::to_string(&hosts).map_err(|e| e.to_string())
 }
@@ -393,7 +476,7 @@ fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String> {
     let hosts: Vec<db::NewHost> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     let mut count = 0;
     for host in hosts {
         db::add_host(&conn, &host).map_err(|e| e.to_string())?;
@@ -404,20 +487,20 @@ fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String>
 
 #[tauri::command]
 fn get_port_forwards(state: State<'_, AppState>, host_id: i64) -> Result<Vec<db::PortForward>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::get_port_forwards(&conn, host_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn add_port_forward(state: State<'_, AppState>, forward: db::NewPortForward) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::add_port_forward(&conn, &forward).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn delete_port_forward(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state.forward_manager.stop(id);
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::delete_port_forward(&conn, id).map_err(|e| e.to_string())
 }
 
@@ -427,7 +510,7 @@ fn start_port_forward(
     rule_id: i64,
 ) -> Result<(), String> {
     let (host, forward) = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(db_err)?;
         let forward = db::get_port_forward_by_id(&conn, rule_id)
             .map_err(|e| e.to_string())?
             .ok_or("Port forward rule not found")?;
@@ -505,39 +588,43 @@ fn write_file(path: String, content: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::get_setting(&conn, &key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(db_err)?;
     db::set_setting(&conn, &key, &value).map_err(|e| e.to_string())
 }
 
 fn main() {
+    let db_path = dirs::data_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("termdrop.db");
+    let manager = SqliteConnectionManager::file(&db_path);
+    let pool = Pool::builder()
+        .max_size(10)
+        .build(manager)
+        .expect("Failed to create database pool");
+
+    // Run initialization with a dedicated connection
+    {
+        let conn = pool.get().expect("Failed to get initial DB connection");
+        db::init_db(&conn).expect("Failed to initialize database");
+        db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
+        db::init_settings(&conn).expect("Failed to initialize settings");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
-            db: Mutex::new(
-                Connection::open(
-                    dirs::data_dir()
-                        .unwrap_or_else(|| std::env::temp_dir())
-                        .join("termdrop.db")
-                ).expect("Failed to open database"),
-            ),
+            db: pool,
             sessions: Mutex::new(HashMap::new()),
+            exec_sessions: Mutex::new(HashMap::new()),
             sftp_sessions: Mutex::new(HashMap::new()),
             forward_manager: port_forward::ForwardManager::new(),
-        })
-        .setup(|app| {
-            let state = app.state::<AppState>();
-            let conn = state.db.lock().unwrap();
-            db::init_db(&conn).expect("Failed to initialize database");
-            db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
-            db::init_settings(&conn).expect("Failed to initialize settings");
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
@@ -562,6 +649,8 @@ fn main() {
             sftp_realpath,
             sftp_disconnect,
             update_host_group,
+            batch_update_host_group,
+            batch_clear_host_group,
             update_host_favorite,
             update_host_last_connected,
             export_hosts,

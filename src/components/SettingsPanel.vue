@@ -52,13 +52,14 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useConnectionStore } from '../stores/connection.js'
 
 const props = defineProps({
   show: Boolean,
 })
 
 const emit = defineEmits(['close', 'saved'])
+const store = useConnectionStore()
 
 const fontSize = ref(14)
 const theme = ref('dark')
@@ -66,16 +67,19 @@ const downloadPath = ref('')
 
 watch(() => props.show, async (isOpen) => {
   if (isOpen) {
-    fontSize.value = parseInt(await invoke('get_setting', { key: 'font_size' }) || '14')
-    theme.value = await invoke('get_setting', { key: 'theme' }) || 'dark'
-    downloadPath.value = await invoke('get_setting', { key: 'download_path' }) || ''
+    await store.loadSettings()
+    fontSize.value = parseInt(store.settings.font_size || '14')
+    theme.value = store.settings.theme || 'dark'
+    downloadPath.value = store.settings.download_path || ''
   }
 })
 
 async function save() {
-  await invoke('set_setting', { key: 'font_size', value: String(fontSize.value) })
-  await invoke('set_setting', { key: 'theme', value: theme.value })
-  await invoke('set_setting', { key: 'download_path', value: downloadPath.value })
+  await store.saveSettings({
+    font_size: String(fontSize.value),
+    theme: theme.value,
+    download_path: downloadPath.value,
+  })
   window.dispatchEvent(new CustomEvent('terminal-settings-changed', {
     detail: { fontSize: fontSize.value, theme: theme.value }
   }))

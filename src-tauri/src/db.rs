@@ -165,6 +165,22 @@ pub fn update_host_group(conn: &Connection, id: i64, group: &str) -> SqlResult<(
     Ok(())
 }
 
+pub fn update_hosts_group_by_name(conn: &Connection, old_group: &str, new_group: &str) -> SqlResult<usize> {
+    let count = conn.execute(
+        "UPDATE hosts SET \"group\" = ?1 WHERE \"group\" = ?2",
+        params![new_group, old_group],
+    )?;
+    Ok(count)
+}
+
+pub fn clear_hosts_group_by_name(conn: &Connection, group: &str) -> SqlResult<usize> {
+    let count = conn.execute(
+        "UPDATE hosts SET \"group\" = '' WHERE \"group\" = ?1",
+        params![group],
+    )?;
+    Ok(count)
+}
+
 pub fn update_host_favorite(conn: &Connection, id: i64, favorite: i64) -> SqlResult<()> {
     conn.execute(
         "UPDATE hosts SET favorite = ?1 WHERE id = ?2",

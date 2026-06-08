@@ -127,14 +127,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Terminal } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
-import { SearchAddon } from 'xterm-addon-search'
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown } from 'lucide-vue-next'
-import 'xterm/css/xterm.css'
+import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps({
   sessionId: {
@@ -369,7 +369,7 @@ function stopStatusPolling() {
   }
 }
 
-onMounted(async () => {
+async function initTerminal() {
   const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
   const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
   const themeSetting = await invoke('get_setting', { key: 'theme' })
@@ -481,22 +481,61 @@ onMounted(async () => {
     })
   })
 
-  // Handle resize
-  resizeObserver = new ResizeObserver(() => {
-    if (fitAddon) {
-      fitAddon.fit()
-    }
-  })
-  resizeObserver.observe(terminalContainer.value)
-
   // Listen for settings changes
   window.addEventListener('terminal-settings-changed', onSettingsChanged)
   window.addEventListener('click', onWindowClick)
   window.addEventListener('contextmenu', onWindowContextMenu, true)
+}
 
+function startActiveOperations() {
+  if (!term) return
+  // Handle resize
+  if (!resizeObserver) {
+    resizeObserver = new ResizeObserver(() => {
+      if (fitAddon) {
+        fitAddon.fit()
+      }
+    })
+  }
+  if (terminalContainer.value) {
+    resizeObserver.observe(terminalContainer.value)
+  }
+  // Fit on activation in case size changed while inactive
+  if (fitAddon) {
+    setTimeout(() => fitAddon.fit(), 50)
+  }
   // Start status polling if already connected
   startStatusPolling()
-})
+}
+
+function stopActiveOperations() {
+  stopStatusPolling()
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+}
+
+function disposeTerminal() {
+  stopActiveOperations()
+  if (unlistenData) { unlistenData(); unlistenData = null }
+  if (unlistenError) { unlistenError(); unlistenError = null }
+  if (unlistenConnected) { unlistenConnected(); unlistenConnected = null }
+  if (unlistenDisconnected) { unlistenDisconnected(); unlistenDisconnected = null }
+  if (unlistenReconnected) { unlistenReconnected(); unlistenReconnected = null }
+  if (term) {
+    term.dispose()
+    term = null
+  }
+  fitAddon = null
+  searchAddon = null
+  window.removeEventListener('terminal-settings-changed', onSettingsChanged)
+  window.removeEventListener('click', onWindowClick)
+  window.removeEventListener('contextmenu', onWindowContextMenu, true)
+  if (terminalContainer.value) {
+    terminalContainer.value.removeEventListener('contextmenu', showContextMenu)
+  }
+}
 
 async function reconnect() {
   isReconnecting.value = true
@@ -508,21 +547,21 @@ async function reconnect() {
   }
 }
 
+onMounted(async () => {
+  await initTerminal()
+  startActiveOperations()
+})
+
+onActivated(() => {
+  startActiveOperations()
+})
+
+onDeactivated(() => {
+  stopActiveOperations()
+})
+
 onUnmounted(() => {
-  stopStatusPolling()
-  if (unlistenData) unlistenData()
-  if (unlistenError) unlistenError()
-  if (unlistenConnected) unlistenConnected()
-  if (unlistenDisconnected) unlistenDisconnected()
-  if (unlistenReconnected) unlistenReconnected()
-  if (resizeObserver) resizeObserver.disconnect()
-  if (term) term.dispose()
-  window.removeEventListener('terminal-settings-changed', onSettingsChanged)
-  window.removeEventListener('click', onWindowClick)
-  window.removeEventListener('contextmenu', onWindowContextMenu, true)
-  if (terminalContainer.value) {
-    terminalContainer.value.removeEventListener('contextmenu', showContextMenu)
-  }
+  disposeTerminal()
 })
 
 // Handle sessionId changes

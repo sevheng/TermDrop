@@ -61,14 +61,15 @@
       <!-- Terminal + SFTP area -->
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
-          <TerminalTab
-            v-for="tab in store.tabs"
-            :key="tab.id"
-            :sessionId="tab.id"
-            :hostId="tab.hostId"
-            :class="tab.id === store.activeTabId ? 'block' : 'hidden'"
-            class="w-full h-full"
-          />
+          <KeepAlive :max="5">
+            <TerminalTab
+              v-if="store.activeTab"
+              :key="store.activeTab.id"
+              :sessionId="store.activeTab.id"
+              :hostId="store.activeTab.hostId"
+              class="w-full h-full"
+            />
+          </KeepAlive>
           <div
             v-if="!store.activeTabId"
             class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500"
@@ -176,18 +177,19 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
-import SftpPanel from '../components/SftpPanel.vue'
-import PortForwardPanel from '../components/PortForwardPanel.vue'
-import PortForwardModal from '../components/PortForwardModal.vue'
-import SettingsPanel from '../components/SettingsPanel.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import ShortcutsHelp from '../components/ShortcutsHelp.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
+
+const SftpPanel = defineAsyncComponent(() => import('../components/SftpPanel.vue'))
+const PortForwardPanel = defineAsyncComponent(() => import('../components/PortForwardPanel.vue'))
+const PortForwardModal = defineAsyncComponent(() => import('../components/PortForwardModal.vue'))
+const SettingsPanel = defineAsyncComponent(() => import('../components/SettingsPanel.vue'))
+const ShortcutsHelp = defineAsyncComponent(() => import('../components/ShortcutsHelp.vue'))
 
 const store = useConnectionStore()
 const showSettings = ref(false)

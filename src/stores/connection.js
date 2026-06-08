@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -8,8 +8,13 @@ export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
   const tabs = ref([])
   const activeTabId = ref(null)
-  const tabListeners = ref(new Map())
+  const tabListeners = reactive(new Map())
   const connectingHostId = ref(null)
+  const settings = ref({
+    font_size: '14',
+    theme: 'dark',
+    download_path: '',
+  })
 
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value)
@@ -45,18 +50,12 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function renameGroup(oldName, newName) {
-    const hostsToUpdate = hosts.value.filter(h => h.group === oldName)
-    for (const h of hostsToUpdate) {
-      await invoke('update_host_group', { id: h.id, group: newName })
-    }
+    await invoke('batch_update_host_group', { oldGroup: oldName, newGroup: newName })
     await loadHosts()
   }
 
   async function deleteGroup(groupName) {
-    const hostsToUpdate = hosts.value.filter(h => h.group === groupName)
-    for (const h of hostsToUpdate) {
-      await invoke('update_host_group', { id: h.id, group: '' })
-    }
+    await invoke('batch_clear_host_group', { group: groupName })
     await loadHosts()
   }
 
@@ -161,7 +160,7 @@ export const useConnectionStore = defineStore('connection', () => {
       }
     })
 
-    tabListeners.value.set(sessionId, {
+    tabListeners.set(sessionId, {
       disconnect: unlistenDisconnect,
       reconnected: unlistenReconnected,
     })
@@ -170,11 +169,11 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function disconnect(sessionId) {
-    const listeners = tabListeners.value.get(sessionId)
+    const listeners = tabListeners.get(sessionId)
     if (listeners) {
       listeners.disconnect()
       listeners.reconnected()
-      tabListeners.value.delete(sessionId)
+      tabListeners.delete(sessionId)
     }
 
     const tab = tabs.value.find(t => t.id === sessionId)
@@ -259,6 +258,29 @@ export const useConnectionStore = defineStore('connection', () => {
     return await invoke('get_port_forward_status', { ruleId })
   }
 
+  async function loadSettings() {
+    const [font_size, theme, download_path] = await Promise.all([
+      invoke('get_setting', { key: 'font_size' }),
+      invoke('get_setting', { key: 'theme' }),
+      invoke('get_setting', { key: 'download_path' }),
+    ])
+    settings.value = {
+      font_size: font_size || '14',
+      theme: theme || 'dark',
+      download_path: download_path || '',
+    }
+    return settings.value
+  }
+
+  async function saveSettings(newSettings) {
+    await Promise.all([
+      invoke('set_setting', { key: 'font_size', value: String(newSettings.font_size || 14) }),
+      invoke('set_setting', { key: 'theme', value: newSettings.theme || 'dark' }),
+      invoke('set_setting', { key: 'download_path', value: newSettings.download_path || '' }),
+    ])
+    settings.value = { ...settings.value, ...newSettings }
+  }
+
   return {
     hosts,
     tabs,
@@ -294,5 +316,8 @@ export const useConnectionStore = defineStore('connection', () => {
     startPortForward,
     stopPortForward,
     getPortForwardStatus,
+    settings,
+    loadSettings,
+    saveSettings,
   }
 })
