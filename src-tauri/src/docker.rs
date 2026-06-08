@@ -127,10 +127,6 @@ pub fn docker_logs(session: &Session, container_id: &str, tail: usize) -> Result
     run_docker_command(session, &format!("logs --tail {} {}", tail, container_id))
 }
 
-pub fn docker_exec(session: &Session, container_id: &str, command: &str) -> Result<String, String> {
-    run_docker_command(session, &format!("exec {} {}", container_id, command))
-}
-
 pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<String, String> {
     // Try bash first, fallback to sh
     let check = run_docker_command(session, &format!("exec {} bash -c 'echo bash'", container_id));
