@@ -239,28 +239,68 @@ fn check_sudo_users(session: &Session) -> SecurityCheck {
     }
 }
 
-fn check_security_updates(session: &Session) -> SecurityCheck {
-    // Try apt, then yum/dnf
-    let apt_count = run_command(session, "apt list --upgradable 2>/dev/null | grep -c security || echo 0");
-    let yum_count = run_command(session, "yum --security check-update 2>/dev/null | grep -c security || echo 0");
+fn detect_os_family(session: &Session) -> String {
+    let id = run_command(session, "grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/\"//g'");
+    id.unwrap_or_default().trim().to_lowercase()
+}
 
-    let apt_val = apt_count.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
-    let yum_val = yum_count.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
-    let total = apt_val.max(yum_val);
+fn check_security_updates(session: &Session) -> SecurityCheck {
+    let os_family = detect_os_family(session);
+
+    let (total, pkg_manager) = match os_family.as_str() {
+        "ubuntu" | "debian" | "linuxmint" | "pop" | "elementary" | "zorin" => {
+            let out = run_command(session, "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0");
+            let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            (count, "apt")
+        }
+        "centos" | "rhel" | "fedora" | "rocky" | "almalinux" | "amazon" | "amzn" => {
+            // Try dnf first, then yum
+            let out = run_command(session, "dnf check-update --security 2>/dev/null | grep -c 'security' || yum --security check-update 2>/dev/null | grep -c 'security' || echo 0");
+            let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            (count, "dnf/yum")
+        }
+        "alpine" => {
+            let out = run_command(session, "apk upgrade --simulate 2>/dev/null | grep -c 'Upgrading' || echo 0");
+            let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            (count, "apk")
+        }
+        "arch" | "manjaro" | "endeavouros" => {
+            let out = run_command(session, "pacman -Qu 2>/dev/null | wc -l || echo 0");
+            let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            (count, "pacman")
+        }
+        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" | "sles" => {
+            let out = run_command(session, "zypper list-updates 2>/dev/null | grep -c 'v' || echo 0");
+            let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            (count, "zypper")
+        }
+        _ => {
+            // Fallback: try apt, then dnf/yum
+            let apt = run_command(session, "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0");
+            let apt_count = apt.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+            if apt_count > 0 {
+                (apt_count, "apt")
+            } else {
+                let yum = run_command(session, "dnf check-update --security 2>/dev/null | grep -c 'security' || yum --security check-update 2>/dev/null | grep -c 'security' || echo 0");
+                let yum_count = yum.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+                (yum_count, "dnf/yum")
+            }
+        }
+    };
 
     if total == 0 {
         SecurityCheck {
             name: "Security Updates".to_string(),
             status: "pass".to_string(),
-            message: "No pending security updates".to_string(),
+            message: format!("No pending updates ({})", pkg_manager),
             detail: None,
         }
     } else {
         SecurityCheck {
             name: "Security Updates".to_string(),
             status: "fail".to_string(),
-            message: format!("{} security updates pending", total),
-            detail: Some("Run system update to patch".to_string()),
+            message: format!("{} updates pending", total),
+            detail: Some(format!("Run {} upgrade to patch", pkg_manager)),
         }
     }
 }
