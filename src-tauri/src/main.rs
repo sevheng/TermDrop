@@ -426,7 +426,7 @@ fn main() {
                 Connection::open(
                     dirs::data_dir()
                         .unwrap_or_else(|| std::env::temp_dir())
-                        .join("ssh-client.db")
+                        .join("termdrop.db")
                 ).expect("Failed to open database"),
             ),
             sessions: Mutex::new(HashMap::new()),

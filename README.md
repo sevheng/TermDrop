@@ -1,4 +1,4 @@
-# SSH Client
+# TermDrop
 
 A lightweight SSH client and SFTP browser built with Tauri v2 and Vue 3.
 

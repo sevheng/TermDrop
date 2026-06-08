@@ -1,6 +1,6 @@
 use keyring::Entry;
 
-const SERVICE_NAME: &str = "ssh-client";
+const SERVICE_NAME: &str = "termdrop";
 
 pub fn store_password(host_id: i64, password: &str) -> Result<(), String> {
     let entry = Entry::new(SERVICE_NAME, &format!("host-{}", host_id))
