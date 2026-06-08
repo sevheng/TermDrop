@@ -673,12 +673,14 @@ fn docker_install(
 }
 
 #[tauri::command]
-fn run_security_audit(
+async fn run_security_audit(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<security::SecurityReport, String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     security::run_security_audit(&session).map_err(|e| e.to_string())
 }
