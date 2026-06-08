@@ -160,13 +160,22 @@
       class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[8rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onPreview" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Preview</button>
-      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onEdit" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Edit</button>
-      <button v-if="contextMenu.file && contextMenu.file.is_dir" @click="onDownloadDir" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Folder</button>
-      <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
-      <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Copy Path</button>
-      <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Rename</button>
-      <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete</button>
+      <!-- Multi-selection mode -->
+      <template v-if="contextMenu.multi">
+        <button @click="onBulkDownloadFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Selected ({{ selectedFiles.size }})</button>
+        <button @click="onBulkDeleteFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete Selected ({{ selectedFiles.size }})</button>
+        <button @click="clearSelection(); contextMenu.show = false" class="block w-full text-left px-4 py-1.5 text-sm text-[#858585] hover:bg-[#2a2d2e]">Clear Selection</button>
+      </template>
+      <!-- Single-file mode -->
+      <template v-else>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onPreview" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Preview</button>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onEdit" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Edit</button>
+        <button v-if="contextMenu.file && contextMenu.file.is_dir" @click="onDownloadDir" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Folder</button>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
+        <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Copy Path</button>
+        <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Rename</button>
+        <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete</button>
+      </template>
     </div>
 
     <ConfirmDialog
@@ -823,11 +832,20 @@ async function onRename() {
 }
 
 async function showContextMenu(event, file) {
+  // If right-clicking a file that's not in the current selection,
+  // and there are other files selected, clear and select only this one
+  const isMulti = selectedFiles.value.size > 1 && selectedFiles.value.has(file.path)
+  if (!isMulti && selectedFiles.value.size > 0) {
+    clearSelection()
+    selectedFiles.value.add(file.path)
+  }
+
   contextMenu.value = {
     show: true,
     x: event.clientX,
     y: event.clientY,
     file,
+    multi: isMulti,
   }
   // Wait for DOM render, then adjust position if off-screen
   await nextTick()
@@ -845,6 +863,16 @@ async function showContextMenu(event, file) {
     contextMenu.value.x = x
     contextMenu.value.y = y
   }
+}
+
+function onBulkDownloadFromMenu() {
+  contextMenu.value.show = false
+  bulkDownload()
+}
+
+function onBulkDeleteFromMenu() {
+  contextMenu.value.show = false
+  bulkDelete()
 }
 
 function formatSize(bytes) {
