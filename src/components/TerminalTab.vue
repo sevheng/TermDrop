@@ -119,44 +119,61 @@
     >
       <div class="flex items-center justify-between px-2 py-0.5">
         <div class="flex items-center gap-3 overflow-x-auto">
-          <div
-            v-if="status.os"
-            class="flex items-center gap-1 text-[10px] text-[#858585] max-w-[140px] cursor-default"
-            @mouseenter="showTooltip($event, status.os)"
-            @mouseleave="hideTooltip"
-          >
-            <Monitor :size="10" class="text-[#4ec9b0] shrink-0" />
-            <span class="truncate">{{ status.os }}</span>
+          <!-- Disconnected -->
+          <div v-if="isDisconnected" class="flex items-center gap-1 text-[10px] text-[#f44336] whitespace-nowrap">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#f44336] animate-pulse" />
+            <span class="font-medium">Disconnected</span>
           </div>
-          <div v-if="status.load" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <Cpu :size="10" class="text-[#569cd6]" />
-            <span class="font-medium">CPU:</span>
-            <span>{{ status.load }}<span v-if="status.cores"> / {{ status.cores }} cores</span></span>
+          <!-- Loading -->
+          <div v-else-if="statusLoading && !status.load" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+            <Loader2 :size="10" class="animate-spin" />
+            <span>Loading stats…</span>
           </div>
-          <div v-if="status.ram" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <MemoryStick :size="10" class="text-[#89d185]" />
-            <span class="font-medium">RAM:</span>
-            <span>{{ status.ram }}</span>
+          <!-- Stats -->
+          <template v-else>
+            <div
+              v-if="status.os"
+              class="flex items-center gap-1 text-[10px] text-[#858585] max-w-[140px] cursor-default"
+              @mouseenter="showTooltip($event, status.os)"
+              @mouseleave="hideTooltip"
+            >
+              <Monitor :size="10" class="text-[#4ec9b0] shrink-0" />
+              <span class="truncate">{{ status.os }}</span>
+            </div>
+            <div v-if="status.load" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <Cpu :size="10" class="text-[#569cd6]" />
+              <span class="font-medium">CPU:</span>
+              <span>{{ status.load }}<span v-if="status.cores"> / {{ status.cores }} cores</span></span>
+            </div>
+            <div v-if="status.ram" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <MemoryStick :size="10" class="text-[#89d185]" />
+              <span class="font-medium">RAM:</span>
+              <span>{{ status.ram }}</span>
+            </div>
+            <div v-if="status.disk" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <HardDrive :size="10" class="text-[#cca700]" />
+              <span class="font-medium">Disk:</span>
+              <span>{{ status.disk }}</span>
+            </div>
+            <div v-if="status.uptime" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <Clock :size="10" class="text-[#c586c0]" />
+              <span class="font-medium">Up:</span>
+              <span>{{ status.uptime }}</span>
+            </div>
+            <div class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <ArrowDown :size="10" class="text-[#89d185]" />
+              <span>{{ status.netDown || '—' }}</span>
+            </div>
+            <div class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+              <ArrowUp :size="10" class="text-[#569cd6]" />
+              <span>{{ status.netUp || '—' }}</span>
+            </div>
+          </template>
+          <!-- Error -->
+          <div v-if="statusError" class="flex items-center gap-1 text-[10px] text-[#f44336] whitespace-nowrap" :title="statusError">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#f44336]" />
+            <span class="truncate max-w-[200px]">{{ statusError }}</span>
           </div>
-          <div v-if="status.disk" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <HardDrive :size="10" class="text-[#cca700]" />
-            <span class="font-medium">Disk:</span>
-            <span>{{ status.disk }}</span>
-          </div>
-          <div v-if="status.uptime" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <Clock :size="10" class="text-[#c586c0]" />
-            <span class="font-medium">Up:</span>
-            <span>{{ status.uptime }}</span>
-          </div>
-          <div v-if="status.netDown" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <ArrowDown :size="10" class="text-[#89d185]" />
-            <span>{{ status.netDown }}</span>
-          </div>
-          <div v-if="status.netUp" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-            <ArrowUp :size="10" class="text-[#569cd6]" />
-            <span>{{ status.netUp }}</span>
-          </div>
-          <span v-if="statusError" class="text-[10px] text-[#f44336]">{{ statusError }}</span>
         </div>
         <button
           @click.stop="statusExpanded = !statusExpanded"
@@ -297,7 +314,7 @@ const searchCaseSensitive = ref(false)
 
 const statusExpanded = ref(false)
 const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' })
-const prevNetStats = ref({ rx: 0, tx: 0, time: 0 })
+const statusLoading = ref(false)
 const statusError = ref('')
 
 const sysTab = ref('processes')
@@ -308,6 +325,20 @@ const sysLoading = ref(false)
 let sysPollInterval = null
 
 const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
+
+// Keystroke batching
+let keyBuffer = ''
+let keyFlushTimer = null
+
+function flushKeyBuffer() {
+  if (keyBuffer) {
+    invoke('ssh_write', { sessionId: props.sessionId, data: keyBuffer }).catch((err) => {
+      console.error('ssh_write failed:', err)
+    })
+    keyBuffer = ''
+  }
+  keyFlushTimer = null
+}
 
 function applySettings(settings) {
   if (!term) return
@@ -439,26 +470,17 @@ function hideTooltip() {
 
 async function fetchSystemStatus() {
   if (!props.hostId || isDisconnected.value) return
+  statusLoading.value = true
   try {
-    const [load, ram, disk, uptime, osName, kernel, arch, cores, netDev] = await Promise.all([
-      invoke('ssh_exec', { hostId: props.hostId, command: "awk '{print $1}' /proc/loadavg" }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: "free -m | awk 'NR==2{used=$3;total=$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}'" }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: "df -h / | awk 'NR==2{print $3\"/\"$2\" (\"$5\")\"}'" }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: "awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60); printf \"%dd %dh %dm\", d,h,m}' /proc/uptime" }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: "grep '^PRETTY_NAME=' /etc/os-release | sed 's/PRETTY_NAME=//; s/\"//g'" }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: 'uname -r' }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: 'uname -m' }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: 'nproc' }).catch(() => ''),
-      invoke('ssh_exec', { hostId: props.hostId, command: "cat /proc/net/dev | tail -n +3 | awk '{print $1\" \"$2\" \"$10}'" }).catch(() => ''),
-    ])
+    const result = await invoke('get_system_stats', { hostId: props.hostId })
 
     // Compute network rates
     let netDown = ''
     let netUp = ''
-    if (netDev) {
+    if (result.netdev) {
       let rxTotal = 0
       let txTotal = 0
-      for (const line of netDev.split('\n')) {
+      for (const line of result.netdev.split('\n')) {
         const parts = line.trim().split(/\s+/)
         if (parts.length >= 3) {
           const iface = parts[0].replace(':', '')
@@ -470,7 +492,7 @@ async function fetchSystemStatus() {
         }
       }
       const now = Date.now()
-      const prev = prevNetStats.value
+      const prev = store.getNetStats(props.hostId)
       if (prev.time > 0 && prev.rx > 0 && prev.tx > 0) {
         const elapsed = (now - prev.time) / 1000
         if (elapsed > 0) {
@@ -479,18 +501,22 @@ async function fetchSystemStatus() {
           netDown = formatRate(rxRate)
           netUp = formatRate(txRate)
         }
+      } else {
+        // First fetch: show cumulative totals instead of dash
+        netDown = formatBytes(rxTotal)
+        netUp = formatBytes(txTotal)
       }
-      prevNetStats.value = { rx: rxTotal, tx: txTotal, time: now }
+      store.setNetStats(props.hostId, { rx: rxTotal, tx: txTotal, time: now })
     }
 
-    const osParts = [osName, kernel, arch].filter(Boolean)
+    const osParts = [result.os, result.kernel, result.arch].filter(Boolean)
     const data = {
-      load,
-      ram,
-      disk,
-      uptime,
+      load: result.load || '',
+      ram: result.ram || '',
+      disk: result.disk || '',
+      uptime: result.uptime || '',
       os: osParts.join(' · '),
-      cores,
+      cores: result.cores || '',
       netDown,
       netUp,
     }
@@ -498,18 +524,25 @@ async function fetchSystemStatus() {
     store.setSystemStatus(props.hostId, data)
     statusError.value = ''
   } catch (err) {
-    statusError.value = ''
+    console.warn('get_system_stats failed:', err)
+    statusError.value = String(err).replace(/^Error: /, '')
+  } finally {
+    statusLoading.value = false
   }
 }
 
 function startStatusPolling() {
   if (statusInterval) clearInterval(statusInterval)
   if (!props.hostId) return
-  // Read from cache immediately instead of firing SSH execs
+  // Don't poll when page is hidden
+  if (document.hidden) return
+  // Read from cache immediately
   const cached = store.getSystemStatus(props.hostId)
   if (cached) {
     status.value = cached
   }
+  // Fetch immediately, then every 5s
+  fetchSystemStatus()
   statusInterval = setInterval(fetchSystemStatus, 5000)
 }
 
@@ -517,6 +550,18 @@ function stopStatusPolling() {
   if (statusInterval) {
     clearInterval(statusInterval)
     statusInterval = null
+  }
+}
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    stopStatusPolling()
+    stopSysPolling()
+  } else if (props.isActive) {
+    startStatusPolling()
+    if (statusExpanded.value) {
+      startSysPolling()
+    }
   }
 }
 
@@ -588,6 +633,7 @@ async function initTerminal() {
   searchAddon = new SearchAddon()
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
+
   term.open(terminalContainer.value)
   fitAddon.fit()
 
@@ -659,6 +705,8 @@ async function initTerminal() {
     if (event.payload === props.sessionId) {
       isDisconnected.value = true
       stopStatusPolling()
+      status.value = { load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' }
+      statusError.value = ''
     }
   })
 
@@ -675,11 +723,12 @@ async function initTerminal() {
     }
   })
 
-  // Send keystrokes to SSH
+  // Batch keystrokes to reduce IPC overhead (~60 fps max)
   term.onData((data) => {
-    invoke('ssh_write', { sessionId: props.sessionId, data }).catch((err) => {
-      console.error('ssh_write failed:', err)
-    })
+    keyBuffer += data
+    if (!keyFlushTimer) {
+      keyFlushTimer = setTimeout(flushKeyBuffer, 16)
+    }
   })
 
   // Listen for settings changes
@@ -712,6 +761,15 @@ function stopActiveOperations() {
 }
 
 function disposeTerminal() {
+  // Flush pending keystrokes before disposal
+  if (keyFlushTimer) {
+    clearTimeout(keyFlushTimer)
+    keyFlushTimer = null
+  }
+  if (keyBuffer) {
+    invoke('ssh_write', { sessionId: props.sessionId, data: keyBuffer }).catch(() => {})
+    keyBuffer = ''
+  }
   stopActiveOperations()
   stopSysPolling()
   if (unlistenData) { unlistenData(); unlistenData = null }
@@ -746,9 +804,16 @@ async function reconnect() {
 onMounted(async () => {
   await initTerminal()
   startActiveOperations()
+  // Fix race condition: if tab is already active when terminal finishes init,
+  // the isActive watcher already fired early (term was null). Start polling now.
+  if (props.isActive) {
+    startStatusPolling()
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   disposeTerminal()
 })
 

@@ -3,6 +3,13 @@ use ssh2::Session;
 use serde::{Deserialize, Serialize};
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
+pub const DOCKER_PERMISSION_DENIED: &str = "DOCKER_PERMISSION_DENIED";
+
+fn is_permission_error(err: &str) -> bool {
+    err.to_lowercase().contains("permission denied")
+        || err.to_lowercase().contains("connect: permission denied")
+        || err.to_lowercase().contains("dial unix")
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Container {
@@ -50,8 +57,16 @@ fn run_command(session: &Session, command: &str) -> Result<String, String> {
 
 fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
     let command = format!("docker {}", args);
-    let output = run_command(session, &command)?;
-    Ok(output)
+    match run_command(session, &command) {
+        Ok(output) => Ok(output),
+        Err(e) => {
+            if is_permission_error(&e) {
+                Err(DOCKER_PERMISSION_DENIED.to_string())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub fn is_docker_installed(session: &Session) -> Result<bool, String> {

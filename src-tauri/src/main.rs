@@ -701,6 +701,40 @@ async fn run_security_audit(
 }
 
 #[tauri::command]
+async fn get_system_stats(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<serde_json::Value, String> {
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
+    let session = session_arc.lock().map_err(|e| e.to_string())?;
+
+    let load = system::run_command(&session, "awk '{print $1}' /proc/loadavg").unwrap_or_default();
+    let ram = system::run_command(&session, "free -m | awk 'NR==2{used=$3;total=$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}'").unwrap_or_default();
+    let disk = system::run_command(&session, "df -h / | awk 'NR==2{print $3\"/\"$2\" (\"$5\")\"}'").unwrap_or_default();
+    let uptime = system::run_command(&session, "awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60); printf \"%dd %dh %dm\", d,h,m}' /proc/uptime").unwrap_or_default();
+    let os_name = system::run_command(&session, "grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | sed 's/PRETTY_NAME=//; s/\"//g'").unwrap_or_default();
+    let kernel = system::run_command(&session, "uname -r").unwrap_or_default();
+    let arch = system::run_command(&session, "uname -m").unwrap_or_default();
+    let cores = system::run_command(&session, "nproc").unwrap_or_default();
+    let netdev = system::run_command(&session, "cat /proc/net/dev | tail -n +3 | awk '{print $1\" \"$2\" \"$10}'").unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "load": load.trim(),
+        "ram": ram.trim(),
+        "disk": disk.trim(),
+        "uptime": uptime.trim(),
+        "os": os_name.trim(),
+        "kernel": kernel.trim(),
+        "arch": arch.trim(),
+        "cores": cores.trim(),
+        "netdev": netdev.trim(),
+    }))
+}
+
+#[tauri::command]
 async fn get_processes(
     state: State<'_, AppState>,
     host_id: i64,
@@ -825,6 +859,7 @@ fn main() {
             docker_inspect_shell,
             docker_install,
             run_security_audit,
+            get_system_stats,
             get_processes,
             get_network,
             get_disk_usage,

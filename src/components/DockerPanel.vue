@@ -45,6 +45,16 @@
         </div>
         <p class="text-[10px] text-[#6e6e6e] mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
       </div>
+      <div v-else-if="permissionDenied" class="flex flex-col items-center justify-center py-8 px-4 text-center">
+        <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
+        <p class="text-xs text-[#cccccc] mb-1">Docker permission denied</p>
+        <p class="text-[10px] text-[#858585] mb-2">Your user is not in the <code class="text-[#cca700]">docker</code> group</p>
+        <div class="bg-[#252526] border border-[#3c3c3c] rounded px-3 py-2 text-left max-w-xs">
+          <p class="text-[10px] text-[#6e6e6e] mb-1">Fix by running in terminal:</p>
+          <code class="text-[10px] text-[#89d185] font-mono block">sudo usermod -aG docker $USER</code>
+          <p class="text-[10px] text-[#6e6e6e] mt-1">Then reconnect this session</p>
+        </div>
+      </div>
       <div v-else-if="containers.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
         <Container :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No containers</p>
@@ -151,6 +161,7 @@ const containers = ref([])
 const loading = ref(false)
 const showAll = ref(false)
 const dockerNotInstalled = ref(false)
+const permissionDenied = ref(false)
 const installing = ref(false)
 const logModal = ref({ show: false, containerName: '', content: '' })
 
@@ -158,12 +169,15 @@ async function loadContainers() {
   if (!props.hostId) return
   loading.value = true
   dockerNotInstalled.value = false
+  permissionDenied.value = false
   try {
     containers.value = await invoke('docker_ps', { hostId: props.hostId, all: showAll.value })
   } catch (err) {
     const errStr = String(err)
     if (errStr.includes('DOCKER_NOT_INSTALLED')) {
       dockerNotInstalled.value = true
+    } else if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
+      permissionDenied.value = true
     } else {
       console.error('docker_ps failed:', err)
     }
@@ -187,12 +201,21 @@ async function installDocker() {
   installing.value = false
 }
 
+function handleDockerError(err, action) {
+  const errStr = String(err)
+  if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', type: 'error' } }))
+  } else {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `${action} failed: ${errStr}`, type: 'error' } }))
+  }
+}
+
 async function startContainer(id) {
   try {
     await invoke('docker_start', { hostId: props.hostId, containerId: id })
     await loadContainers()
   } catch (err) {
-    console.error('docker_start failed:', err)
+    handleDockerError(err, 'Start')
   }
 }
 
@@ -201,7 +224,7 @@ async function stopContainer(id) {
     await invoke('docker_stop', { hostId: props.hostId, containerId: id })
     await loadContainers()
   } catch (err) {
-    console.error('docker_stop failed:', err)
+    handleDockerError(err, 'Stop')
   }
 }
 
@@ -210,7 +233,7 @@ async function restartContainer(id) {
     await invoke('docker_restart', { hostId: props.hostId, containerId: id })
     await loadContainers()
   } catch (err) {
-    console.error('docker_restart failed:', err)
+    handleDockerError(err, 'Restart')
   }
 }
 
@@ -219,7 +242,7 @@ async function viewLogs(id, name) {
     const content = await invoke('docker_logs', { hostId: props.hostId, containerId: id, tail: 200 })
     logModal.value = { show: true, containerName: name, content }
   } catch (err) {
-    console.error('docker_logs failed:', err)
+    handleDockerError(err, 'Logs')
   }
 }
 
@@ -228,7 +251,7 @@ async function execInto(id, name) {
     const shell = await invoke('docker_inspect_shell', { hostId: props.hostId, containerId: id })
     emit('exec', { containerId: id, containerName: name, shell })
   } catch (err) {
-    console.error('docker_inspect_shell failed:', err)
+    handleDockerError(err, 'Exec')
   }
 }
 

@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref, computed, reactive } from 'vue'
+import { ref, shallowRef, computed, reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 
 export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
-  const tabs = ref([])
+  const tabs = shallowRef([])
   const activeTabId = ref(null)
   const tabListeners = reactive(new Map())
   const connectingHostId = ref(null)
@@ -16,6 +16,7 @@ export const useConnectionStore = defineStore('connection', () => {
   })
 
   const systemStatus = ref(new Map())
+  const prevNetStats = ref(new Map())
 
   function getSystemStatus(hostId) {
     return systemStatus.value.get(hostId) || null
@@ -23,6 +24,14 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function setSystemStatus(hostId, data) {
     systemStatus.value.set(hostId, { ...data, timestamp: Date.now() })
+  }
+
+  function getNetStats(hostId) {
+    return prevNetStats.value.get(hostId) || { rx: 0, tx: 0, time: 0 }
+  }
+
+  function setNetStats(hostId, data) {
+    prevNetStats.value.set(hostId, data)
   }
 
   const securityReports = ref(new Map())
@@ -159,7 +168,7 @@ export const useConnectionStore = defineStore('connection', () => {
       connected: true,
       connecting: true,
     }
-    tabs.value.push(tab)
+    tabs.value = [...tabs.value, tab]
     activeTabId.value = sessionId
 
     // Try SFTP in background — don't block tab creation
@@ -169,10 +178,9 @@ export const useConnectionStore = defineStore('connection', () => {
         sftpArgs.password = providedPassword
       }
       const sftpId = await invoke('sftp_connect', sftpArgs)
-      const idx = tabs.value.findIndex(t => t.id === sessionId)
-      if (idx !== -1) {
-        tabs.value[idx] = { ...tabs.value[idx], sftpSessionId: sftpId, connecting: false }
-      }
+      tabs.value = tabs.value.map(t =>
+        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
+      )
     } catch (err) {
       console.warn('SFTP connection failed:', err)
       window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
@@ -184,19 +192,17 @@ export const useConnectionStore = defineStore('connection', () => {
 
     const unlistenDisconnect = await listen('ssh-disconnected', (event) => {
       if (event.payload === sessionId) {
-        const idx = tabs.value.findIndex(t => t.id === sessionId)
-        if (idx !== -1) {
-          tabs.value[idx] = { ...tabs.value[idx], connected: false }
-        }
+        tabs.value = tabs.value.map(t =>
+          t.id === sessionId ? { ...t, connected: false } : t
+        )
       }
     })
 
     const unlistenReconnected = await listen('ssh-reconnected', (event) => {
       if (event.payload === sessionId) {
-        const idx = tabs.value.findIndex(t => t.id === sessionId)
-        if (idx !== -1) {
-          tabs.value[idx] = { ...tabs.value[idx], connected: true }
-        }
+        tabs.value = tabs.value.map(t =>
+          t.id === sessionId ? { ...t, connected: true } : t
+        )
       }
     })
 
@@ -359,6 +365,8 @@ export const useConnectionStore = defineStore('connection', () => {
     systemStatus,
     getSystemStatus,
     setSystemStatus,
+    getNetStats,
+    setNetStats,
     securityReports,
     getSecurityReport,
     runSecurityAudit,

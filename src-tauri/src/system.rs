@@ -57,7 +57,7 @@ pub struct DiskInfo {
     pub dirs: Vec<DiskDir>,
 }
 
-fn run_command(session: &Session, command: &str) -> Result<String, String> {
+pub fn run_command(session: &Session, command: &str) -> Result<String, String> {
     let mut channel = session.channel_session()
         .map_err(|e| format!("channel: {}", e))?;
     channel.exec(command)
@@ -92,19 +92,21 @@ fn run_command(session: &Session, command: &str) -> Result<String, String> {
 pub fn get_processes(session: &Session) -> Result<Vec<Process>, String> {
     let output = run_command(
         session,
-        "ps -eo pid,comm,pcpu,pmem,etime --sort=-pcpu | head -21",
+        "ps -eo pid,pcpu,pmem,etime,comm --sort=-pcpu | head -21",
     )?;
 
     let mut processes = Vec::new();
     for line in output.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 5 {
+            // comm is last and may contain spaces — join everything after the fixed columns
+            let command = parts[4..].join(" ");
             processes.push(Process {
                 pid: parts[0].to_string(),
-                command: parts[1].to_string(),
-                cpu: parts[2].to_string(),
-                mem: parts[3].to_string(),
-                uptime: parts[4].to_string(),
+                cpu: parts[1].to_string(),
+                mem: parts[2].to_string(),
+                uptime: parts[3].to_string(),
+                command,
             });
         }
     }
