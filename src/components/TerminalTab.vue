@@ -148,6 +148,14 @@
             <span class="font-medium">Up:</span>
             <span>{{ status.uptime }}</span>
           </div>
+          <div v-if="status.netDown" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+            <ArrowDown :size="10" class="text-[#89d185]" />
+            <span>{{ status.netDown }}</span>
+          </div>
+          <div v-if="status.netUp" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+            <ArrowUp :size="10" class="text-[#569cd6]" />
+            <span>{{ status.netUp }}</span>
+          </div>
           <span v-if="statusError" class="text-[10px] text-[#f44336]">{{ statusError }}</span>
         </div>
         <button
@@ -242,7 +250,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2 } from 'lucide-vue-next'
+import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
@@ -288,7 +296,8 @@ const searchQuery = ref('')
 const searchCaseSensitive = ref(false)
 
 const statusExpanded = ref(false)
-const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '' })
+const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' })
+const prevNetStats = ref({ rx: 0, tx: 0, time: 0 })
 const statusError = ref('')
 
 const sysTab = ref('processes')
@@ -408,6 +417,13 @@ function formatBytes(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
 }
 
+function formatRate(bytesPerSec) {
+  const abs = Math.abs(bytesPerSec)
+  if (abs < 1024) return bytesPerSec.toFixed(0) + ' B/s'
+  if (abs < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s'
+  return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
+}
+
 function showTooltip(event, text) {
   tooltip.value = {
     show: true,
@@ -424,7 +440,7 @@ function hideTooltip() {
 async function fetchSystemStatus() {
   if (!props.hostId || isDisconnected.value) return
   try {
-    const [load, ram, disk, uptime, osName, kernel, arch, cores] = await Promise.all([
+    const [load, ram, disk, uptime, osName, kernel, arch, cores, netDev] = await Promise.all([
       invoke('ssh_exec', { hostId: props.hostId, command: "awk '{print $1}' /proc/loadavg" }).catch(() => ''),
       invoke('ssh_exec', { hostId: props.hostId, command: "free -m | awk 'NR==2{used=$3;total=$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}'" }).catch(() => ''),
       invoke('ssh_exec', { hostId: props.hostId, command: "df -h / | awk 'NR==2{print $3\"/\"$2\" (\"$5\")\"}'" }).catch(() => ''),
@@ -433,7 +449,40 @@ async function fetchSystemStatus() {
       invoke('ssh_exec', { hostId: props.hostId, command: 'uname -r' }).catch(() => ''),
       invoke('ssh_exec', { hostId: props.hostId, command: 'uname -m' }).catch(() => ''),
       invoke('ssh_exec', { hostId: props.hostId, command: 'nproc' }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: "cat /proc/net/dev | tail -n +3 | awk '{print $1\" \"$2\" \"$10}'" }).catch(() => ''),
     ])
+
+    // Compute network rates
+    let netDown = ''
+    let netUp = ''
+    if (netDev) {
+      let rxTotal = 0
+      let txTotal = 0
+      for (const line of netDev.split('\n')) {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length >= 3) {
+          const iface = parts[0].replace(':', '')
+          if (iface === 'lo') continue
+          const rx = parseInt(parts[1]) || 0
+          const tx = parseInt(parts[2]) || 0
+          rxTotal += rx
+          txTotal += tx
+        }
+      }
+      const now = Date.now()
+      const prev = prevNetStats.value
+      if (prev.time > 0 && prev.rx > 0 && prev.tx > 0) {
+        const elapsed = (now - prev.time) / 1000
+        if (elapsed > 0) {
+          const rxRate = (rxTotal - prev.rx) / elapsed
+          const txRate = (txTotal - prev.tx) / elapsed
+          netDown = formatRate(rxRate)
+          netUp = formatRate(txRate)
+        }
+      }
+      prevNetStats.value = { rx: rxTotal, tx: txTotal, time: now }
+    }
+
     const osParts = [osName, kernel, arch].filter(Boolean)
     const data = {
       load,
@@ -442,6 +491,8 @@ async function fetchSystemStatus() {
       uptime,
       os: osParts.join(' · '),
       cores,
+      netDown,
+      netUp,
     }
     status.value = data
     store.setSystemStatus(props.hostId, data)
