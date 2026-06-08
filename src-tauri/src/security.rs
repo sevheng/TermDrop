@@ -345,9 +345,9 @@ pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
         check_disk_space(session),
     ];
 
-    let pass_count = checks.iter().filter(|c| c.status == "pass").count() as u8;
-    let total = checks.len() as u8;
-    let score = if total > 0 { (pass_count * 100) / total } else { 0 };
+    let pass_count = checks.iter().filter(|c| c.status == "pass").count() as u16;
+    let total = checks.len() as u16;
+    let score = if total > 0 { ((pass_count * 100) / total) as u8 } else { 0 };
 
     Ok(SecurityReport { score, checks })
 }
