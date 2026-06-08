@@ -1,0 +1,23 @@
+// VS Code Dark+ terminal colors
+export const TERMINAL_THEME = {
+  background: '#1e1e1e',
+  foreground: '#d4d4d4',
+  cursor: '#d4d4d4',
+  selectionBackground: '#264f78',
+  black: '#1e1e1e',
+  red: '#f44747',
+  green: '#6a9955',
+  yellow: '#dcdcaa',
+  blue: '#569cd6',
+  magenta: '#c586c0',
+  cyan: '#4ec9b0',
+  white: '#d4d4d4',
+  brightBlack: '#808080',
+  brightRed: '#f44747',
+  brightGreen: '#b5cea8',
+  brightYellow: '#dcdcaa',
+  brightBlue: '#569cd6',
+  brightMagenta: '#c586c0',
+  brightCyan: '#4ec9b0',
+  brightWhite: '#e8e8e8',
+}

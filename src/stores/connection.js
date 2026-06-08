@@ -12,7 +12,6 @@ export const useConnectionStore = defineStore('connection', () => {
   const connectingHostId = ref(null)
   const settings = ref({
     font_size: '14',
-    theme: 'dark',
     download_path: '',
   })
 
@@ -259,14 +258,12 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function loadSettings() {
-    const [font_size, theme, download_path] = await Promise.all([
+    const [font_size, download_path] = await Promise.all([
       invoke('get_setting', { key: 'font_size' }),
-      invoke('get_setting', { key: 'theme' }),
       invoke('get_setting', { key: 'download_path' }),
     ])
     settings.value = {
       font_size: font_size || '14',
-      theme: theme || 'dark',
       download_path: download_path || '',
     }
     return settings.value
@@ -275,7 +272,6 @@ export const useConnectionStore = defineStore('connection', () => {
   async function saveSettings(newSettings) {
     await Promise.all([
       invoke('set_setting', { key: 'font_size', value: String(newSettings.font_size || 14) }),
-      invoke('set_setting', { key: 'theme', value: newSettings.theme || 'dark' }),
       invoke('set_setting', { key: 'download_path', value: newSettings.download_path || '' }),
     ])
     settings.value = { ...settings.value, ...newSettings }

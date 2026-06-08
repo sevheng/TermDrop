@@ -2,8 +2,8 @@
   <div
     class="group flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer"
     :class="isConnecting
-      ? 'bg-blue-100 dark:bg-blue-900/30 opacity-60'
-      : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+      ? 'bg-[#0e639c]/30 opacity-60'
+      : 'hover:bg-[#2a2d2e]'"
     draggable="true"
     @dragstart="onDragStart"
     @dragend="$emit('drag-end')"
@@ -13,38 +13,38 @@
     <!-- Connection status dot -->
     <span
       class="w-1.5 h-1.5 rounded-full shrink-0"
-      :class="isConnected ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'"
+      :class="isConnected ? 'bg-[#89d185]' : 'bg-[#6e6e6e]'"
     ></span>
 
     <!-- OS Icon -->
-    <component :is="osIcon" :size="14" class="shrink-0 text-gray-400 dark:text-gray-500" />
+    <component :is="osIcon" :size="14" class="shrink-0 text-[#6e6e6e]" />
 
     <!-- Host info -->
     <div class="min-w-0 flex-1">
-      <div class="text-xs text-gray-800 truncate dark:text-gray-200">{{ host.name }}</div>
-      <div class="text-[10px] text-gray-500 truncate dark:text-gray-500">{{ host.username }}@{{ host.host }}:{{ host.port }}</div>
+      <div class="text-xs text-[#cccccc] truncate">{{ host.name }}</div>
+      <div class="text-[10px] text-[#858585] truncate">{{ host.username }}@{{ host.host }}:{{ host.port }}</div>
     </div>
 
     <!-- Actions -->
     <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
       <button
         @click.stop="$emit('toggle-favorite')"
-        class="p-0.5 text-gray-400 hover:text-yellow-500 dark:hover:text-yellow-400"
-        :class="host.favorite ? 'text-yellow-500 dark:text-yellow-400 opacity-100' : ''"
+        class="p-0.5 text-[#6e6e6e] hover:text-[#cca700]"
+        :class="host.favorite ? 'text-[#cca700] opacity-100' : ''"
         title="Toggle favorite"
       >
         <Star :size="12" :fill="host.favorite ? 'currentColor' : 'none'" />
       </button>
-      <button @click.stop="$emit('edit')" class="p-0.5 text-gray-400 hover:text-gray-900 dark:hover:text-white" title="Edit">
+      <button @click.stop="$emit('edit')" class="p-0.5 text-[#6e6e6e] hover:text-[#cccccc]" title="Edit">
         <Pencil :size="12" />
       </button>
-      <button @click.stop="$emit('delete')" class="p-0.5 text-gray-400 hover:text-red-400" title="Delete">
+      <button @click.stop="$emit('delete')" class="p-0.5 text-[#6e6e6e] hover:text-[#f44336]" title="Delete">
         <Trash2 :size="12" />
       </button>
     </div>
 
     <!-- Connecting spinner -->
-    <Loader2 v-if="isConnecting" :size="14" class="text-blue-500 shrink-0 animate-spin" />
+    <Loader2 v-if="isConnecting" :size="14" class="text-[#007acc] shrink-0 animate-spin" />
   </div>
 </template>
 

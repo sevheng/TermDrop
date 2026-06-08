@@ -1,13 +1,13 @@
 <template>
-  <div class="w-72 h-full bg-white border-l border-gray-200 flex flex-col relative dark:bg-gray-800 dark:border-gray-700">
+  <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col relative">
     <!-- Header -->
-    <div class="px-2 py-1 border-b border-gray-200 dark:border-gray-700">
-      <h3 class="text-xs font-semibold text-gray-800 mb-1 dark:text-gray-200">SFTP Browser</h3>
-      <div class="flex items-center gap-1 text-xs text-gray-500 overflow-x-auto whitespace-nowrap dark:text-gray-400">
+    <div class="px-2 py-1 border-b border-[#3c3c3c]">
+      <h3 class="text-xs font-semibold text-[#cccccc] mb-1">SFTP Browser</h3>
+      <div class="flex items-center gap-1 text-xs text-[#858585] overflow-x-auto whitespace-nowrap">
         <span
           v-for="(segment, index) in breadcrumbs"
           :key="index"
-          class="cursor-pointer hover:text-gray-900 dark:hover:text-white"
+          class="cursor-pointer hover:text-[#cccccc]"
           @click="navigateTo(segment.path)"
         >
           {{ segment.name }}<span v-if="index < breadcrumbs.length - 1" class="mx-1">/</span>
@@ -16,22 +16,22 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="px-2 py-1.5 border-b border-gray-200 flex gap-1.5 flex-wrap dark:border-gray-700">
-      <button @click="goUp" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-800 px-1.5 py-0.5 rounded dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white">↑ Up</button>
-      <button @click="onUpload" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-1.5 py-0.5 rounded">Upload</button>
-      <button @click="onMkdir" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-800 px-1.5 py-0.5 rounded dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white">+ Folder</button>
-      <button @click="loadFiles" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-800 px-1.5 py-0.5 rounded dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white">↻</button>
+    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex gap-1.5 flex-wrap">
+      <button @click="goUp" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↑ Up</button>
+      <button @click="onUpload" class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-1.5 py-0.5 rounded">Upload</button>
+      <button @click="onMkdir" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">+ Folder</button>
+      <button @click="loadFiles" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↻</button>
     </div>
 
     <!-- Column headers -->
-    <div class="px-2 py-0.5 border-b border-gray-200 flex items-center text-xs text-gray-500 select-none dark:border-gray-700 dark:text-gray-400">
-      <span class="flex-1 min-w-0 cursor-pointer hover:text-gray-900 dark:hover:text-white" @click="setSort('name')">
+    <div class="px-2 py-0.5 border-b border-[#3c3c3c] flex items-center text-xs text-[#858585] select-none">
+      <span class="flex-1 min-w-0 cursor-pointer hover:text-[#cccccc]" @click="setSort('name')">
         Name {{ sortIndicator('name') }}
       </span>
-      <span class="w-12 shrink-0 text-right cursor-pointer hover:text-gray-900 dark:hover:text-white" @click="setSort('size')">
+      <span class="w-12 shrink-0 text-right cursor-pointer hover:text-[#cccccc]" @click="setSort('size')">
         Size {{ sortIndicator('size') }}
       </span>
-      <span class="w-14 shrink-0 text-right cursor-pointer hover:text-gray-900 dark:hover:text-white ml-1.5" @click="setSort('modified')">
+      <span class="w-14 shrink-0 text-right cursor-pointer hover:text-[#cccccc] ml-1.5" @click="setSort('modified')">
         Modified {{ sortIndicator('modified') }}
       </span>
       <span class="w-16 shrink-0 text-right ml-1.5">Perms</span>
@@ -41,28 +41,28 @@
     <div class="flex-1 overflow-y-auto relative">
       <div
         v-if="loading"
-        class="flex items-center justify-center h-20 text-gray-400 text-sm dark:text-gray-500"
+        class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm"
       >
         Loading...
       </div>
-      <div v-else-if="sortedFiles.length === 0" class="flex items-center justify-center h-20 text-gray-400 text-sm dark:text-gray-500">
+      <div v-else-if="sortedFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
         Empty directory
       </div>
       <div v-else>
         <div
           v-for="file in sortedFiles"
           :key="file.path"
-          class="flex items-center px-2 py-0.5 hover:bg-gray-100 cursor-pointer text-sm dark:hover:bg-gray-700"
-          :class="file.is_dir ? 'text-blue-600 dark:text-blue-300' : 'text-gray-800 dark:text-gray-200'"
+          class="flex items-center px-2 py-0.5 hover:bg-[#2a2d2e] cursor-pointer text-sm"
+          :class="file.is_dir ? 'text-[#007acc]' : 'text-[#cccccc]'"
           @dblclick="file.is_dir && navigateTo(file.path)"
           @contextmenu.prevent="showContextMenu($event, file)"
         >
           <Folder v-if="file.is_dir" :size="12" class="shrink-0 mr-1.5" />
-          <FileText v-else :size="12" class="shrink-0 mr-1.5 text-gray-400" />
+          <FileText v-else :size="12" class="shrink-0 mr-1.5 text-[#6e6e6e]" />
           <span class="truncate flex-1 min-w-0">{{ file.name }}</span>
-          <span class="w-12 shrink-0 text-right text-xs text-gray-400 dark:text-gray-500">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
-          <span class="w-14 shrink-0 text-right text-xs text-gray-400 ml-1.5 dark:text-gray-500">{{ formatDate(file.modified) }}</span>
-          <span class="w-16 shrink-0 text-right text-xs text-gray-400 ml-1.5 font-mono dark:text-gray-500">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
+          <span class="w-12 shrink-0 text-right text-xs text-[#6e6e6e]">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
+          <span class="w-14 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5">{{ formatDate(file.modified) }}</span>
+          <span class="w-16 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
         </div>
       </div>
     </div>
@@ -71,13 +71,13 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50 min-w-[8rem] dark:bg-gray-700 dark:border-gray-600"
+      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[8rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <button @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Download</button>
-      <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Copy Path</button>
-      <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Rename</button>
-      <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-red-500 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-600">Delete</button>
+      <button @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
+      <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Copy Path</button>
+      <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Rename</button>
+      <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete</button>
     </div>
 
     <ConfirmDialog
@@ -101,14 +101,14 @@
     />
 
     <!-- Progress toasts -->
-    <div v-if="transfers.length > 0" class="border-t border-gray-200 p-2 space-y-2 dark:border-gray-700">
+    <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] p-2 space-y-2">
       <div v-for="t in transfers" :key="t.file" class="text-xs">
-        <div class="flex justify-between text-gray-600 mb-1 dark:text-gray-300">
+        <div class="flex justify-between text-[#858585] mb-1">
           <span class="truncate">{{ t.file }}</span>
           <span>{{ Math.round((t.bytes / t.total) * 100) }}%</span>
         </div>
-        <div class="h-1 bg-gray-200 rounded overflow-hidden dark:bg-gray-700">
-          <div class="h-full bg-blue-500 transition-all" :style="{ width: (t.bytes / t.total) * 100 + '%' }"></div>
+        <div class="h-1 bg-[#3c3c3c] rounded overflow-hidden">
+          <div class="h-full bg-[#007acc] transition-all" :style="{ width: (t.bytes / t.total) * 100 + '%' }"></div>
         </div>
       </div>
     </div>

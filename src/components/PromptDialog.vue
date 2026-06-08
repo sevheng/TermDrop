@@ -4,16 +4,16 @@
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
     @click.self="onCancel"
   >
-    <div class="bg-white rounded-lg p-5 w-80 border border-gray-200 shadow-xl dark:bg-gray-800 dark:border-gray-700">
-      <h3 class="text-base font-semibold text-gray-900 mb-1 dark:text-white">{{ title }}</h3>
-      <p v-if="message" class="text-sm text-gray-600 mb-3 dark:text-gray-300">{{ message }}</p>
+    <div class="bg-[#252526] rounded-lg p-5 w-80 border border-[#3c3c3c] shadow-xl">
+      <h3 class="text-base font-semibold text-[#cccccc] mb-1">{{ title }}</h3>
+      <p v-if="message" class="text-sm text-[#858585] mb-3">{{ message }}</p>
 
       <input
         ref="inputRef"
         v-model="inputValue"
         type="text"
         :placeholder="placeholder"
-        class="w-full bg-gray-100 border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 mb-4 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-500"
+        class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] placeholder-[#6e6e6e] focus:outline-none focus:border-[#007acc] mb-4"
         @keydown.enter="onConfirm"
         @keydown.esc="onCancel"
       />
@@ -21,7 +21,7 @@
       <div class="flex justify-end gap-2">
         <button
           @click="onCancel"
-          class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 rounded hover:bg-gray-100 transition-colors dark:text-gray-300 dark:hover:text-white dark:hover:bg-gray-700"
+          class="px-3 py-1.5 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
         >
           {{ cancelText }}
         </button>
@@ -31,8 +31,8 @@
           :class="[
             'px-3 py-1.5 text-sm text-white rounded transition-colors',
             danger
-              ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-900/50'
-              : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900/50'
+              ? 'bg-[#f44336] hover:bg-[#d32f2f] disabled:bg-[#f44336]/30'
+              : 'bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/30'
           ]"
         >
           {{ confirmText }}

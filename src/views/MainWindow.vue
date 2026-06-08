@@ -1,11 +1,10 @@
 <template>
   <div
-    class="flex h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white transition-colors"
-    :class="{ 'light-theme': currentTheme === 'light' }"
+    class="flex h-screen bg-[#1e1e1e] text-[#cccccc]"
   >
     <!-- Host Sidebar -->
     <div
-      class="h-full bg-white border-r border-gray-200 flex flex-col shrink-0 dark:bg-gray-800 dark:border-gray-700"
+      class="h-full bg-[#252526] border-r border-[#3c3c3c] flex flex-col shrink-0"
       :style="{ width: sidebarWidth + 'px' }"
     >
       <HostSidebar />
@@ -13,22 +12,22 @@
 
     <!-- Sidebar resize handle -->
     <div
-      class="w-1.5 shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors z-10 dark:bg-gray-700"
+      class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
       @mousedown="startResizeSidebar"
     ></div>
 
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Header with tabs and settings -->
-      <div class="flex border-b border-gray-200 bg-white items-center justify-between dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex border-b border-[#3c3c3c] bg-[#252526] items-center justify-between">
         <div class="flex overflow-x-auto">
           <button
             v-for="tab in store.tabs"
             :key="tab.id"
             @click="store.setActiveTab(tab.id)"
-            class="px-3 py-1.5 text-xs border-r border-gray-200 flex items-center gap-1.5 whitespace-nowrap transition-colors dark:border-gray-700"
+            class="px-3 py-1.5 text-xs border-r border-[#3c3c3c] flex items-center gap-1.5 whitespace-nowrap transition-colors"
             :class="tab.id === store.activeTabId
-              ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+              ? 'bg-[#37373d] text-[#cccccc]'
+              : 'text-[#858585] hover:text-[#cccccc]'"
           >
             <span
               class="w-2 h-2 rounded-full shrink-0"
@@ -49,10 +48,10 @@
           </button>
         </div>
         <div class="flex items-center shrink-0">
-          <button @click="showShortcuts = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Keyboard shortcuts">
+          <button @click="showShortcuts = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
-          <button @click="showSettings = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Settings">
+          <button @click="showSettings = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Settings">
             <Settings :size="14" />
           </button>
         </div>
@@ -84,41 +83,41 @@
         <!-- SFTP panel resize handle -->
         <div
           v-if="store.activeTab"
-          class="w-1.5 shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors z-10 dark:bg-gray-700"
+          class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
           v-if="store.activeTab"
-          class="border-l border-gray-200 shrink-0 bg-white flex flex-col dark:border-gray-700 dark:bg-gray-800"
+          class="border-l border-[#3c3c3c] shrink-0 bg-[#1e1e1e] flex flex-col"
           :style="{ width: sftpWidth + 'px' }"
         >
           <!-- Panel tabs -->
-          <div class="flex border-b border-gray-200 dark:border-gray-700">
+          <div class="flex border-b border-[#3c3c3c]">
             <button
               @click="showPortForwards = false"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
               :class="!showPortForwards
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                ? 'text-[#007acc]'
+                : 'text-[#858585] hover:text-[#cccccc]'"
             >
               SFTP
               <span
                 v-if="!showPortForwards"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-600 rounded-full dark:bg-blue-400"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
             <button
               @click="showPortForwards = true"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
               :class="showPortForwards
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                ? 'text-[#007acc]'
+                : 'text-[#858585] hover:text-[#cccccc]'"
             >
               Tunnels
               <span
                 v-if="showPortForwards"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-600 rounded-full dark:bg-blue-400"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
           </div>
@@ -196,7 +195,6 @@ const showSettings = ref(false)
 const showShortcuts = ref(false)
 const showPortForwards = ref(false)
 const showForwardModal = ref(false)
-const currentTheme = ref('dark')
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
 
@@ -232,10 +230,8 @@ function confirmDisconnect(sessionId, name) {
   })
 }
 
-function onSettingsSaved(settings) {
-  currentTheme.value = settings.theme
-  document.documentElement.classList.toggle('dark', settings.theme === 'dark')
-  document.documentElement.classList.toggle('light-theme', settings.theme === 'light')
+function onSettingsSaved() {
+  // Theme is always VS Code Dark, nothing to toggle
 }
 
 async function onForwardSaved(forwardData) {
@@ -336,17 +332,13 @@ function startResizeSftp(e) {
   window.addEventListener('mouseup', onUp)
 }
 
-onMounted(async () => {
+onMounted(() => {
   const savedSidebarWidth = localStorage.getItem('sidebar-width')
   if (savedSidebarWidth) sidebarWidth.value = parseInt(savedSidebarWidth)
   const savedSftpWidth = localStorage.getItem('sftp-width')
   if (savedSftpWidth) sftpWidth.value = parseInt(savedSftpWidth)
 
-  const savedTheme = await invoke('get_setting', { key: 'theme' })
-  const theme = savedTheme || 'dark'
-  currentTheme.value = theme
-  document.documentElement.classList.toggle('dark', theme === 'dark')
-  document.documentElement.classList.toggle('light-theme', theme === 'light')
+  document.documentElement.classList.add('dark')
 
   window.addEventListener('keydown', onKeyDown)
 })
@@ -355,12 +347,3 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 </script>
-
-<style>
-.light-theme {
-  --bg-primary: #f3f4f6;
-  --bg-secondary: #e5e7eb;
-  --text-primary: #111827;
-  --text-secondary: #374151;
-}
-</style>

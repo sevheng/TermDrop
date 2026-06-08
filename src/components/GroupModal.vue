@@ -4,15 +4,15 @@
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
     @click.self="onClose"
   >
-    <div class="bg-white rounded-lg p-6 w-80 border border-gray-200 shadow-xl dark:bg-gray-800 dark:border-gray-700">
-      <h3 class="text-lg font-semibold text-gray-900 mb-5 dark:text-white">
+    <div class="bg-[#252526] rounded-lg p-6 w-80 border border-[#3c3c3c] shadow-xl">
+      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
         {{ isRename ? 'Rename Group' : 'New Group' }}
       </h3>
 
       <div class="space-y-4">
         <div>
-          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">
-            Group Name <span class="text-red-500">*</span>
+          <label class="block text-xs text-[#858585] mb-1.5">
+            Group Name <span class="text-[#f44336]">*</span>
           </label>
           <input
             v-model="form.name"
@@ -23,20 +23,20 @@
             @blur="validateField('name')"
             @keydown.enter="onSave"
           />
-          <p v-if="errors.name" class="text-xs text-red-500 mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
         </div>
       </div>
 
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="onClose"
-          class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]"
         >
           Cancel
         </button>
         <button
           @click="onSave"
-          class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded"
+          class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] text-white rounded"
         >
           {{ isRename ? 'Rename' : 'Create' }}
         </button>
@@ -81,8 +81,8 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-gray-100 border rounded px-3 py-2 text-sm text-gray-900 focus:outline-none transition-colors dark:bg-gray-700 dark:text-white'
-  const error = errors.value[field] ? 'border-red-500 focus:border-red-400' : 'border-gray-300 focus:border-blue-500 dark:border-gray-600'
+  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
+  const error = errors.value[field] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
   return `${base} ${error}`
 }
 

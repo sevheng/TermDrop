@@ -1,11 +1,11 @@
 <template>
-  <div class="w-72 h-full bg-white border-l border-gray-200 flex flex-col dark:bg-gray-800 dark:border-gray-700">
+  <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col">
     <!-- Header -->
-    <div class="px-3 py-2 border-b border-gray-200 flex items-center justify-between dark:border-gray-700">
-      <h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200">Port Forwards</h3>
+    <div class="px-3 py-2 border-b border-[#3c3c3c] flex items-center justify-between">
+      <h3 class="text-xs font-semibold text-[#cccccc]">Port Forwards</h3>
       <button
         @click="$emit('add')"
-        class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white"
+        class="text-[#858585] hover:text-[#cccccc] p-1"
         title="Add forward"
       >
         <Plus :size="12" />
@@ -14,25 +14,25 @@
 
     <!-- List -->
     <div class="flex-1 overflow-y-auto py-1 px-2">
-      <div v-if="forwards.length === 0" class="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-gray-500">
+      <div v-if="forwards.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
         <Network :size="20" class="mb-2 opacity-50" />
         <p class="text-xs">No port forwards</p>
         <p class="text-xs mt-1">Click + to add one</p>
       </div>
 
       <div v-for="fw in forwards" :key="fw.id" class="mb-2">
-        <div class="bg-gray-50 rounded p-2 border border-gray-200 dark:bg-gray-700/50 dark:border-gray-600">
+        <div class="bg-[#252526] rounded p-2 border border-[#3c3c3c]">
           <div class="flex items-center justify-between mb-1">
-            <span class="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{{ fw.name }}</span>
+            <span class="text-xs font-medium text-[#cccccc] truncate">{{ fw.name }}</span>
             <span
               class="text-[10px] px-1.5 py-0.5 rounded font-medium"
-              :class="activeStatus[fw.id] ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'"
+              :class="activeStatus[fw.id] ? 'bg-[#89d185]/20 text-[#89d185]' : 'bg-[#3c3c3c] text-[#858585]'"
             >
               {{ activeStatus[fw.id] ? 'Active' : 'Stopped' }}
             </span>
           </div>
 
-          <div class="text-[10px] text-gray-500 dark:text-gray-400 space-y-0.5">
+          <div class="text-[10px] text-[#858585] space-y-0.5">
             <div class="flex items-center gap-1">
               <ArrowRightLeft :size="9" />
               <span>{{ fw.kind === 'local' ? 'Local' : 'SOCKS' }} → {{ fw.local_host }}:{{ fw.local_port }}</span>
@@ -47,20 +47,20 @@
             <button
               v-if="!activeStatus[fw.id]"
               @click="startForward(fw.id)"
-              class="flex-1 text-[10px] bg-blue-600 hover:bg-blue-700 text-white py-1 rounded transition-colors"
+              class="flex-1 text-[10px] bg-[#0e639c] hover:bg-[#1177bb] text-white py-1 rounded transition-colors"
             >
               Start
             </button>
             <button
               v-else
               @click="stopForward(fw.id)"
-              class="flex-1 text-[10px] bg-gray-200 hover:bg-gray-300 text-gray-700 py-1 rounded transition-colors dark:bg-gray-600 dark:hover:bg-gray-500 dark:text-gray-200"
+              class="flex-1 text-[10px] bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] py-1 rounded transition-colors"
             >
               Stop
             </button>
             <button
               @click="deleteForward(fw.id)"
-              class="text-[10px] bg-red-50 hover:bg-red-100 text-red-600 py-1 px-2 rounded transition-colors dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-400"
+              class="text-[10px] bg-[#f44336]/10 hover:bg-[#f44336]/20 text-[#f44336] py-1 px-2 rounded transition-colors"
             >
               <Trash2 :size="10" />
             </button>

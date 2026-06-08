@@ -1,50 +1,34 @@
 <template>
   <div v-if="show" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="$emit('close')">
-    <div class="bg-white rounded-lg p-6 w-96 border border-gray-200 shadow-xl dark:bg-gray-800 dark:border-gray-700">
-      <h3 class="text-lg font-semibold text-gray-900 mb-4 dark:text-white">Settings</h3>
+    <div class="bg-[#252526] rounded-lg p-6 w-96 border border-[#3c3c3c] shadow-xl">
+      <h3 class="text-lg font-semibold text-[#cccccc] mb-4">Settings</h3>
 
       <div class="space-y-2">
         <div>
-          <label class="block text-xs text-gray-500 mb-1 dark:text-gray-400">Terminal Font Size: {{ fontSize }}px</label>
+          <label class="block text-xs text-[#858585] mb-1">Terminal Font Size: {{ fontSize }}px</label>
           <input
             v-model.number="fontSize"
             type="range"
             min="10"
             max="24"
-            class="w-full accent-blue-500"
+            class="w-full accent-[#007acc]"
           />
         </div>
 
         <div>
-          <label class="block text-xs text-gray-500 mb-1 dark:text-gray-400">Theme</label>
-          <div class="flex gap-2">
-            <button
-              @click="theme = 'dark'"
-              class="flex-1 py-2 text-sm rounded border transition-colors"
-              :class="theme === 'dark' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-100 border-gray-300 text-gray-700 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'"
-            >Dark</button>
-            <button
-              @click="theme = 'light'"
-              class="flex-1 py-2 text-sm rounded border transition-colors"
-              :class="theme === 'light' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-100 border-gray-300 text-gray-700 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'"
-            >Light</button>
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs text-gray-500 mb-1 dark:text-gray-400">Download Path (leave empty for default)</label>
+          <label class="block text-xs text-[#858585] mb-1">Download Path (leave empty for default)</label>
           <input
             v-model="downloadPath"
             type="text"
             placeholder="~/Downloads"
-            class="w-full bg-gray-100 border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none focus:border-[#007acc]"
           />
         </div>
       </div>
 
       <div class="flex justify-end gap-2 mt-6">
-        <button @click="$emit('close')" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Cancel</button>
-        <button @click="save" class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded">Save</button>
+        <button @click="$emit('close')" class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]">Cancel</button>
+        <button @click="save" class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] text-white rounded">Save</button>
       </div>
     </div>
   </div>
@@ -62,14 +46,12 @@ const emit = defineEmits(['close', 'saved'])
 const store = useConnectionStore()
 
 const fontSize = ref(14)
-const theme = ref('dark')
 const downloadPath = ref('')
 
 watch(() => props.show, async (isOpen) => {
   if (isOpen) {
     await store.loadSettings()
     fontSize.value = parseInt(store.settings.font_size || '14')
-    theme.value = store.settings.theme || 'dark'
     downloadPath.value = store.settings.download_path || ''
   }
 })
@@ -77,13 +59,12 @@ watch(() => props.show, async (isOpen) => {
 async function save() {
   await store.saveSettings({
     font_size: String(fontSize.value),
-    theme: theme.value,
     download_path: downloadPath.value,
   })
   window.dispatchEvent(new CustomEvent('terminal-settings-changed', {
-    detail: { fontSize: fontSize.value, theme: theme.value }
+    detail: { fontSize: fontSize.value }
   }))
-  emit('saved', { fontSize: fontSize.value, theme: theme.value, downloadPath: downloadPath.value })
+  emit('saved', { fontSize: fontSize.value, downloadPath: downloadPath.value })
   emit('close')
 }
 </script>

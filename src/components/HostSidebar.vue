@@ -1,44 +1,44 @@
 <template>
   <div class="h-full w-full flex flex-col">
     <!-- Header -->
-    <div class="p-2 border-b border-gray-200 flex items-center justify-between dark:border-gray-700">
-      <h2 class="text-xs font-semibold text-gray-800 dark:text-gray-200">Hosts</h2>
+    <div class="p-2 border-b border-[#3c3c3c] flex items-center justify-between">
+      <h2 class="text-xs font-semibold text-[#cccccc]">Hosts</h2>
       <div class="flex items-center gap-0.5">
         <button
           @click="toggleView"
-          class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white"
+          class="text-[#858585] hover:text-[#cccccc] p-1"
           :title="viewMode === 'grouped' ? 'Switch to flat view' : 'Switch to grouped view'"
         >
           <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
         </button>
-        <button @click="importHosts" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Import hosts">
+        <button @click="importHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import hosts">
           <Download :size="12" />
         </button>
-        <button @click="store.exportHosts" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Export hosts">
+        <button @click="store.exportHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Export hosts">
           <Upload :size="12" />
         </button>
-        <button @click="openModal()" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Add host">
+        <button @click="openModal()" class="text-[#858585] hover:text-[#cccccc] p-1" title="Add host">
           <Plus :size="12" />
         </button>
       </div>
     </div>
 
     <!-- Search -->
-    <div class="px-2 py-1 border-b border-gray-200 dark:border-gray-700">
+    <div class="px-2 py-1 border-b border-[#3c3c3c]">
       <div class="relative">
-        <Search :size="12" class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
+        <Search :size="12" class="absolute left-2 top-1/2 -translate-y-1/2 text-[#6e6e6e]" />
         <input
           v-model="searchQuery"
           type="text"
           placeholder="Search hosts..."
-          class="w-full bg-gray-100 border border-gray-300 rounded pl-6 pr-2 py-1 text-xs text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-500"
+          class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded pl-6 pr-2 py-1 text-xs text-[#cccccc] placeholder-[#6e6e6e] focus:outline-none focus:border-[#007acc]"
         />
       </div>
     </div>
 
     <div class="flex-1 overflow-y-auto py-1 px-1" @contextmenu.prevent="showEmptyMenu">
       <!-- Empty state -->
-      <div v-if="displayHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-gray-500">
+      <div v-if="displayHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
         <Server :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">
           {{ store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts' }}
@@ -69,7 +69,7 @@
         <!-- Favorites section -->
         <div v-if="favoriteHosts.length > 0 && !searchQuery.trim()" class="mb-1">
           <div class="px-2 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider dark:text-gray-500 flex items-center gap-1">
-            <Star :size="10" class="text-yellow-500" />
+            <Star :size="10" class="text-[#cca700]" />
             Favorites
           </div>
           <HostRow
@@ -98,11 +98,11 @@
               @dragleave="dragOverGroup = null"
               @drop="onGroupDrop($event, groupName)"
             >
-              <span class="flex items-center gap-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+              <span class="flex items-center gap-1 text-[10px] font-semibold text-[#858585]">
                 <component :is="collapsedGroups.has(groupName) ? Folder : FolderOpen" :size="10" />
                 {{ groupName || 'Ungrouped' }}
               </span>
-              <span class="text-[10px] text-gray-300 dark:text-gray-600">{{ groupHosts.length }}</span>
+              <span class="text-[10px] text-[#6e6e6e]">{{ groupHosts.length }}</span>
             </div>
             <div v-show="!collapsedGroups.has(groupName)" class="pl-1">
               <HostRow
@@ -128,35 +128,35 @@
     <!-- Unified Context Menu -->
     <div
       v-if="contextMenu.show"
-      class="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50 min-w-[10rem] dark:bg-gray-700 dark:border-gray-600"
+      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[10rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Host menu -->
       <template v-if="contextMenu.type === 'host'">
-        <button @click="menuAction(() => connectHost(contextMenu.data.id))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
-          <Zap :size="12" class="text-blue-500" />
+        <button @click="menuAction(() => connectHost(contextMenu.data.id))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
+          <Zap :size="12" class="text-[#007acc]" />
           Connect
         </button>
-        <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+        <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Pencil :size="12" class="text-gray-400" />
           Edit
         </button>
-        <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
-          <Star :size="12" class="text-yellow-500" />
+        <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
+          <Star :size="12" class="text-[#cca700]" />
           {{ contextMenu.data.favorite ? 'Unfavorite' : 'Favorite' }}
         </button>
-        <div class="border-t border-gray-200 my-0.5 dark:border-gray-600"></div>
-        <button @click="menuAction(() => deleteHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-600">
+        <div class="border-t border-[#3c3c3c] my-0.5"></div>
+        <button @click="menuAction(() => deleteHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#f44336] hover:bg-[#2a2d2e]">
           <Trash2 :size="12" />
           Delete
         </button>
-        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-gray-200 my-0.5 dark:border-gray-600"></div>
-        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-[10px] text-gray-400 dark:text-gray-500">Move to</div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-[#3c3c3c] my-0.5"></div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-[10px] text-[#6e6e6e]">Move to</div>
         <button
           v-for="g in allGroupNames"
           :key="g"
           @click="menuAction(() => moveHostToGroup(contextMenu.data.id, g))"
-          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#858585] hover:bg-[#2a2d2e]"
         >
           <Folder :size="10" class="text-gray-400" />
           {{ g || 'Ungrouped' }}
@@ -165,15 +165,15 @@
 
       <!-- Group menu -->
       <template v-if="contextMenu.type === 'group'">
-        <button @click="menuAction(addHostToGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
-          <Plus :size="12" class="text-green-500" />
+        <button @click="menuAction(addHostToGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
+          <Plus :size="12" class="text-[#89d185]" />
           Add Host
         </button>
-        <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+        <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Pencil :size="12" class="text-gray-400" />
           Rename
         </button>
-        <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-600">
+        <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#f44336] hover:bg-[#2a2d2e]">
           <Trash2 :size="12" />
           Delete group
         </button>
@@ -184,13 +184,13 @@
         <button
           v-if="viewMode === 'grouped'"
           @click="menuAction(createGroupFromMenu)"
-          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]"
         >
-          <FolderPlus :size="12" class="text-blue-500" />
+          <FolderPlus :size="12" class="text-[#007acc]" />
           New Group
         </button>
-        <button @click="menuAction(() => { openModal(); })" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
-          <Plus :size="12" class="text-green-500" />
+        <button @click="menuAction(() => { openModal(); })" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
+          <Plus :size="12" class="text-[#89d185]" />
           Add Host
         </button>
       </template>

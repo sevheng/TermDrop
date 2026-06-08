@@ -1,0 +1,53 @@
+/* VS Code Dark+ UI colors */
+html.dark {
+  --td-bg: #1e1e1e;
+  --td-sidebar: #252526;
+  --td-panel: #1e1e1e;
+  --td-border: #3c3c3c;
+  --td-border-light: #454545;
+  --td-fg: #cccccc;
+  --td-fg-secondary: #858585;
+  --td-fg-muted: #6e6e6e;
+  --td-accent: #007acc;
+  --td-accent-hover: #0e639c;
+  --td-hover: #2a2d2e;
+  --td-active: #37373d;
+  --td-input-bg: #3c3c3c;
+  --td-input-border: #3c3c3c;
+  --td-button-bg: #0e639c;
+  --td-button-hover: #1177bb;
+  --td-badge: #4d4d4f;
+  --td-scrollbar: #424242;
+  --td-scrollbar-hover: #4f4f4f;
+  --td-success: #89d185;
+  --td-error: #f44336;
+  --td-warning: #cca700;
+}
+
+html.dark body {
+  background-color: var(--td-bg);
+  color: var(--td-fg);
+}
+
+/* Scrollbar styling */
+html.dark ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: var(--td-scrollbar);
+  border-radius: 5px;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--td-scrollbar-hover);
+}
+
+html.dark ::-webkit-scrollbar-corner {
+  background: transparent;
+}
