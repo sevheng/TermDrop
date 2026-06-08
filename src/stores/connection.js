@@ -25,6 +25,34 @@ export const useConnectionStore = defineStore('connection', () => {
     systemStatus.value.set(hostId, { ...data, timestamp: Date.now() })
   }
 
+  const securityReports = ref(new Map())
+
+  function getSecurityReport(hostId) {
+    return securityReports.value.get(hostId) || null
+  }
+
+  function setSecurityLoading(hostId) {
+    securityReports.value.set(hostId, { report: null, loading: true, error: null })
+  }
+
+  function setSecurityReport(hostId, report) {
+    securityReports.value.set(hostId, { report, loading: false, error: null })
+  }
+
+  function setSecurityError(hostId, error) {
+    securityReports.value.set(hostId, { report: null, loading: false, error })
+  }
+
+  async function runSecurityAudit(hostId) {
+    setSecurityLoading(hostId)
+    try {
+      const report = await invoke('run_security_audit', { hostId })
+      setSecurityReport(hostId, report)
+    } catch (err) {
+      setSecurityError(hostId, String(err))
+    }
+  }
+
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value)
   })
@@ -149,6 +177,9 @@ export const useConnectionStore = defineStore('connection', () => {
       console.warn('SFTP connection failed:', err)
       window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
     }
+    // Run security audit in background — don't block tab creation
+    runSecurityAudit(hostId).catch(() => {})
+
     connectingHostId.value = null
 
     const unlistenDisconnect = await listen('ssh-disconnected', (event) => {
@@ -328,5 +359,8 @@ export const useConnectionStore = defineStore('connection', () => {
     systemStatus,
     getSystemStatus,
     setSystemStatus,
+    securityReports,
+    getSecurityReport,
+    runSecurityAudit,
   }
 })

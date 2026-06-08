@@ -15,16 +15,31 @@
 
     <!-- Content -->
     <div class="flex-1 overflow-y-auto">
-      <!-- Loading -->
+      <!-- Loading (background audit running) -->
       <div v-if="loading" class="flex flex-col items-center justify-center py-12">
         <Loader2 :size="20" class="animate-spin text-[#858585] mb-2" />
         <span class="text-xs text-[#858585]">Running security audit...</span>
+        <span class="text-[10px] text-[#6e6e6e] mt-1">Switch tabs freely — results will appear here</span>
       </div>
 
-      <!-- Empty / Error -->
+      <!-- Error -->
+      <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
+        <ShieldAlert :size="24" class="mb-2 text-[#f44336] opacity-50" />
+        <p class="text-xs text-[#f44336]">Audit failed</p>
+        <p class="text-[10px] mt-1">{{ error }}</p>
+        <button
+          @click="runAudit"
+          class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
+        >
+          Retry
+        </button>
+      </div>
+
+      <!-- Empty -->
       <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
         <Shield :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No audit data</p>
+        <p class="text-[10px] mt-1">Connect to a host to run audit</p>
         <button
           @click="runAudit"
           class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
@@ -82,9 +97,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { RefreshCw, Loader2, Shield, ShieldCheck, AlertTriangle, XCircle } from 'lucide-vue-next'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { useConnectionStore } from '../stores/connection.js'
+import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle } from 'lucide-vue-next'
 
 const props = defineProps({
   hostId: {
@@ -93,8 +108,11 @@ const props = defineProps({
   },
 })
 
+const store = useConnectionStore()
+
 const report = ref(null)
 const loading = ref(false)
+const error = ref(null)
 
 const scoreLabel = computed(() => {
   if (!report.value) return ''
@@ -139,19 +157,43 @@ function badgeClassFor(status) {
   }
 }
 
-async function runAudit() {
-  if (!props.hostId) return
-  loading.value = true
-  try {
-    report.value = await invoke('run_security_audit', { hostId: props.hostId })
-  } catch (err) {
-    console.error('Security audit failed:', err)
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Audit failed: ' + err, type: 'error' } }))
+function readFromCache() {
+  if (!props.hostId) {
+    report.value = null
+    loading.value = false
+    error.value = null
+    return
   }
-  loading.value = false
+  const cached = store.getSecurityReport(props.hostId)
+  if (cached) {
+    report.value = cached.report
+    loading.value = cached.loading
+    error.value = cached.error
+  } else {
+    report.value = null
+    loading.value = false
+    error.value = null
+  }
 }
 
-onMounted(runAudit)
+function runAudit() {
+  if (!props.hostId) return
+  store.runSecurityAudit(props.hostId)
+  readFromCache()
+}
 
-watch(() => props.hostId, runAudit)
+onMounted(readFromCache)
+
+watch(() => props.hostId, readFromCache)
+
+// Poll cache every second to catch background completion
+let pollInterval = null
+onMounted(() => {
+  pollInterval = setInterval(readFromCache, 1000)
+})
+
+onUnmounted(() => {
+  if (pollInterval) clearInterval(pollInterval)
+})
+
 </script>
