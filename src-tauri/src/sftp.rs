@@ -362,3 +362,17 @@ pub fn sftp_rmdir(
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
     sftp_rmdir_recursive(&sftp, Path::new(remote_path))
 }
+
+pub fn sftp_write_file(
+    handle: &SftpSessionHandle,
+    remote_path: &str,
+    content: &str,
+) -> Result<(), String> {
+    let session = handle.session.lock().map_err(|e| e.to_string())?;
+    let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
+    let mut remote_file = sftp.create(Path::new(remote_path))
+        .map_err(|e| format!("create remote: {}", e))?;
+    remote_file.write_all(content.as_bytes())
+        .map_err(|e| format!("write: {}", e))?;
+    Ok(())
+}

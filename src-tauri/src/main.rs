@@ -484,6 +484,20 @@ fn check_file_modified(local_path: String, last_modified: u64) -> Result<Option<
 }
 
 #[tauri::command]
+async fn sftp_write_file(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+    content: String,
+) -> Result<(), String> {
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    sftp::sftp_write_file(&handle, &remote_path, &content)
+}
+
+#[tauri::command]
 fn sftp_realpath(
     state: State<'_, AppState>,
     sftp_session_id: String,
@@ -1000,6 +1014,7 @@ fn main() {
             sftp_realpath,
             sftp_read_file,
             sftp_edit_file,
+            sftp_write_file,
             check_file_modified,
             sftp_disconnect,
             update_host_group,

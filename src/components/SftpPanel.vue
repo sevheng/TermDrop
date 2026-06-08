@@ -216,6 +216,51 @@
       </div>
     </div>
 
+    <!-- Inline editor modal -->
+    <div
+      v-if="editorModal.show"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="onEditorClose"
+    >
+      <div class="bg-[#252526] border border-[#3c3c3c] rounded shadow-xl w-[50rem] h-[36rem] flex flex-col max-w-[95vw] max-h-[90vh]">
+        <div class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c]">
+          <span class="text-xs text-[#cccccc]">
+            {{ editorModal.fileName }}
+            <span v-if="editorModal.dirty" class="text-[#cca700] ml-1">●</span>
+          </span>
+          <div class="flex items-center gap-2">
+            <button
+              @click="onEditorSave"
+              :disabled="editorModal.saving || !editorModal.dirty"
+              class="text-[11px] px-2.5 py-1 rounded font-medium"
+              :class="editorModal.dirty ? 'bg-[#89d185] hover:bg-[#73c16e] text-black' : 'bg-[#3c3c3c] text-[#858585] cursor-not-allowed'"
+            >
+              {{ editorModal.saving ? 'Saving...' : 'Save' }}
+            </button>
+            <button @click="onEditorClose" class="text-[#858585] hover:text-[#cccccc]">×</button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-hidden">
+          <div v-if="editorModal.loading" class="flex items-center justify-center h-full text-[#858585] text-sm">
+            Loading...
+          </div>
+          <textarea
+            v-else
+            v-model="editorModal.content"
+            @input="editorModal.dirty = true"
+            @keydown="onEditorKeydown"
+            class="w-full h-full bg-[#1e1e1e] text-[#cccccc] text-[12px] font-mono p-3 resize-none focus:outline-none whitespace-pre"
+            spellcheck="false"
+          ></textarea>
+        </div>
+        <div class="px-3 py-1.5 border-t border-[#3c3c3c] text-[10px] text-[#6e6e6e] flex justify-between">
+          <span>{{ editorModal.content.length }} chars</span>
+          <span v-if="editorModal.dirty" class="text-[#cca700]">Unsaved changes</span>
+          <span v-else>Saved</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Transfer progress -->
     <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] bg-[#1e1e1e]">
       <div class="px-2 py-1 text-[10px] text-[#6e6e6e] font-medium uppercase tracking-wider border-b border-[#3c3c3c]/50">
@@ -323,6 +368,17 @@ const previewModal = ref({
   filePath: '',
   content: '',
   loading: false,
+})
+
+const editorModal = ref({
+  show: false,
+  fileName: '',
+  filePath: '',
+  content: '',
+  originalContent: '',
+  loading: false,
+  saving: false,
+  dirty: false,
 })
 
 const editingFiles = ref(new Map()) // localPath -> { remotePath, lastModified, intervalId }
@@ -828,48 +884,7 @@ async function previewEdit() {
   const fileName = previewModal.value.fileName
   if (!filePath) return
   previewModal.value.show = false
-  try {
-    const localPath = await invoke('sftp_edit_file', {
-      sftpSessionId: props.sftpSessionId,
-      remotePath: filePath,
-    })
-    await openPath(localPath)
-    showToast(`Opened ${fileName} in editor`, 'success')
-    const startTime = Math.floor(Date.now() / 1000)
-    editingFiles.value.set(localPath, {
-      remotePath: filePath,
-      lastModified: startTime,
-      fileName: fileName,
-    })
-    const intervalId = setInterval(async () => {
-      const edit = editingFiles.value.get(localPath)
-      if (!edit) {
-        clearInterval(intervalId)
-        return
-      }
-      try {
-        const newMtime = await invoke('check_file_modified', {
-          localPath,
-          lastModified: edit.lastModified,
-        })
-        if (newMtime) {
-          edit.lastModified = newMtime
-          editingFiles.value.set(localPath, edit)
-          await invoke('sftp_upload_simple', {
-            sftpSessionId: props.sftpSessionId,
-            localPath,
-            remotePath: edit.remotePath,
-          })
-          showToast(`Auto-uploaded ${edit.fileName}`, 'success')
-        }
-      } catch (e) {
-        console.error('Edit poll error:', e)
-      }
-    }, 3000)
-  } catch (e) {
-    console.error('Edit failed:', e)
-    showToast('Edit failed: ' + e, 'error')
-  }
+  await onEditorOpen({ name: fileName, path: filePath })
 }
 
 async function previewDownload() {
@@ -886,6 +901,75 @@ async function previewDownload() {
   }
 }
 
+async function onEditorOpen(file) {
+  if (!file || file.is_dir) return
+  editorModal.value = {
+    show: true,
+    fileName: file.name,
+    filePath: file.path,
+    content: '',
+    originalContent: '',
+    loading: true,
+    saving: false,
+    dirty: false,
+  }
+  try {
+    const content = await invoke('sftp_read_file', {
+      sftpSessionId: props.sftpSessionId,
+      remotePath: file.path,
+    })
+    editorModal.value.content = content
+    editorModal.value.originalContent = content
+  } catch (e) {
+    console.error('Editor load failed:', e)
+    showToast('Failed to load file: ' + e, 'error')
+    editorModal.value.show = false
+  } finally {
+    editorModal.value.loading = false
+  }
+}
+
+async function onEditorSave() {
+  if (!editorModal.value.dirty || editorModal.value.saving) return
+  editorModal.value.saving = true
+  try {
+    await invoke('sftp_write_file', {
+      sftpSessionId: props.sftpSessionId,
+      remotePath: editorModal.value.filePath,
+      content: editorModal.value.content,
+    })
+    editorModal.value.originalContent = editorModal.value.content
+    editorModal.value.dirty = false
+    showToast(`Saved ${editorModal.value.fileName}`, 'success')
+  } catch (e) {
+    console.error('Save failed:', e)
+    showToast('Save failed: ' + e, 'error')
+  } finally {
+    editorModal.value.saving = false
+  }
+}
+
+function onEditorClose() {
+  if (editorModal.value.dirty) {
+    openConfirm({
+      title: 'Unsaved Changes',
+      message: `You have unsaved changes in "${editorModal.value.fileName}". Discard them?`,
+      onConfirm: () => {
+        editorModal.value.show = false
+      },
+    })
+  } else {
+    editorModal.value.show = false
+  }
+}
+
+function onEditorKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault()
+    onEditorSave()
+  }
+}
+
 async function onPreview() {
   const file = contextMenu.value.file
   if (!file || file.is_dir) return
@@ -897,50 +981,7 @@ async function onEdit() {
   const file = contextMenu.value.file
   if (!file || file.is_dir) return
   contextMenu.value.show = false
-  try {
-    const localPath = await invoke('sftp_edit_file', {
-      sftpSessionId: props.sftpSessionId,
-      remotePath: file.path,
-    })
-    // Open in system editor
-    await openPath(localPath)
-    showToast(`Opened ${file.name} in editor`, 'success')
-
-    // Start polling for changes
-    const startTime = Math.floor(Date.now() / 1000)
-    editingFiles.value.set(localPath, {
-      remotePath: file.path,
-      lastModified: startTime,
-      fileName: file.name,
-    })
-
-    // Poll every 3 seconds
-    const intervalId = setInterval(async () => {
-      const edit = editingFiles.value.get(localPath)
-      if (!edit) {
-        clearInterval(intervalId)
-        return
-      }
-      try {
-        const newMtime = await invoke('check_file_modified', {
-          localPath,
-          lastModified: edit.lastModified,
-        })
-        if (newMtime) {
-          edit.lastModified = newMtime
-          // Show upload toast
-          showToast(`"${edit.fileName}" modified. Use Upload to sync changes.`, 'info')
-        }
-      } catch (e) {
-        // File might have been deleted, stop polling
-        editingFiles.value.delete(localPath)
-        clearInterval(intervalId)
-      }
-    }, 3000)
-  } catch (e) {
-    console.error('Edit failed:', e)
-    showToast('Edit failed: ' + e, 'error')
-  }
+  await onEditorOpen(file)
 }
 
 async function onRename() {
