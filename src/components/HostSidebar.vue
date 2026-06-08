@@ -196,28 +196,20 @@
       </template>
     </div>
 
-    <!-- Inline rename input -->
-    <div
-      v-if="renamingGroup"
-      class="fixed z-50"
-      :style="{ top: renamePos.y + 'px', left: renamePos.x + 'px' }"
-    >
-      <input
-        v-model="renameValue"
-        ref="renameInput"
-        type="text"
-        class="bg-white border border-blue-400 rounded px-2 py-1 text-xs shadow-lg focus:outline-none dark:bg-gray-800 dark:text-white dark:border-blue-500"
-        @keydown.enter="confirmRenameGroup"
-        @keydown.esc="renamingGroup = false"
-        @blur="confirmRenameGroup"
-      />
-    </div>
-
     <HostModal
       :show="showModal"
       :host="editingHost"
       @close="showModal = false"
       @save="handleSave"
+    />
+
+    <GroupModal
+      :show="showGroupModal"
+      :mode="groupModalMode"
+      :existing-names="allGroupNames.filter(g => g !== groupModalCurrentName)"
+      :current-name="groupModalCurrentName"
+      @close="showGroupModal = false"
+      @save="handleGroupModalSave"
     />
 
     <ConfirmDialog
@@ -244,6 +236,7 @@ import {
   Zap, Pencil, Trash2,
 } from 'lucide-vue-next'
 import HostModal from './HostModal.vue'
+import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 
@@ -261,10 +254,10 @@ const customGroups = ref(new Set(JSON.parse(localStorage.getItem('host-custom-gr
 
 const contextMenu = ref({ show: false, x: 0, y: 0, type: '', data: null })
 const pendingGroupForNewHost = ref(null)
-const renamingGroup = ref(false)
-const renameValue = ref('')
-const renamePos = ref({ x: 0, y: 0 })
-const renameInput = ref(null)
+
+const showGroupModal = ref(false)
+const groupModalMode = ref('create')
+const groupModalCurrentName = ref('')
 
 const confirmDialog = ref({
   show: false,
@@ -405,20 +398,9 @@ async function moveHostToGroup(hostId, groupName) {
 }
 
 function startRenameGroup() {
-  renameValue.value = contextMenu.value.data
-  renamePos.value = { x: contextMenu.value.x, y: contextMenu.value.y }
-  renamingGroup.value = true
-  nextTick(() => renameInput.value?.focus())
-}
-
-async function confirmRenameGroup() {
-  if (!renamingGroup.value) return
-  const oldName = contextMenu.value.data
-  const newName = renameValue.value.trim()
-  renamingGroup.value = false
-  if (newName && newName !== oldName) {
-    await store.renameGroup(oldName, newName)
-  }
+  groupModalMode.value = 'rename'
+  groupModalCurrentName.value = contextMenu.value.data
+  showGroupModal.value = true
 }
 
 async function deleteGroup() {
@@ -450,12 +432,33 @@ async function onGroupDrop(event, groupName) {
 }
 
 function createGroupFromMenu() {
-  const name = window.prompt('Enter group name:')
-  if (name && name.trim()) {
-    const trimmed = name.trim()
-    customGroups.value = new Set([...customGroups.value, trimmed])
+  groupModalMode.value = 'create'
+  groupModalCurrentName.value = ''
+  showGroupModal.value = true
+}
+
+async function handleGroupModalSave(name) {
+  showGroupModal.value = false
+  if (groupModalMode.value === 'create') {
+    customGroups.value = new Set([...customGroups.value, name])
     localStorage.setItem('host-custom-groups', JSON.stringify([...customGroups.value]))
-    collapsedGroups.value = new Set([...collapsedGroups.value].filter(g => g !== trimmed))
+    collapsedGroups.value = new Set([...collapsedGroups.value].filter(g => g !== name))
+  } else if (groupModalMode.value === 'rename') {
+    const oldName = groupModalCurrentName.value
+    if (name !== oldName) {
+      await store.renameGroup(oldName, name)
+      // Update customGroups: remove old name, add new name
+      const updated = new Set([...customGroups.value].filter(g => g !== oldName))
+      updated.add(name)
+      customGroups.value = updated
+      localStorage.setItem('host-custom-groups', JSON.stringify([...updated]))
+      // Preserve collapsed state under new name
+      if (collapsedGroups.value.has(oldName)) {
+        const newCollapsed = new Set([...collapsedGroups.value].filter(g => g !== oldName))
+        newCollapsed.add(name)
+        collapsedGroups.value = newCollapsed
+      }
+    }
   }
 }
 
