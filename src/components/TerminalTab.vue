@@ -97,33 +97,6 @@
       <button @click="closeSearch" class="text-gray-400 hover:text-gray-900 px-1 dark:hover:text-white">×</button>
     </div>
 
-    <!-- Connection loading overlay -->
-    <div
-      v-if="showConnectionOverlay"
-      class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gray-900/95 dark:bg-gray-900/95"
-    >
-      <Loader2 :size="32" class="animate-spin text-blue-500 mb-4" />
-      <p class="text-white text-sm font-medium mb-1">{{ connectionMessage }}</p>
-      <p class="text-gray-400 text-xs mb-4">{{ store.activeTab?.name || 'Server' }}</p>
-      <div class="space-y-2 w-52">
-        <div
-          v-for="step in connectionSteps"
-          :key="step.id"
-          class="flex items-center gap-2"
-        >
-          <CheckCircle2 v-if="step.done" :size="14" class="text-green-400 shrink-0" />
-          <Loader2 v-else-if="step.active" :size="14" class="animate-spin text-blue-400 shrink-0" />
-          <Circle v-else :size="14" class="text-gray-600 shrink-0" />
-          <span
-            class="text-xs transition-colors"
-            :class="step.done ? 'text-green-400' : step.active ? 'text-blue-400' : 'text-gray-500'"
-          >
-            {{ step.label }}
-          </span>
-        </div>
-      </div>
-    </div>
-
     <!-- Disconnect banner -->
     <div
       v-if="isDisconnected"
@@ -160,8 +133,7 @@ import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, CheckCircle2, Circle } from 'lucide-vue-next'
-import { useConnectionStore } from '../stores/connection.js'
+import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import 'xterm/css/xterm.css'
 
 const props = defineProps({
@@ -203,25 +175,6 @@ const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '' 
 const statusError = ref('')
 
 const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
-
-const store = useConnectionStore()
-const connectionStage = ref('connecting')
-const connectionMessage = computed(() => {
-  switch (connectionStage.value) {
-    case 'connecting': return 'Connecting to server...'
-    case 'authenticating': return 'Authenticating...'
-    case 'shell': return 'Opening shell...'
-    default: return ''
-  }
-})
-const showConnectionOverlay = computed(() => {
-  return connectionStage.value !== 'connected' && connectionStage.value !== 'error'
-})
-const connectionSteps = computed(() => [
-  { id: 'network', label: 'Network connection', done: true, active: false },
-  { id: 'auth', label: 'Authentication', done: connectionStage.value !== 'connecting', active: connectionStage.value === 'authenticating' },
-  { id: 'shell', label: 'Shell session', done: connectionStage.value === 'connected' || connectionStage.value === 'shell', active: connectionStage.value === 'shell' },
-])
 
 const darkTheme = {
   background: '#111827',
@@ -476,10 +429,6 @@ onMounted(async () => {
   unlistenData = await listen('ssh-data', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.session_id === props.sessionId) {
-      // Hide overlay if data arrives (catches missed ssh-connected events)
-      if (connectionStage.value !== 'connected' && connectionStage.value !== 'error') {
-        connectionStage.value = 'connected'
-      }
       term.write(payload.data)
     } else if (typeof payload === 'string') {
       term.write(payload)
@@ -490,7 +439,6 @@ onMounted(async () => {
   unlistenError = await listen('ssh-error', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.session_id === props.sessionId) {
-      connectionStage.value = 'error'
       term.writeln(`\r\n\x1b[31mError: ${payload.error}\x1b[0m`)
     }
   })
@@ -498,7 +446,6 @@ onMounted(async () => {
   // Listen for SSH connection established
   unlistenConnected = await listen('ssh-connected', (event) => {
     if (event.payload === props.sessionId) {
-      connectionStage.value = 'connected'
       setTimeout(() => {
         if (fitAddon) fitAddon.fit()
       }, 100)
@@ -519,7 +466,6 @@ onMounted(async () => {
     if (event.payload === props.sessionId) {
       isDisconnected.value = false
       isReconnecting.value = false
-      connectionStage.value = 'connected'
       term.clear()
       setTimeout(() => {
         if (fitAddon) fitAddon.fit()
@@ -550,20 +496,6 @@ onMounted(async () => {
 
   // Start status polling if already connected
   startStatusPolling()
-
-  // Advance connection stages for visual feedback
-  setTimeout(() => {
-    if (connectionStage.value === 'connecting') connectionStage.value = 'authenticating'
-  }, 400)
-  setTimeout(() => {
-    if (connectionStage.value === 'authenticating') connectionStage.value = 'shell'
-  }, 1200)
-  // Safety: hide overlay if stuck after 10s
-  setTimeout(() => {
-    if (connectionStage.value !== 'connected' && connectionStage.value !== 'error') {
-      connectionStage.value = 'connected'
-    }
-  }, 10000)
 })
 
 async function reconnect() {
