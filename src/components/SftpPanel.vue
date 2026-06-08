@@ -1,18 +1,34 @@
 <template>
   <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col relative">
-    <!-- Header -->
-    <div class="px-2 py-1 border-b border-[#3c3c3c]">
-      <h3 class="text-xs font-semibold text-[#cccccc] mb-1">SFTP Browser</h3>
-      <div class="flex items-center gap-1 text-xs text-[#858585] overflow-x-auto whitespace-nowrap">
-        <span
-          v-for="(segment, index) in breadcrumbs"
-          :key="index"
-          class="cursor-pointer hover:text-[#cccccc]"
+    <!-- Path breadcrumbs -->
+    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center gap-0.5 text-xs overflow-x-auto whitespace-nowrap">
+      <span
+        v-for="(segment, index) in breadcrumbs"
+        :key="index"
+        class="flex items-center gap-0.5 shrink-0"
+      >
+        <button
+          v-if="index === 0"
           @click="navigateTo(segment.path)"
+          class="text-[#858585] hover:text-[#cccccc] p-0.5 rounded"
+          title="Go to root"
         >
-          {{ segment.name }}<span v-if="index < breadcrumbs.length - 1" class="mx-1">/</span>
-        </span>
-      </div>
+          <Home :size="12" />
+        </button>
+        <button
+          v-else
+          @click="navigateTo(segment.path)"
+          class="text-[#858585] hover:text-[#cccccc] px-0.5 rounded"
+          :class="index === breadcrumbs.length - 1 ? 'text-[#cccccc] font-medium cursor-default' : ''"
+        >
+          {{ segment.name }}
+        </button>
+        <ChevronRight
+          v-if="index < breadcrumbs.length - 1"
+          :size="10"
+          class="text-[#6e6e6e] shrink-0"
+        />
+      </span>
     </div>
 
     <!-- Toolbar -->
@@ -148,7 +164,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Folder, FileText } from 'lucide-vue-next'
+import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 
