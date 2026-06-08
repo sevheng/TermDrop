@@ -49,6 +49,15 @@
           </button>
         </div>
         <div class="flex items-center shrink-0">
+          <button
+            v-if="store.activeTab"
+            @click="showPortForwards = !showPortForwards"
+            class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+            :class="showPortForwards ? 'text-blue-600 dark:text-blue-400' : ''"
+            title="Port forwards"
+          >
+            <Network :size="14" />
+          </button>
           <button @click="showShortcuts = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
@@ -92,15 +101,23 @@
           class="border-l border-gray-200 shrink-0 bg-white flex flex-col dark:border-gray-700 dark:bg-gray-800"
           :style="{ width: sftpWidth + 'px' }"
         >
-          <SftpPanel
-            v-if="store.activeTab.sftpSessionId"
-            :sftpSessionId="store.activeTab.sftpSessionId"
+          <PortForwardPanel
+            v-if="showPortForwards"
+            :hostId="store.activeTab.hostId"
+            @add="showForwardModal = true"
             class="w-full h-full"
           />
-          <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-            <Loader2 :size="24" class="animate-spin mb-2" />
-            <span class="text-sm">Connecting SFTP...</span>
-          </div>
+          <template v-else>
+            <SftpPanel
+              v-if="store.activeTab.sftpSessionId"
+              :sftpSessionId="store.activeTab.sftpSessionId"
+              class="w-full h-full"
+            />
+            <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
+              <Loader2 :size="24" class="animate-spin mb-2" />
+              <span class="text-sm">Connecting SFTP...</span>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -114,6 +131,13 @@
     <ShortcutsHelp
       :show="showShortcuts"
       @close="showShortcuts = false"
+    />
+
+    <PortForwardModal
+      :show="showForwardModal"
+      :hostId="store.activeTab?.hostId"
+      @close="showForwardModal = false"
+      @save="onForwardSaved"
     />
 
     <ConfirmDialog
@@ -133,15 +157,20 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import SftpPanel from '../components/SftpPanel.vue'
+import PortForwardPanel from '../components/PortForwardPanel.vue'
+import PortForwardModal from '../components/PortForwardModal.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ShortcutsHelp from '../components/ShortcutsHelp.vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
+import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Network } from 'lucide-vue-next'
+import { invoke } from '@tauri-apps/api/core'
 
 const store = useConnectionStore()
 const showSettings = ref(false)
 const showShortcuts = ref(false)
+const showPortForwards = ref(false)
+const showForwardModal = ref(false)
 const currentTheme = ref('dark')
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
@@ -182,6 +211,20 @@ function onSettingsSaved(settings) {
   currentTheme.value = settings.theme
   document.documentElement.classList.toggle('dark', settings.theme === 'dark')
   document.documentElement.classList.toggle('light-theme', settings.theme === 'light')
+}
+
+async function onForwardSaved(forwardData) {
+  try {
+    await store.addPortForward(forwardData)
+    showForwardModal.value = false
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
+    // Refresh the panel if it's open
+    if (showPortForwards.value) {
+      // The panel will auto-refresh via its watcher
+    }
+  } catch (err) {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to add: ' + err, type: 'error' } }))
+  }
 }
 
 // Global keyboard shortcuts

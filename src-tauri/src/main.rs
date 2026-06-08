@@ -10,11 +10,13 @@ mod db;
 mod crypto;
 mod ssh;
 mod sftp;
+mod port_forward;
 
 pub struct AppState {
     db: Mutex<Connection>,
     sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
     sftp_sessions: Mutex<HashMap<String, Arc<sftp::SftpSessionHandle>>>,
+    forward_manager: port_forward::ForwardManager,
 }
 
 #[tauri::command]
@@ -401,6 +403,102 @@ fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String>
 }
 
 #[tauri::command]
+fn get_port_forwards(state: State<'_, AppState>, host_id: i64) -> Result<Vec<db::PortForward>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_port_forwards(&conn, host_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_port_forward(state: State<'_, AppState>, forward: db::NewPortForward) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::add_port_forward(&conn, &forward).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_port_forward(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.forward_manager.stop(id);
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::delete_port_forward(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn start_port_forward(
+    state: State<'_, AppState>,
+    rule_id: i64,
+) -> Result<(), String> {
+    let (host, forward) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let forward = db::get_port_forward_by_id(&conn, rule_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Port forward rule not found")?;
+        let host = db::get_host_by_id(&conn, forward.host_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Host not found")?;
+        (host, forward)
+    };
+
+    let (password, key_path) = match host.auth_type.as_str() {
+        "password" => {
+            let pw = crypto::get_password(host.id)?;
+            (Some(pw), None)
+        }
+        "key" => (None, host.key_path.clone()),
+        _ => (None, host.key_path.clone()),
+    };
+
+    match forward.kind.as_str() {
+        "local" => {
+            let remote_host = forward.remote_host.ok_or("Remote host not set")?;
+            let remote_port = forward.remote_port.ok_or("Remote port not set")? as u16;
+            state.forward_manager.start_local(
+                rule_id,
+                host.host,
+                host.port as u16,
+                host.username,
+                password,
+                key_path,
+                forward.local_host,
+                forward.local_port as u16,
+                remote_host,
+                remote_port,
+            )?;
+        }
+        "dynamic" => {
+            state.forward_manager.start_dynamic(
+                rule_id,
+                host.host,
+                host.port as u16,
+                host.username,
+                password,
+                key_path,
+                forward.local_host,
+                forward.local_port as u16,
+            )?;
+        }
+        _ => return Err(format!("Unsupported forward kind: {}", forward.kind)),
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_port_forward(
+    state: State<'_, AppState>,
+    rule_id: i64,
+) -> Result<(), String> {
+    state.forward_manager.stop(rule_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_port_forward_status(
+    state: State<'_, AppState>,
+    rule_id: i64,
+) -> Result<bool, String> {
+    Ok(state.forward_manager.is_active(rule_id))
+}
+
+#[tauri::command]
 fn write_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
@@ -431,11 +529,13 @@ fn main() {
             ),
             sessions: Mutex::new(HashMap::new()),
             sftp_sessions: Mutex::new(HashMap::new()),
+            forward_manager: port_forward::ForwardManager::new(),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
             let conn = state.db.lock().unwrap();
             db::init_db(&conn).expect("Failed to initialize database");
+            db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
             db::init_settings(&conn).expect("Failed to initialize settings");
             Ok(())
         })
@@ -469,6 +569,12 @@ fn main() {
             write_file,
             get_setting,
             set_setting,
+            get_port_forwards,
+            add_port_forward,
+            delete_port_forward,
+            start_port_forward,
+            stop_port_forward,
+            get_port_forward_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

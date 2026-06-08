@@ -234,6 +234,31 @@ export const useConnectionStore = defineStore('connection', () => {
     await invoke('sftp_rmdir', { sftpSessionId, remotePath })
   }
 
+  // Port forward actions
+  async function getPortForwards(hostId) {
+    return await invoke('get_port_forwards', { hostId })
+  }
+
+  async function addPortForward(forward) {
+    return await invoke('add_port_forward', { forward })
+  }
+
+  async function deletePortForward(id) {
+    await invoke('delete_port_forward', { id })
+  }
+
+  async function startPortForward(ruleId) {
+    await invoke('start_port_forward', { ruleId })
+  }
+
+  async function stopPortForward(ruleId) {
+    await invoke('stop_port_forward', { ruleId })
+  }
+
+  async function getPortForwardStatus(ruleId) {
+    return await invoke('get_port_forward_status', { ruleId })
+  }
+
   return {
     hosts,
     tabs,
@@ -263,5 +288,11 @@ export const useConnectionStore = defineStore('connection', () => {
     sftpRename,
     sftpMkdir,
     sftpRmdir,
+    getPortForwards,
+    addPortForward,
+    deletePortForward,
+    startPortForward,
+    stopPortForward,
+    getPortForwardStatus,
   }
 })

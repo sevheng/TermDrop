@@ -181,6 +181,108 @@ pub fn update_host_last_connected(conn: &Connection, id: i64) -> SqlResult<()> {
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PortForward {
+    pub id: i64,
+    pub host_id: i64,
+    pub name: String,
+    pub kind: String,
+    pub local_host: String,
+    pub local_port: i64,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct NewPortForward {
+    pub host_id: i64,
+    pub name: String,
+    pub kind: String,
+    pub local_host: String,
+    pub local_port: i64,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<i64>,
+}
+
+pub fn init_port_forwards(conn: &Connection) -> SqlResult<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS port_forwards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT CHECK(kind IN ('local', 'dynamic')) NOT NULL,
+            local_host TEXT DEFAULT '127.0.0.1',
+            local_port INTEGER NOT NULL,
+            remote_host TEXT,
+            remote_port INTEGER,
+            FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+pub fn get_port_forwards(conn: &Connection, host_id: i64) -> SqlResult<Vec<PortForward>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, host_id, name, kind, local_host, local_port, remote_host, remote_port FROM port_forwards WHERE host_id = ?1 ORDER BY name ASC"
+    )?;
+    let forwards = stmt.query_map(params![host_id], |row| {
+        Ok(PortForward {
+            id: row.get(0)?,
+            host_id: row.get(1)?,
+            name: row.get(2)?,
+            kind: row.get(3)?,
+            local_host: row.get(4)?,
+            local_port: row.get(5)?,
+            remote_host: row.get(6)?,
+            remote_port: row.get(7)?,
+        })
+    })?;
+    forwards.collect()
+}
+
+pub fn add_port_forward(conn: &Connection, fw: &NewPortForward) -> SqlResult<i64> {
+    conn.execute(
+        "INSERT INTO port_forwards (host_id, name, kind, local_host, local_port, remote_host, remote_port) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            fw.host_id,
+            &fw.name,
+            &fw.kind,
+            &fw.local_host,
+            fw.local_port,
+            fw.remote_host.as_deref(),
+            fw.remote_port,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn get_port_forward_by_id(conn: &Connection, id: i64) -> SqlResult<Option<PortForward>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, host_id, name, kind, local_host, local_port, remote_host, remote_port FROM port_forwards WHERE id = ?1"
+    )?;
+    let mut rows = stmt.query(params![id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(PortForward {
+            id: row.get(0)?,
+            host_id: row.get(1)?,
+            name: row.get(2)?,
+            kind: row.get(3)?,
+            local_host: row.get(4)?,
+            local_port: row.get(5)?,
+            remote_host: row.get(6)?,
+            remote_port: row.get(7)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_port_forward(conn: &Connection, id: i64) -> SqlResult<()> {
+    conn.execute("DELETE FROM port_forwards WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 pub fn init_settings(conn: &Connection) -> SqlResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
