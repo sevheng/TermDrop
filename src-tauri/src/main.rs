@@ -589,85 +589,99 @@ fn write_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn docker_ps(
+async fn docker_ps(
     state: State<'_, AppState>,
     host_id: i64,
     all: bool,
 ) -> Result<Vec<docker::Container>, String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_ps(&session, all).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_start(
+async fn docker_start(
     state: State<'_, AppState>,
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_start(&session, &container_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_stop(
+async fn docker_stop(
     state: State<'_, AppState>,
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_stop(&session, &container_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_restart(
+async fn docker_restart(
     state: State<'_, AppState>,
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_restart(&session, &container_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_logs(
+async fn docker_logs(
     state: State<'_, AppState>,
     host_id: i64,
     container_id: String,
     tail: usize,
 ) -> Result<String, String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_logs(&session, &container_id, tail).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_inspect_shell(
+async fn docker_inspect_shell(
     state: State<'_, AppState>,
     host_id: i64,
     container_id: String,
 ) -> Result<String, String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::docker_inspect_shell(&session, &container_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn docker_install(
+async fn docker_install(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<String, String> {
-    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-    let session_arc = exec_sessions.get(&host_id).ok_or("No active session for this host")?;
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
     let session = session_arc.lock().map_err(|e| e.to_string())?;
     docker::install_docker(&session).map_err(|e| e.to_string())
 }
