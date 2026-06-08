@@ -552,5 +552,5 @@ watch(() => props.isActive, (active) => {
       resizeObserver.disconnect()
     }
   }
-})
+}, { immediate: true })
 </script>
