@@ -90,19 +90,6 @@
       />
     </div>
 
-    <!-- Bulk actions toolbar -->
-    <div
-      v-if="selectedFiles.size > 0"
-      class="px-2 py-1 border-b border-[#3c3c3c] bg-[#094771] flex items-center justify-between"
-    >
-      <span class="text-xs text-[#cccccc]">{{ selectedFiles.size }} selected</span>
-      <div class="flex items-center gap-1.5">
-        <button @click="bulkDownload" class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-2 py-0.5 rounded">Download</button>
-        <button @click="bulkDelete" class="text-xs bg-[#f44336] hover:bg-[#ff6659] text-white px-2 py-0.5 rounded">Delete</button>
-        <button @click="clearSelection" class="text-xs text-[#cccccc] hover:text-white px-1.5 py-0.5">✕</button>
-      </div>
-    </div>
-
     <!-- Edited files toolbar -->
     <div
       v-if="editingFiles.size > 0"
