@@ -339,6 +339,73 @@ fn sftp_disconnect(
 }
 
 #[tauri::command]
+async fn ssh_exec(
+    state: State<'_, AppState>,
+    host_id: i64,
+    command: String,
+) -> Result<String, String> {
+    let host = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::get_host_by_id(&conn, host_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Host not found")?
+    };
+
+    let (password, key_path) = match host.auth_type.as_str() {
+        "password" => {
+            let pw = Some(crypto::get_password(host_id)?);
+            (pw, None)
+        }
+        "key" => (None, host.key_path.clone()),
+        _ => (None, host.key_path.clone()),
+    };
+
+    ssh::exec(host.host, host.port as u16, host.username, password, key_path, command)
+}
+
+#[tauri::command]
+fn update_host_group(state: State<'_, AppState>, id: i64, group: String) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::update_host_group(&conn, id, &group).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_host_favorite(state: State<'_, AppState>, id: i64, favorite: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::update_host_favorite(&conn, id, favorite).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_host_last_connected(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::update_host_last_connected(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let hosts = db::export_hosts(&conn).map_err(|e| e.to_string())?;
+    serde_json::to_string(&hosts).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String> {
+    let hosts: Vec<db::NewHost> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut count = 0;
+    for host in hosts {
+        db::add_host(&conn, &host).map_err(|e| e.to_string())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+fn write_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::get_setting(&conn, &key).map_err(|e| e.to_string())
@@ -383,6 +450,7 @@ fn main() {
             ssh_write,
             ssh_disconnect,
             ssh_reconnect,
+            ssh_exec,
             sftp_connect,
             sftp_list,
             sftp_upload,
@@ -393,6 +461,12 @@ fn main() {
             sftp_rmdir,
             sftp_realpath,
             sftp_disconnect,
+            update_host_group,
+            update_host_favorite,
+            update_host_last_connected,
+            export_hosts,
+            import_hosts,
+            write_file,
             get_setting,
             set_setting,
         ])

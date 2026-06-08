@@ -4,15 +4,15 @@
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
     @click.self="onClose"
   >
-    <div class="bg-gray-800 rounded-lg p-6 w-[28rem] border border-gray-700 shadow-xl">
-      <h3 class="text-lg font-semibold text-white mb-5">
+    <div class="bg-white rounded-lg p-6 w-[28rem] border border-gray-200 shadow-xl dark:bg-gray-800 dark:border-gray-700">
+      <h3 class="text-lg font-semibold text-gray-900 mb-5 dark:text-white">
         {{ isEditing ? 'Edit Host' : 'Add Host' }}
       </h3>
 
       <div class="space-y-4">
         <!-- Name -->
         <div>
-          <label class="block text-xs text-gray-400 mb-1.5">Name <span class="text-red-400">*</span></label>
+          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Name <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             v-model="form.name"
             type="text"
@@ -20,12 +20,12 @@
             :class="inputClass('name')"
             @blur="validateField('name')"
           />
-          <p v-if="errors.name" class="text-xs text-red-400 mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.name }}</p>
         </div>
 
         <!-- Host -->
         <div>
-          <label class="block text-xs text-gray-400 mb-1.5">Host <span class="text-red-400">*</span></label>
+          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Host <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             v-model="form.host"
             type="text"
@@ -33,13 +33,13 @@
             :class="inputClass('host')"
             @blur="validateField('host')"
           />
-          <p v-if="errors.host" class="text-xs text-red-400 mt-1">{{ errors.host }}</p>
+          <p v-if="errors.host" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.host }}</p>
         </div>
 
         <!-- Port + Username -->
         <div class="flex gap-3">
           <div class="flex-1">
-            <label class="block text-xs text-gray-400 mb-1.5">Port <span class="text-red-400">*</span></label>
+            <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Port <span class="text-red-500 dark:text-red-400">*</span></label>
             <input
               v-model.number="form.port"
               type="number"
@@ -47,10 +47,10 @@
               :class="inputClass('port')"
               @blur="validateField('port')"
             />
-            <p v-if="errors.port" class="text-xs text-red-400 mt-1">{{ errors.port }}</p>
+            <p v-if="errors.port" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.port }}</p>
           </div>
           <div class="flex-[2]">
-            <label class="block text-xs text-gray-400 mb-1.5">Username <span class="text-red-400">*</span></label>
+            <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Username <span class="text-red-500 dark:text-red-400">*</span></label>
             <input
               v-model="form.username"
               type="text"
@@ -58,19 +58,19 @@
               :class="inputClass('username')"
               @blur="validateField('username')"
             />
-            <p v-if="errors.username" class="text-xs text-red-400 mt-1">{{ errors.username }}</p>
+            <p v-if="errors.username" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.username }}</p>
           </div>
         </div>
 
         <!-- Auth Type Toggle -->
         <div>
-          <label class="block text-xs text-gray-400 mb-1.5">Authentication</label>
-          <div class="flex bg-gray-700 rounded p-1">
+          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Authentication</label>
+          <div class="flex bg-gray-100 rounded p-1 dark:bg-gray-700">
             <button
               type="button"
               @click="form.auth_type = 'password'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.auth_type === 'password' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white'"
+              :class="form.auth_type === 'password' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'"
             >
               Password
             </button>
@@ -78,7 +78,7 @@
               type="button"
               @click="form.auth_type = 'key'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.auth_type === 'key' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white'"
+              :class="form.auth_type === 'key' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'"
             >
               SSH Key
             </button>
@@ -87,9 +87,9 @@
 
         <!-- Password -->
         <div v-if="form.auth_type === 'password'">
-          <label class="block text-xs text-gray-400 mb-1.5">
+          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">
             Password
-            <span v-if="!isEditing" class="text-red-400">*</span>
+            <span v-if="!isEditing" class="text-red-500 dark:text-red-400">*</span>
           </label>
           <div class="relative">
             <input
@@ -102,18 +102,18 @@
             <button
               type="button"
               @click="showPassword = !showPassword"
-              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
             >
               <component :is="showPassword ? EyeOff : Eye" :size="16" />
             </button>
           </div>
-          <p v-if="errors.password" class="text-xs text-red-400 mt-1">{{ errors.password }}</p>
-          <p v-else-if="isEditing" class="text-xs text-gray-500 mt-1">Leave empty to keep the existing password</p>
+          <p v-if="errors.password" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.password }}</p>
+          <p v-else-if="isEditing" class="text-xs text-gray-400 mt-1 dark:text-gray-500">Leave empty to keep the existing password</p>
         </div>
 
         <!-- Key Path -->
         <div v-if="form.auth_type === 'key'">
-          <label class="block text-xs text-gray-400 mb-1.5">Private Key Path <span class="text-red-400">*</span></label>
+          <label class="block text-xs text-gray-500 mb-1.5 dark:text-gray-400">Private Key Path <span class="text-red-500 dark:text-red-400">*</span></label>
           <div class="flex gap-2">
             <input
               v-model="form.key_path"
@@ -125,14 +125,14 @@
             <button
               type="button"
               @click="browseKey"
-              class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-gray-300 hover:text-white hover:bg-gray-600 shrink-0"
+              class="px-3 py-2 bg-gray-100 border border-gray-300 rounded text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-200 shrink-0 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300 dark:hover:text-white dark:hover:bg-gray-600"
             >
               <FileSearch :size="14" class="inline mr-1" />
               Browse
             </button>
           </div>
-          <p v-if="errors.key_path" class="text-xs text-red-400 mt-1">{{ errors.key_path }}</p>
-          <p v-else class="text-xs text-gray-500 mt-1">Supports ~ for home directory</p>
+          <p v-if="errors.key_path" class="text-xs text-red-500 mt-1 dark:text-red-400">{{ errors.key_path }}</p>
+          <p v-else class="text-xs text-gray-400 mt-1 dark:text-gray-500">Supports ~ for home directory</p>
         </div>
       </div>
 
@@ -141,14 +141,14 @@
         <button
           @click="onClose"
           :disabled="loading"
-          class="px-4 py-2 text-sm text-gray-300 hover:text-white disabled:opacity-50"
+          class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 disabled:opacity-50 dark:text-gray-300 dark:hover:text-white"
         >
           Cancel
         </button>
         <button
           @click="onSave"
           :disabled="loading"
-          class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:opacity-70 text-white rounded flex items-center gap-2 dark:disabled:bg-blue-900"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Host') }}
@@ -217,8 +217,8 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-gray-700 border rounded px-3 py-2 text-sm text-white focus:outline-none transition-colors'
-  const error = errors.value[field] ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
+  const base = 'w-full bg-gray-100 border rounded px-3 py-2 text-sm text-gray-900 focus:outline-none transition-colors dark:bg-gray-700 dark:text-white'
+  const error = errors.value[field] ? 'border-red-500 focus:border-red-400' : 'border-gray-300 focus:border-blue-500 dark:border-gray-600'
   return `${base} ${error}`
 }
 

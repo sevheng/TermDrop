@@ -4,16 +4,16 @@
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
     @click.self="onCancel"
   >
-    <div class="bg-gray-800 rounded-lg p-5 w-80 border border-gray-700 shadow-xl">
-      <h3 class="text-base font-semibold text-white mb-1">{{ title }}</h3>
-      <p v-if="message" class="text-sm text-gray-300 mb-3">{{ message }}</p>
+    <div class="bg-white rounded-lg p-5 w-80 border border-gray-200 shadow-xl dark:bg-gray-800 dark:border-gray-700">
+      <h3 class="text-base font-semibold text-gray-900 mb-1 dark:text-white">{{ title }}</h3>
+      <p v-if="message" class="text-sm text-gray-600 mb-3 dark:text-gray-300">{{ message }}</p>
 
       <input
         ref="inputRef"
         v-model="inputValue"
         type="text"
         :placeholder="placeholder"
-        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-4"
+        class="w-full bg-gray-100 border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 mb-4 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-500"
         @keydown.enter="onConfirm"
         @keydown.esc="onCancel"
       />
@@ -21,7 +21,7 @@
       <div class="flex justify-end gap-2">
         <button
           @click="onCancel"
-          class="px-3 py-1.5 text-sm text-gray-300 hover:text-white rounded hover:bg-gray-700 transition-colors"
+          class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 rounded hover:bg-gray-100 transition-colors dark:text-gray-300 dark:hover:text-white dark:hover:bg-gray-700"
         >
           {{ cancelText }}
         </button>

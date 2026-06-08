@@ -1,30 +1,46 @@
 <template>
   <div class="h-full w-full flex flex-col">
-    <div class="p-4 border-b border-gray-700 flex items-center justify-between">
-      <h2 class="text-sm font-semibold text-gray-200">Hosts</h2>
-      <button @click="openModal()" class="text-gray-400 hover:text-white">
-        <Plus :size="16" />
-      </button>
+    <!-- Header -->
+    <div class="p-2 border-b border-gray-200 flex items-center justify-between dark:border-gray-700">
+      <h2 class="text-xs font-semibold text-gray-800 dark:text-gray-200">Hosts</h2>
+      <div class="flex items-center gap-0.5">
+        <button
+          @click="toggleView"
+          class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white"
+          :title="viewMode === 'grouped' ? 'Switch to flat view' : 'Switch to grouped view'"
+        >
+          <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
+        </button>
+        <button @click="importHosts" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Import hosts">
+          <Download :size="12" />
+        </button>
+        <button @click="store.exportHosts" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Export hosts">
+          <Upload :size="12" />
+        </button>
+        <button @click="openModal()" class="text-gray-500 hover:text-gray-900 p-1 dark:text-gray-400 dark:hover:text-white" title="Add host">
+          <Plus :size="12" />
+        </button>
+      </div>
     </div>
 
     <!-- Search -->
-    <div class="px-3 py-2 border-b border-gray-700">
+    <div class="px-2 py-1 border-b border-gray-200 dark:border-gray-700">
       <div class="relative">
-        <Search :size="14" class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+        <Search :size="12" class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
         <input
           v-model="searchQuery"
           type="text"
           placeholder="Search hosts..."
-          class="w-full bg-gray-700 border border-gray-600 rounded pl-7 pr-2 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          class="w-full bg-gray-100 border border-gray-300 rounded pl-6 pr-2 py-1 text-xs text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-500"
         />
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto p-2">
+    <div class="flex-1 overflow-y-auto py-1 px-1" @contextmenu.prevent="showEmptyMenu">
       <!-- Empty state -->
-      <div v-if="filteredHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-gray-500">
-        <Server :size="32" class="mb-2 opacity-50" />
-        <p class="text-sm">
+      <div v-if="displayHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-gray-500">
+        <Server :size="24" class="mb-2 opacity-50" />
+        <p class="text-xs">
           {{ store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts' }}
         </p>
         <p v-if="store.hosts.length === 0" class="text-xs mt-1">
@@ -32,28 +48,169 @@
         </p>
       </div>
 
-      <div
-        v-for="host in filteredHosts"
-        :key="host.id"
-        class="group flex items-center justify-between p-2 rounded hover:bg-gray-700 cursor-pointer"
-        @click="connectHost(host.id)"
-      >
-        <div class="flex items-center gap-2 min-w-0">
-          <Server :size="14" class="text-gray-400 shrink-0" />
-          <div class="min-w-0">
-            <div class="text-sm text-gray-200 truncate">{{ host.name }}</div>
-            <div class="text-xs text-gray-500 truncate">{{ host.username }}@{{ host.host }}:{{ host.port }}</div>
+      <!-- Flat view -->
+      <template v-if="viewMode === 'flat'">
+        <HostRow
+          v-for="host in displayHosts"
+          :key="host.id"
+          :host="host"
+          :is-connected="isHostConnected(host.id)"
+          :is-connecting="store.connectingHostId === host.id"
+          @connect="connectHost(host.id)"
+          @edit="editHost(host)"
+          @delete="deleteHost(host)"
+          @toggle-favorite="toggleFavorite(host)"
+          @context-menu="showHostMenu"
+        />
+      </template>
+
+      <!-- Grouped view -->
+      <template v-else>
+        <!-- Favorites section -->
+        <div v-if="favoriteHosts.length > 0 && !searchQuery.trim()" class="mb-1">
+          <div class="px-2 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider dark:text-gray-500 flex items-center gap-1">
+            <Star :size="10" class="text-yellow-500" />
+            Favorites
           </div>
+          <HostRow
+            v-for="host in favoriteHosts"
+            :key="'fav-' + host.id"
+            :host="host"
+            :is-connected="isHostConnected(host.id)"
+            :is-connecting="store.connectingHostId === host.id"
+            @connect="connectHost(host.id)"
+            @edit="editHost(host)"
+            @delete="deleteHost(host)"
+            @toggle-favorite="toggleFavorite(host)"
+            @context-menu="showHostMenu"
+          />
         </div>
-        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
-          <button @click.stop="editHost(host)" class="text-gray-400 hover:text-white p-1">
-            <Pencil :size="12" />
-          </button>
-          <button @click.stop="deleteHost(host)" class="text-gray-400 hover:text-red-400 p-1">
-            <Trash2 :size="12" />
-          </button>
-        </div>
-      </div>
+
+        <!-- Grouped hosts -->
+        <template v-for="(groupHosts, groupName) in groupedHosts" :key="groupName">
+          <div class="mb-1">
+            <div
+              class="flex items-center justify-between px-2 py-0.5 rounded cursor-pointer select-none"
+              :class="[groupColorClass(groupName), dragOverGroup === groupName ? 'ring-1 ring-blue-400' : '']"
+              @click="toggleGroup(groupName)"
+              @contextmenu.prevent.stop="showGroupMenu($event, groupName)"
+              @dragover.prevent="dragOverGroup = groupName"
+              @dragleave="dragOverGroup = null"
+              @drop="onGroupDrop($event, groupName)"
+            >
+              <span class="flex items-center gap-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+                <component :is="collapsedGroups.has(groupName) ? Folder : FolderOpen" :size="10" />
+                {{ groupName || 'Ungrouped' }}
+              </span>
+              <span class="text-[10px] text-gray-300 dark:text-gray-600">{{ groupHosts.length }}</span>
+            </div>
+            <div v-show="!collapsedGroups.has(groupName)" class="pl-1">
+              <HostRow
+                v-for="host in groupHosts"
+                :key="host.id"
+                :host="host"
+                :is-connected="isHostConnected(host.id)"
+                :is-connecting="store.connectingHostId === host.id"
+                @connect="connectHost(host.id)"
+                @edit="editHost(host)"
+                @delete="deleteHost(host)"
+                @toggle-favorite="toggleFavorite(host)"
+                @drag-start="draggingHost = true"
+                @drag-end="draggingHost = false; dragOverGroup = null"
+                @context-menu="showHostMenu"
+              />
+            </div>
+          </div>
+        </template>
+      </template>
+    </div>
+
+    <!-- Unified Context Menu -->
+    <div
+      v-if="contextMenu.show"
+      class="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50 min-w-[10rem] dark:bg-gray-700 dark:border-gray-600"
+      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+    >
+      <!-- Host menu -->
+      <template v-if="contextMenu.type === 'host'">
+        <button @click="menuAction(() => connectHost(contextMenu.data.id))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Zap :size="12" class="text-blue-500" />
+          Connect
+        </button>
+        <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Pencil :size="12" class="text-gray-400" />
+          Edit
+        </button>
+        <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Star :size="12" class="text-yellow-500" />
+          {{ contextMenu.data.favorite ? 'Unfavorite' : 'Favorite' }}
+        </button>
+        <div class="border-t border-gray-200 my-0.5 dark:border-gray-600"></div>
+        <button @click="menuAction(() => deleteHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-600">
+          <Trash2 :size="12" />
+          Delete
+        </button>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-gray-200 my-0.5 dark:border-gray-600"></div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-[10px] text-gray-400 dark:text-gray-500">Move to</div>
+        <button
+          v-for="g in allGroupNames"
+          :key="g"
+          @click="menuAction(() => moveHostToGroup(contextMenu.data.id, g))"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
+        >
+          <Folder :size="10" class="text-gray-400" />
+          {{ g || 'Ungrouped' }}
+        </button>
+      </template>
+
+      <!-- Group menu -->
+      <template v-if="contextMenu.type === 'group'">
+        <button @click="menuAction(addHostToGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Plus :size="12" class="text-green-500" />
+          Add Host
+        </button>
+        <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Pencil :size="12" class="text-gray-400" />
+          Rename
+        </button>
+        <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-600">
+          <Trash2 :size="12" />
+          Delete group
+        </button>
+      </template>
+
+      <!-- Empty area menu -->
+      <template v-if="contextMenu.type === 'empty'">
+        <button
+          v-if="viewMode === 'grouped'"
+          @click="menuAction(createGroupFromMenu)"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600"
+        >
+          <FolderPlus :size="12" class="text-blue-500" />
+          New Group
+        </button>
+        <button @click="menuAction(() => { openModal(); })" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">
+          <Plus :size="12" class="text-green-500" />
+          Add Host
+        </button>
+      </template>
+    </div>
+
+    <!-- Inline rename input -->
+    <div
+      v-if="renamingGroup"
+      class="fixed z-50"
+      :style="{ top: renamePos.y + 'px', left: renamePos.x + 'px' }"
+    >
+      <input
+        v-model="renameValue"
+        ref="renameInput"
+        type="text"
+        class="bg-white border border-blue-400 rounded px-2 py-1 text-xs shadow-lg focus:outline-none dark:bg-gray-800 dark:text-white dark:border-blue-500"
+        @keydown.enter="confirmRenameGroup"
+        @keydown.esc="renamingGroup = false"
+        @blur="confirmRenameGroup"
+      />
     </div>
 
     <HostModal
@@ -72,21 +229,43 @@
       @confirm="confirmDialog.onConfirm"
       @cancel="confirmDialog.show = false"
     />
+
+    <input ref="importInput" type="file" accept=".json" class="hidden" @change="onImportFileSelected" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Plus, Server, Pencil, Trash2, Search } from 'lucide-vue-next'
+import {
+  Plus, Server, Search, Upload, Download,
+  Folder, FolderOpen, FolderPlus,
+  List, LayoutGrid, Star,
+  Zap, Pencil, Trash2,
+} from 'lucide-vue-next'
 import HostModal from './HostModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import HostRow from './HostRow.vue'
 
 const store = useConnectionStore()
 
 const showModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
+const collapsedGroups = ref(new Set())
+const importInput = ref(null)
+const viewMode = ref(localStorage.getItem('host-view-mode') || 'grouped')
+const draggingHost = ref(false)
+const dragOverGroup = ref(null)
+const customGroups = ref(new Set(JSON.parse(localStorage.getItem('host-custom-groups') || '[]')))
+
+const contextMenu = ref({ show: false, x: 0, y: 0, type: '', data: null })
+const pendingGroupForNewHost = ref(null)
+const renamingGroup = ref(false)
+const renameValue = ref('')
+const renamePos = ref({ x: 0, y: 0 })
+const renameInput = ref(null)
+
 const confirmDialog = ref({
   show: false,
   title: '',
@@ -101,9 +280,184 @@ const filteredHosts = computed(() => {
   return store.hosts.filter(h =>
     h.name.toLowerCase().includes(q) ||
     h.host.toLowerCase().includes(q) ||
-    h.username.toLowerCase().includes(q)
+    h.username.toLowerCase().includes(q) ||
+    (h.group && h.group.toLowerCase().includes(q))
   )
 })
+
+const displayHosts = computed(() => {
+  if (viewMode.value === 'flat') return filteredHosts.value
+  return filteredHosts.value.filter(h => !h.favorite)
+})
+
+const favoriteHosts = computed(() => {
+  return filteredHosts.value.filter(h => h.favorite)
+})
+
+const allGroupNames = computed(() => {
+  const groups = new Set()
+  for (const h of store.hosts) {
+    groups.add(h.group || '')
+  }
+  for (const g of customGroups.value) {
+    groups.add(g)
+  }
+  return [...groups].sort((a, b) => {
+    if (!a) return 1
+    if (!b) return -1
+    return a.localeCompare(b)
+  })
+})
+
+const groupedHosts = computed(() => {
+  const groups = {}
+  const nonFavorites = filteredHosts.value.filter(h => !h.favorite)
+  for (const host of nonFavorites) {
+    const g = host.group || ''
+    if (!groups[g]) groups[g] = []
+    groups[g].push(host)
+  }
+  for (const g of customGroups.value) {
+    if (!(g in groups)) groups[g] = []
+  }
+  const sorted = {}
+  const keys = Object.keys(groups).sort((a, b) => {
+    if (!a) return 1
+    if (!b) return -1
+    return a.localeCompare(b)
+  })
+  for (const k of keys) {
+    sorted[k] = groups[k]
+  }
+  return sorted
+})
+
+function groupColorClass(name) {
+  const colors = [
+    'hover:bg-blue-50 dark:hover:bg-blue-900/20',
+    'hover:bg-green-50 dark:hover:bg-green-900/20',
+    'hover:bg-purple-50 dark:hover:bg-purple-900/20',
+    'hover:bg-orange-50 dark:hover:bg-orange-900/20',
+    'hover:bg-pink-50 dark:hover:bg-pink-900/20',
+    'hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
+    'hover:bg-yellow-50 dark:hover:bg-yellow-900/20',
+    'hover:bg-red-50 dark:hover:bg-red-900/20',
+  ]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash |= 0
+  }
+  return colors[Math.abs(hash) % colors.length]
+}
+
+function toggleView() {
+  viewMode.value = viewMode.value === 'grouped' ? 'flat' : 'grouped'
+  localStorage.setItem('host-view-mode', viewMode.value)
+}
+
+function isHostConnected(hostId) {
+  return store.tabs.some(t => t.hostId === hostId)
+}
+
+function toggleGroup(name) {
+  const set = new Set(collapsedGroups.value)
+  if (set.has(name)) set.delete(name)
+  else set.add(name)
+  collapsedGroups.value = set
+}
+
+async function toggleFavorite(host) {
+  await store.setHostFavorite(host.id, !host.favorite)
+}
+
+function showGroupMenu(event, groupName) {
+  event.preventDefault()
+  event.stopPropagation()
+  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'group', data: groupName }
+}
+
+function showEmptyMenu(event) {
+  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'empty', data: null }
+}
+
+function showHostMenu(event, host) {
+  event.stopPropagation()
+  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'host', data: host }
+}
+
+function hideContextMenu() {
+  contextMenu.value.show = false
+}
+
+function menuAction(fn) {
+  hideContextMenu()
+  fn()
+}
+
+function addHostToGroup() {
+  pendingGroupForNewHost.value = contextMenu.value.data
+  openModal()
+}
+
+async function moveHostToGroup(hostId, groupName) {
+  await store.setHostGroup(hostId, groupName)
+}
+
+function startRenameGroup() {
+  renameValue.value = contextMenu.value.data
+  renamePos.value = { x: contextMenu.value.x, y: contextMenu.value.y }
+  renamingGroup.value = true
+  nextTick(() => renameInput.value?.focus())
+}
+
+async function confirmRenameGroup() {
+  if (!renamingGroup.value) return
+  const oldName = contextMenu.value.data
+  const newName = renameValue.value.trim()
+  renamingGroup.value = false
+  if (newName && newName !== oldName) {
+    await store.renameGroup(oldName, newName)
+  }
+}
+
+async function deleteGroup() {
+  const name = contextMenu.value.data
+  if (!name) return
+  openConfirm({
+    title: 'Delete Group',
+    message: `Delete group "${name}"? Hosts will be moved to Ungrouped.`,
+    danger: true,
+    onConfirm: async () => {
+      await store.deleteGroup(name)
+      customGroups.value = new Set([...customGroups.value].filter(g => g !== name))
+      localStorage.setItem('host-custom-groups', JSON.stringify([...customGroups.value]))
+    },
+  })
+}
+
+async function onGroupDrop(event, groupName) {
+  dragOverGroup.value = null
+  draggingHost.value = false
+  const data = event.dataTransfer.getData('application/json')
+  if (!data) return
+  try {
+    const { hostId } = JSON.parse(data)
+    await store.setHostGroup(hostId, groupName)
+  } catch (err) {
+    console.error('Drop failed:', err)
+  }
+}
+
+function createGroupFromMenu() {
+  const name = window.prompt('Enter group name:')
+  if (name && name.trim()) {
+    const trimmed = name.trim()
+    customGroups.value = new Set([...customGroups.value, trimmed])
+    localStorage.setItem('host-custom-groups', JSON.stringify([...customGroups.value]))
+    collapsedGroups.value = new Set([...collapsedGroups.value].filter(g => g !== trimmed))
+  }
+}
 
 function openConfirm(options) {
   confirmDialog.value = {
@@ -118,8 +472,17 @@ function openConfirm(options) {
   }
 }
 
+function onWindowClick() {
+  hideContextMenu()
+}
+
 onMounted(() => {
   store.loadHosts()
+  window.addEventListener('click', onWindowClick)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', onWindowClick)
 })
 
 function openModal() {
@@ -147,6 +510,10 @@ async function handleSave({ id, hostData, password }) {
         console.warn('Failed to store password in keyring:', err)
       })
     }
+    if (pendingGroupForNewHost.value !== null) {
+      await store.setHostGroup(newId, pendingGroupForNewHost.value)
+      pendingGroupForNewHost.value = null
+    }
   }
   showModal.value = false
   await store.loadHosts()
@@ -173,5 +540,22 @@ function deleteHost(host) {
       await store.removeHost(host.id)
     },
   })
+}
+
+function importHosts() {
+  importInput.value?.click()
+}
+
+async function onImportFileSelected(event) {
+  const file = event.target.files[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const count = await store.importHosts(text)
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Imported ${count} hosts`, type: 'success' } }))
+  } catch (err) {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Import failed: ' + err, type: 'error' } }))
+  }
+  event.target.value = ''
 }
 </script>

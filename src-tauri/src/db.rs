@@ -10,6 +10,9 @@ pub struct Host {
     pub username: String,
     pub auth_type: String,
     pub key_path: Option<String>,
+    pub group: Option<String>,
+    pub favorite: i64,
+    pub last_connected_at: Option<String>,
     pub created_at: String,
 }
 
@@ -21,6 +24,8 @@ pub struct NewHost {
     pub username: String,
     pub auth_type: String,
     pub key_path: Option<String>,
+    pub group: Option<String>,
+    pub favorite: Option<i64>,
 }
 
 pub fn init_db(conn: &Connection) -> SqlResult<()> {
@@ -53,13 +58,22 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
     if !columns.contains(&"key_path".to_string()) {
         conn.execute("ALTER TABLE hosts ADD COLUMN key_path TEXT", [])?;
     }
+    if !columns.contains(&"group".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN \"group\" TEXT DEFAULT ''", [])?;
+    }
+    if !columns.contains(&"favorite".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN favorite INTEGER DEFAULT 0", [])?;
+    }
+    if !columns.contains(&"last_connected_at".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN last_connected_at DATETIME", [])?;
+    }
 
     Ok(())
 }
 
 pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, created_at FROM hosts ORDER BY created_at DESC"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at FROM hosts ORDER BY favorite DESC, name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(Host {
@@ -70,7 +84,10 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
             username: row.get(4)?,
             auth_type: row.get(5)?,
             key_path: row.get(6)?,
-            created_at: row.get(7)?,
+            group: row.get(7)?,
+            favorite: row.get(8)?,
+            last_connected_at: row.get(9)?,
+            created_at: row.get(10)?,
         })
     })?;
     hosts.collect()
@@ -78,22 +95,7 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
 
 pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO hosts (name, host, port, username, auth_type, key_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            &host.name,
-            &host.host,
-            host.port,
-            &host.username,
-            &host.auth_type,
-            host.key_path.as_deref().unwrap_or("")
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
-}
-
-pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<()> {
-    conn.execute(
-        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6 WHERE id = ?7",
+        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             &host.name,
             &host.host,
@@ -101,6 +103,25 @@ pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<()> 
             &host.username,
             &host.auth_type,
             host.key_path.as_deref().unwrap_or(""),
+            host.group.as_deref().unwrap_or(""),
+            host.favorite.unwrap_or(0)
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8 WHERE id = ?9",
+        params![
+            &host.name,
+            &host.host,
+            host.port,
+            &host.username,
+            &host.auth_type,
+            host.key_path.as_deref().unwrap_or(""),
+            host.group.as_deref().unwrap_or(""),
+            host.favorite.unwrap_or(0),
             id
         ],
     )?;
@@ -114,7 +135,7 @@ pub fn delete_host(conn: &Connection, id: i64) -> SqlResult<()> {
 
 pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, created_at FROM hosts WHERE id = ?1"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at FROM hosts WHERE id = ?1"
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -126,11 +147,38 @@ pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
             username: row.get(4)?,
             auth_type: row.get(5)?,
             key_path: row.get(6)?,
-            created_at: row.get(7)?,
+            group: row.get(7)?,
+            favorite: row.get(8)?,
+            last_connected_at: row.get(9)?,
+            created_at: row.get(10)?,
         }))
     } else {
         Ok(None)
     }
+}
+
+pub fn update_host_group(conn: &Connection, id: i64, group: &str) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET \"group\" = ?1 WHERE id = ?2",
+        params![group, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_host_favorite(conn: &Connection, id: i64, favorite: i64) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET favorite = ?1 WHERE id = ?2",
+        params![favorite, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_host_last_connected(conn: &Connection, id: i64) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET last_connected_at = CURRENT_TIMESTAMP WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
 }
 
 pub fn init_settings(conn: &Connection) -> SqlResult<()> {
@@ -161,6 +209,37 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> SqlResult<()> {
         params![key, value],
     )?;
     Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportHost {
+    pub name: String,
+    pub host: String,
+    pub port: i64,
+    pub username: String,
+    pub auth_type: String,
+    pub key_path: Option<String>,
+    pub group: Option<String>,
+    pub favorite: i64,
+}
+
+pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite FROM hosts ORDER BY name ASC"
+    )?;
+    let hosts = stmt.query_map([], |row| {
+        Ok(ExportHost {
+            name: row.get(0)?,
+            host: row.get(1)?,
+            port: row.get(2)?,
+            username: row.get(3)?,
+            auth_type: row.get(4)?,
+            key_path: row.get(5)?,
+            group: row.get(6)?,
+            favorite: row.get(7)?,
+        })
+    })?;
+    hosts.collect()
 }
 
 #[cfg(test)]

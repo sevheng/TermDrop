@@ -1,8 +1,11 @@
 <template>
-  <div class="flex h-screen bg-gray-900 text-white" :class="{ 'light-theme': currentTheme === 'light' }">
+  <div
+    class="flex h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white transition-colors"
+    :class="{ 'light-theme': currentTheme === 'light' }"
+  >
     <!-- Host Sidebar -->
     <div
-      class="h-full bg-gray-800 border-r border-gray-700 flex flex-col shrink-0"
+      class="h-full bg-white border-r border-gray-200 flex flex-col shrink-0 dark:bg-gray-800 dark:border-gray-700"
       :style="{ width: sidebarWidth + 'px' }"
     >
       <HostSidebar />
@@ -10,20 +13,22 @@
 
     <!-- Sidebar resize handle -->
     <div
-      class="w-1.5 shrink-0 cursor-col-resize bg-gray-700 hover:bg-blue-500 transition-colors z-10"
+      class="w-1.5 shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors z-10 dark:bg-gray-700"
       @mousedown="startResizeSidebar"
     ></div>
 
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Header with tabs and settings -->
-      <div class="flex border-b border-gray-700 bg-gray-800 items-center justify-between">
+      <div class="flex border-b border-gray-200 bg-white items-center justify-between dark:border-gray-700 dark:bg-gray-800">
         <div class="flex overflow-x-auto">
           <button
             v-for="tab in store.tabs"
             :key="tab.id"
             @click="store.setActiveTab(tab.id)"
-            class="px-4 py-2 text-sm border-r border-gray-700 flex items-center gap-2 whitespace-nowrap"
-            :class="tab.id === store.activeTabId ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'"
+            class="px-3 py-1.5 text-xs border-r border-gray-200 flex items-center gap-1.5 whitespace-nowrap transition-colors dark:border-gray-700"
+            :class="tab.id === store.activeTabId
+              ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-white'
+              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
           >
             <span
               class="w-2 h-2 rounded-full shrink-0"
@@ -31,17 +36,24 @@
             ></span>
             <span>{{ tab.name }}</span>
             <span
+              v-if="tab.connecting"
+              class="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0"
+            ></span>
+            <span
+              v-else
               @click.stop="confirmDisconnect(tab.id, tab.name)"
               class="hover:text-red-400 cursor-pointer ml-1"
-            >×</span>
+            >
+              <X :size="14" />
+            </span>
           </button>
         </div>
         <div class="flex items-center shrink-0">
-          <button @click="showShortcuts = true" class="px-3 py-2 text-gray-400 hover:text-white" title="Keyboard shortcuts">
-            <Keyboard :size="16" />
+          <button @click="showShortcuts = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Keyboard shortcuts">
+            <Keyboard :size="14" />
           </button>
-          <button @click="showSettings = true" class="px-3 py-2 text-gray-400 hover:text-white" title="Settings">
-            <Settings :size="16" />
+          <button @click="showSettings = true" class="px-2 py-1.5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" title="Settings">
+            <Settings :size="14" />
           </button>
         </div>
       </div>
@@ -53,16 +65,17 @@
             v-for="tab in store.tabs"
             :key="tab.id"
             :sessionId="tab.id"
+            :hostId="tab.hostId"
             :class="tab.id === store.activeTabId ? 'block' : 'hidden'"
             class="w-full h-full"
           />
           <div
             v-if="!store.activeTabId"
-            class="flex items-center justify-center h-full text-gray-500"
+            class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500"
           >
             <div class="text-center">
-              <TerminalIcon :size="48" class="mx-auto mb-4 opacity-50" />
-              <p class="text-lg">Select a host to connect</p>
+              <TerminalIcon :size="40" class="mx-auto mb-3 opacity-50" />
+              <p class="text-base">Select a host to connect</p>
             </div>
           </div>
         </div>
@@ -70,13 +83,13 @@
         <!-- SFTP panel resize handle -->
         <div
           v-if="store.activeTab"
-          class="w-1.5 shrink-0 cursor-col-resize bg-gray-700 hover:bg-blue-500 transition-colors z-10"
+          class="w-1.5 shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors z-10 dark:bg-gray-700"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
           v-if="store.activeTab"
-          class="border-l border-gray-700 shrink-0 bg-gray-800 flex flex-col"
+          class="border-l border-gray-200 shrink-0 bg-white flex flex-col dark:border-gray-700 dark:bg-gray-800"
           :style="{ width: sftpWidth + 'px' }"
         >
           <SftpPanel
@@ -84,7 +97,7 @@
             :sftpSessionId="store.activeTab.sftpSessionId"
             class="w-full h-full"
           />
-          <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-500">
+          <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
             <Loader2 :size="24" class="animate-spin mb-2" />
             <span class="text-sm">Connecting SFTP...</span>
           </div>
@@ -124,14 +137,14 @@ import SettingsPanel from '../components/SettingsPanel.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ShortcutsHelp from '../components/ShortcutsHelp.vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Terminal as TerminalIcon, Settings, Loader2, Keyboard } from 'lucide-vue-next'
+import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
 
 const store = useConnectionStore()
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const currentTheme = ref('dark')
-const sidebarWidth = ref(256)
-const sftpWidth = ref(280)
+const sidebarWidth = ref(220)
+const sftpWidth = ref(260)
 
 const confirmDialog = ref({
   show: false,
@@ -167,6 +180,7 @@ function confirmDisconnect(sessionId, name) {
 
 function onSettingsSaved(settings) {
   currentTheme.value = settings.theme
+  document.documentElement.classList.toggle('dark', settings.theme === 'dark')
   document.documentElement.classList.toggle('light-theme', settings.theme === 'light')
 }
 
@@ -240,7 +254,6 @@ function startResizeSftp(e) {
   const startWidth = sftpWidth.value
 
   function onMove(moveEvent) {
-    // SFTP panel is on the right, so dragging left increases width
     const delta = startX - moveEvent.clientX
     sftpWidth.value = Math.max(180, Math.min(420, startWidth + delta))
   }
@@ -255,11 +268,17 @@ function startResizeSftp(e) {
   window.addEventListener('mouseup', onUp)
 }
 
-onMounted(() => {
+onMounted(async () => {
   const savedSidebarWidth = localStorage.getItem('sidebar-width')
   if (savedSidebarWidth) sidebarWidth.value = parseInt(savedSidebarWidth)
   const savedSftpWidth = localStorage.getItem('sftp-width')
   if (savedSftpWidth) sftpWidth.value = parseInt(savedSftpWidth)
+
+  const savedTheme = await invoke('get_setting', { key: 'theme' })
+  const theme = savedTheme || 'dark'
+  currentTheme.value = theme
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.classList.toggle('light-theme', theme === 'light')
 
   window.addEventListener('keydown', onKeyDown)
 })

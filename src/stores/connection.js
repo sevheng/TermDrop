@@ -2,13 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
   const tabs = ref([])
   const activeTabId = ref(null)
   const tabListeners = ref(new Map())
+  const connectingHostId = ref(null)
 
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value)
@@ -38,9 +39,57 @@ export const useConnectionStore = defineStore('connection', () => {
     await invoke('store_password', { hostId, password })
   }
 
+  async function setHostGroup(id, group) {
+    await invoke('update_host_group', { id, group })
+    await loadHosts()
+  }
+
+  async function renameGroup(oldName, newName) {
+    const hostsToUpdate = hosts.value.filter(h => h.group === oldName)
+    for (const h of hostsToUpdate) {
+      await invoke('update_host_group', { id: h.id, group: newName })
+    }
+    await loadHosts()
+  }
+
+  async function deleteGroup(groupName) {
+    const hostsToUpdate = hosts.value.filter(h => h.group === groupName)
+    for (const h of hostsToUpdate) {
+      await invoke('update_host_group', { id: h.id, group: '' })
+    }
+    await loadHosts()
+  }
+
+  async function setHostFavorite(id, favorite) {
+    await invoke('update_host_favorite', { id, favorite: favorite ? 1 : 0 })
+    await loadHosts()
+  }
+
+  async function setHostLastConnected(id) {
+    await invoke('update_host_last_connected', { id })
+  }
+
+  async function exportHosts() {
+    const json = await invoke('export_hosts')
+    const filePath = await save({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      defaultPath: `ssh-hosts-${new Date().toISOString().split('T')[0]}.json`,
+    })
+    if (filePath) {
+      await invoke('write_file', { path: filePath, content: json })
+    }
+  }
+
+  async function importHosts(fileContent) {
+    const count = await invoke('import_hosts', { json: fileContent })
+    await loadHosts()
+    return count
+  }
+
   async function connect(hostId, providedPassword = null) {
     const host = hosts.value.find(h => h.id === hostId)
     const isKeyAuth = host?.auth_type === 'key'
+    connectingHostId.value = hostId
 
     let sessionId
     const sshArgs = { hostId }
@@ -50,6 +99,7 @@ export const useConnectionStore = defineStore('connection', () => {
     try {
       sessionId = await invoke('ssh_connect', sshArgs)
     } catch (err) {
+      connectingHostId.value = null
       const errStr = String(err)
       if (!isKeyAuth && (errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')) && !providedPassword) {
         const password = window.prompt('Password not found in keyring. Enter password for this host:')
@@ -62,12 +112,16 @@ export const useConnectionStore = defineStore('connection', () => {
       throw err
     }
 
+    // Track last connected
+    setHostLastConnected(hostId).catch(() => {})
+
     const tab = {
       id: sessionId,
       sftpSessionId: null,
       hostId,
       name: host?.name || host?.host || 'Unknown',
       connected: true,
+      connecting: true,
     }
     tabs.value.push(tab)
     activeTabId.value = sessionId
@@ -81,12 +135,13 @@ export const useConnectionStore = defineStore('connection', () => {
       const sftpId = await invoke('sftp_connect', sftpArgs)
       const idx = tabs.value.findIndex(t => t.id === sessionId)
       if (idx !== -1) {
-        tabs.value[idx] = { ...tabs.value[idx], sftpSessionId: sftpId }
+        tabs.value[idx] = { ...tabs.value[idx], sftpSessionId: sftpId, connecting: false }
       }
     } catch (err) {
       console.warn('SFTP connection failed:', err)
       window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
     }
+    connectingHostId.value = null
 
     const unlistenDisconnect = await listen('ssh-disconnected', (event) => {
       if (event.payload === sessionId) {
@@ -184,11 +239,19 @@ export const useConnectionStore = defineStore('connection', () => {
     tabs,
     activeTabId,
     activeTab,
+    connectingHostId,
     loadHosts,
     addHost,
     updateHost,
     removeHost,
     storePassword,
+    setHostGroup,
+    renameGroup,
+    deleteGroup,
+    setHostFavorite,
+    setHostLastConnected,
+    exportHosts,
+    importHosts,
     connect,
     disconnect,
     writeData,

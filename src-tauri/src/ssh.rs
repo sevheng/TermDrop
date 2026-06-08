@@ -227,3 +227,38 @@ pub fn connect(
 
     Ok(SshSessionHandle { host_id, write_tx, disconnect_tx })
 }
+
+pub fn exec(
+    host: String,
+    port: u16,
+    username: String,
+    password: Option<String>,
+    key_path: Option<String>,
+    command: String,
+) -> Result<String, String> {
+    let addr = format!("{}:{}", host, port);
+    let tcp = std::net::TcpStream::connect(&addr).map_err(|e| format!("connect: {}", e))?;
+    let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
+    session.set_tcp_stream(tcp);
+    session.handshake().map_err(|e| format!("handshake: {}", e))?;
+
+    if let Some(key_path) = key_path {
+        let expanded = expand_key_path(&key_path);
+        session.userauth_pubkey_file(&username, None, &expanded, None)
+            .map_err(|e| format!("key auth: {}", e))?;
+    } else if let Some(password) = password {
+        session.userauth_password(&username, &password)
+            .map_err(|e| format!("auth: {}", e))?;
+    } else {
+        return Err("no credentials provided".to_string());
+    }
+
+    let mut channel = session.channel_session().map_err(|e| format!("channel: {}", e))?;
+    channel.exec(&command).map_err(|e| format!("exec: {}", e))?;
+
+    let mut output = String::new();
+    channel.read_to_string(&mut output).map_err(|e| format!("read: {}", e))?;
+
+    channel.wait_close().ok();
+    Ok(output.trim().to_string())
+}

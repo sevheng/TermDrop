@@ -1,53 +1,112 @@
 <template>
-  <div class="relative w-full h-full">
-    <div ref="terminalContainer" class="w-full h-full" :class="terminalBgClass"></div>
+  <div class="relative w-full h-full flex flex-col">
+    <div ref="terminalContainer" class="flex-1 min-h-0" :class="terminalBgClass"></div>
+
+    <!-- System Status Bar -->
+    <div
+      v-if="props.hostId"
+      class="shrink-0 border-t border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 transition-all"
+      :class="statusExpanded ? '' : ''"
+    >
+      <div class="flex items-center justify-between px-2 py-0.5">
+        <div class="flex items-center gap-3 overflow-x-auto">
+          <div
+            v-if="status.os"
+            class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-400 max-w-[140px] cursor-default"
+            @mouseenter="showTooltip($event, status.os)"
+            @mouseleave="hideTooltip"
+          >
+            <Monitor :size="10" class="text-cyan-500 shrink-0" />
+            <span class="truncate">{{ status.os }}</span>
+          </div>
+          <div v-if="status.load" class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-400 whitespace-nowrap">
+            <Cpu :size="10" class="text-blue-500" />
+            <span class="font-medium">CPU:</span>
+            <span>{{ status.load }}<span v-if="status.cores"> / {{ status.cores }} cores</span></span>
+          </div>
+          <div v-if="status.ram" class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-400 whitespace-nowrap">
+            <MemoryStick :size="10" class="text-green-500" />
+            <span class="font-medium">RAM:</span>
+            <span>{{ status.ram }}</span>
+          </div>
+          <div v-if="status.disk" class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-400 whitespace-nowrap">
+            <HardDrive :size="10" class="text-orange-500" />
+            <span class="font-medium">Disk:</span>
+            <span>{{ status.disk }}</span>
+          </div>
+          <div v-if="status.uptime" class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-400 whitespace-nowrap">
+            <Clock :size="10" class="text-purple-500" />
+            <span class="font-medium">Up:</span>
+            <span>{{ status.uptime }}</span>
+          </div>
+          <span v-if="statusError" class="text-[10px] text-red-500">{{ statusError }}</span>
+        </div>
+        <button
+          @click="statusExpanded = !statusExpanded"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 ml-2"
+          :title="statusExpanded ? 'Hide status' : 'Show status'"
+        >
+          <ChevronUp v-if="statusExpanded" :size="12" />
+          <ChevronDown v-else :size="12" />
+        </button>
+      </div>
+    </div>
+
+    <!-- Custom tooltip -->
+    <div
+      v-if="tooltip.show"
+      class="fixed z-50 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg pointer-events-none whitespace-nowrap dark:bg-gray-700"
+      :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
+    >
+      {{ tooltip.text }}
+    </div>
 
     <!-- Search bar -->
     <div
       v-if="searchVisible"
-      class="absolute top-2 right-2 bg-gray-800 border border-gray-600 rounded shadow-lg p-2 z-20 flex items-center gap-2"
+      class="absolute top-2 right-2 bg-white border border-gray-300 rounded shadow-lg p-2 z-20 flex items-center gap-2 dark:bg-gray-800 dark:border-gray-600"
     >
       <input
         ref="searchInput"
         v-model="searchQuery"
         type="text"
         placeholder="Find..."
-        class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white w-40 focus:outline-none focus:border-blue-500"
+        class="bg-gray-100 border border-gray-300 rounded px-2 py-1 text-xs text-gray-900 w-40 focus:outline-none focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         @keydown.enter="findNext"
         @keydown.shift.enter="findPrevious"
         @keydown.esc="closeSearch"
       />
       <button
         @click="findPrevious"
-        class="text-gray-300 hover:text-white px-1"
+        class="text-gray-600 hover:text-gray-900 px-1 dark:text-gray-300 dark:hover:text-white"
         title="Previous"
       >
         ↑
       </button>
       <button
         @click="findNext"
-        class="text-gray-300 hover:text-white px-1"
+        class="text-gray-600 hover:text-gray-900 px-1 dark:text-gray-300 dark:hover:text-white"
         title="Next"
       >
         ↓
       </button>
-      <label class="flex items-center gap-1 text-xs text-gray-300 cursor-pointer select-none">
+      <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none dark:text-gray-300">
         <input v-model="searchCaseSensitive" type="checkbox" class="accent-blue-500" />
         Aa
       </label>
-      <button @click="closeSearch" class="text-gray-400 hover:text-white px-1">×</button>
+      <button @click="closeSearch" class="text-gray-400 hover:text-gray-900 px-1 dark:hover:text-white">×</button>
     </div>
 
     <!-- Disconnect banner -->
     <div
       v-if="isDisconnected"
-      class="absolute inset-0 bg-gray-900/90 flex flex-col items-center justify-center z-10"
+      class="absolute inset-0 bg-gray-100/90 flex flex-col items-center justify-center z-10 dark:bg-gray-900/90"
     >
-      <p class="text-red-400 text-lg font-semibold mb-4">Connection lost</p>
+      <p class="text-red-500 text-base font-semibold mb-3 dark:text-red-400">Connection lost</p>
       <button
         @click="reconnect"
         :disabled="isReconnecting"
-        class="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded text-sm font-medium"
+        class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded text-xs font-medium dark:disabled:bg-gray-600"
       >
         {{ isReconnecting ? 'Reconnecting...' : 'Reconnect' }}
       </button>
@@ -57,12 +116,12 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-gray-700 border border-gray-600 rounded shadow-lg py-1 z-50 min-w-[8rem]"
+      class="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50 min-w-[8rem] dark:bg-gray-700 dark:border-gray-600"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <button @click="copySelection" class="block w-full text-left px-4 py-1.5 text-sm text-white hover:bg-gray-600">Copy</button>
-      <button @click="pasteFromClipboard" class="block w-full text-left px-4 py-1.5 text-sm text-white hover:bg-gray-600">Paste</button>
-      <button @click="selectAll" class="block w-full text-left px-4 py-1.5 text-sm text-white hover:bg-gray-600">Select All</button>
+      <button @click="copySelection" class="block w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Copy</button>
+      <button @click="pasteFromClipboard" class="block w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Paste</button>
+      <button @click="selectAll" class="block w-full text-left px-3 py-1 text-xs text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600">Select All</button>
     </div>
   </div>
 </template>
@@ -74,12 +133,17 @@ import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import 'xterm/css/xterm.css'
 
 const props = defineProps({
   sessionId: {
     type: String,
     required: true,
+  },
+  hostId: {
+    type: Number,
+    default: null,
   },
 })
 
@@ -95,6 +159,7 @@ let unlistenConnected = null
 let unlistenDisconnected = null
 let unlistenReconnected = null
 let resizeObserver = null
+let statusInterval = null
 
 const isDisconnected = ref(false)
 const isReconnecting = ref(false)
@@ -104,6 +169,12 @@ const terminalBgClass = ref('bg-gray-900')
 const searchVisible = ref(false)
 const searchQuery = ref('')
 const searchCaseSensitive = ref(false)
+
+const statusExpanded = ref(true)
+const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '' })
+const statusError = ref('')
+
+const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
 
 const darkTheme = {
   background: '#111827',
@@ -243,6 +314,61 @@ function onSettingsChanged(event) {
   applySettings(event.detail)
 }
 
+function showTooltip(event, text) {
+  tooltip.value = {
+    show: true,
+    text,
+    x: event.clientX,
+    y: event.clientY - 28,
+  }
+}
+
+function hideTooltip() {
+  tooltip.value.show = false
+}
+
+async function fetchSystemStatus() {
+  if (!props.hostId || isDisconnected.value) return
+  try {
+    const [load, ram, disk, uptime, osName, kernel, arch, cores] = await Promise.all([
+      invoke('ssh_exec', { hostId: props.hostId, command: "awk '{print $1}' /proc/loadavg" }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: "free -m | awk 'NR==2{used=$3;total=$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}'" }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: "df -h / | awk 'NR==2{print $3\"/\"$2\" (\"$5\")\"}'" }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: "awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60); printf \"%dd %dh %dm\", d,h,m}' /proc/uptime" }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: "grep '^PRETTY_NAME=' /etc/os-release | sed 's/PRETTY_NAME=//; s/\"//g'" }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: 'uname -r' }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: 'uname -m' }).catch(() => ''),
+      invoke('ssh_exec', { hostId: props.hostId, command: 'nproc' }).catch(() => ''),
+    ])
+    const osParts = [osName, kernel, arch].filter(Boolean)
+    status.value = {
+      load,
+      ram,
+      disk,
+      uptime,
+      os: osParts.join(' · '),
+      cores,
+    }
+    statusError.value = ''
+  } catch (err) {
+    statusError.value = ''
+  }
+}
+
+function startStatusPolling() {
+  if (statusInterval) clearInterval(statusInterval)
+  if (!props.hostId) return
+  fetchSystemStatus()
+  statusInterval = setInterval(fetchSystemStatus, 5000)
+}
+
+function stopStatusPolling() {
+  if (statusInterval) {
+    clearInterval(statusInterval)
+    statusInterval = null
+  }
+}
+
 onMounted(async () => {
   const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
   const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
@@ -323,6 +449,7 @@ onMounted(async () => {
       setTimeout(() => {
         if (fitAddon) fitAddon.fit()
       }, 100)
+      startStatusPolling()
     }
   })
 
@@ -330,6 +457,7 @@ onMounted(async () => {
   unlistenDisconnected = await listen('ssh-disconnected', (event) => {
     if (event.payload === props.sessionId) {
       isDisconnected.value = true
+      stopStatusPolling()
     }
   })
 
@@ -342,6 +470,7 @@ onMounted(async () => {
       setTimeout(() => {
         if (fitAddon) fitAddon.fit()
       }, 100)
+      startStatusPolling()
     }
   })
 
@@ -364,6 +493,9 @@ onMounted(async () => {
   window.addEventListener('terminal-settings-changed', onSettingsChanged)
   window.addEventListener('click', onWindowClick)
   window.addEventListener('contextmenu', onWindowContextMenu, true)
+
+  // Start status polling if already connected
+  startStatusPolling()
 })
 
 async function reconnect() {
@@ -377,6 +509,7 @@ async function reconnect() {
 }
 
 onUnmounted(() => {
+  stopStatusPolling()
   if (unlistenData) unlistenData()
   if (unlistenError) unlistenError()
   if (unlistenConnected) unlistenConnected()
