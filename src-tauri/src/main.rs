@@ -333,8 +333,19 @@ async fn sftp_download(
 }
 
 #[tauri::command]
+fn shell_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    if s.chars().all(|c| c.is_alphanumeric() || "_-./:@".contains(c)) {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
+#[tauri::command]
 async fn sftp_download_dir(
-    window: Window,
+    _window: Window,
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
@@ -366,7 +377,12 @@ async fn sftp_download_dir(
     {
         let session = exec_session.lock().map_err(|e| e.to_string())?;
         let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-        let cmd = format!("tar -czf {} -C {} {}", remote_temp, parent_path, folder_name);
+        let cmd = format!(
+            "tar -czf {} -C {} {}",
+            shell_escape(&remote_temp),
+            shell_escape(&parent_path),
+            shell_escape(&folder_name)
+        );
         channel.exec(&cmd).map_err(|e| e.to_string())?;
         let mut stdout = String::new();
         use std::io::Read;
@@ -380,15 +396,23 @@ async fn sftp_download_dir(
         }
     }
 
-    // Download the archive
+    // Download the archive (blocking I/O off the async thread)
     let download_dir = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
         .unwrap_or_else(|| std::env::temp_dir());
     let archive_name = format!("{}.tar.gz", folder_name);
     let local_archive = download_dir.join(&archive_name);
     let local_archive_str = local_archive.to_string_lossy().to_string();
+    let remote_temp_clone = remote_temp.clone();
+    let handle_clone = handle.clone();
+    let local_archive_str_for_dl = local_archive_str.clone();
 
-    sftp::sftp_download(window, &handle, &remote_temp, &local_archive_str)?;
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_download_simple(&handle_clone, &remote_temp_clone, &local_archive_str_for_dl)
+    })
+    .await
+    .map_err(|e| format!("download task failed: {}", e))?
+    .map_err(|e| format!("download failed: {}", e))?;
 
     // Extract locally
     let extract_dir = download_dir.join(&folder_name);

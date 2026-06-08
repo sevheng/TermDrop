@@ -202,18 +202,58 @@
           </div>
           <pre v-else class="text-[11px] text-[#cccccc] font-mono whitespace-pre-wrap break-all">{{ previewModal.content }}</pre>
         </div>
+        <div class="flex items-center justify-end gap-2 px-3 py-2 border-t border-[#3c3c3c]">
+          <button @click="previewDownload" class="px-3 py-1 text-[11px] text-[#cccccc] bg-[#3c3c3c] hover:bg-[#4c4c4c] rounded">
+            Download
+          </button>
+          <button @click="previewEdit" class="px-3 py-1 text-[11px] text-white bg-[#007acc] hover:bg-[#1177bb] rounded">
+            Edit
+          </button>
+          <button @click="previewModal.show = false" class="px-3 py-1 text-[11px] text-[#cccccc] bg-transparent hover:bg-[#3c3c3c] rounded border border-[#3c3c3c]">
+            Close
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Progress toasts -->
-    <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] p-2 space-y-2">
-      <div v-for="t in transfers" :key="t.file" class="text-xs">
-        <div class="flex justify-between text-[#858585] mb-1">
-          <span class="truncate">{{ t.file }}</span>
-          <span>{{ Math.round((t.bytes / t.total) * 100) }}%</span>
-        </div>
-        <div class="h-1 bg-[#3c3c3c] rounded overflow-hidden">
-          <div class="h-full bg-[#007acc] transition-all" :style="{ width: (t.bytes / t.total) * 100 + '%' }"></div>
+    <!-- Transfer progress -->
+    <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] bg-[#1e1e1e]">
+      <div class="px-2 py-1 text-[10px] text-[#6e6e6e] font-medium uppercase tracking-wider border-b border-[#3c3c3c]/50">
+        Transfers ({{ transfers.length }})
+      </div>
+      <div class="p-2 space-y-2 max-h-32 overflow-y-auto">
+        <div v-for="t in transfers" :key="t.file" class="text-xs">
+          <div class="flex items-center justify-between text-[#858585] mb-0.5">
+            <span class="truncate flex-1 min-w-0 mr-2" :title="t.file">{{ t.fileName }}</span>
+            <span class="shrink-0 text-[#cccccc] font-medium">
+              <template v-if="t.total === 0 && !t.done">
+                <span class="inline-block w-3 h-3 border-2 border-[#007acc] border-t-transparent rounded-full animate-spin align-text-bottom"></span>
+              </template>
+              <template v-else>
+                {{ t.total === 0 ? '100%' : Math.round((t.bytes / t.total) * 100) + '%' }}
+              </template>
+            </span>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-[#6e6e6e] mb-1">
+            <span v-if="t.total === 0 && !t.done">Preparing archive...</span>
+            <span v-else>{{ formatSize(t.bytes) }} / {{ formatSize(t.total) }}</span>
+            <span v-if="!t.done && t.speed > 0" class="text-[#89d185]">{{ formatSpeed(t.speed) }}</span>
+            <span v-else-if="t.done && !t.fileName.includes('failed')" class="text-[#007acc]">Done</span>
+            <span v-else-if="t.done && t.fileName.includes('failed')" class="text-[#f44336]">Failed</span>
+          </div>
+          <div class="h-1.5 bg-[#3c3c3c] rounded overflow-hidden">
+            <div
+              v-if="t.total === 0 && !t.done"
+              class="h-full rounded bg-[#007acc] animate-pulse"
+              style="width: 100%"
+            ></div>
+            <div
+              v-else
+              class="h-full rounded transition-all duration-300"
+              :class="t.done ? 'bg-[#89d185]' : 'bg-[#007acc]'"
+              :style="{ width: t.total === 0 ? '100%' : Math.min(100, (t.bytes / t.total) * 100) + '%' }"
+            ></div>
+          </div>
         </div>
       </div>
     </div>
@@ -256,6 +296,7 @@ const showColumns = ref({
 const filterQuery = ref('')
 const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
+
 let unlistenProgress = null
 let unlistenFileDrop = null
 
@@ -279,6 +320,7 @@ const promptDialog = ref({
 const previewModal = ref({
   show: false,
   fileName: '',
+  filePath: '',
   content: '',
   loading: false,
 })
@@ -552,21 +594,40 @@ onMounted(async () => {
   await loadFiles()
   unlistenProgress = await listen('sftp-progress', (event) => {
     const p = event.payload
+    const now = Date.now()
+    const fileName = p.file.split('/').pop() || p.file
     const existing = transfers.value.find(t => t.file === p.file)
     if (existing) {
+      const dt = (now - existing.lastUpdate) / 1000
+      if (dt > 0) {
+        const db = p.bytes_transferred - existing.bytes
+        existing.speed = db / dt
+      }
       existing.bytes = p.bytes_transferred
       existing.total = p.total_bytes
-      if (existing.bytes >= existing.total) {
+      existing.lastUpdate = now
+      if (existing.bytes >= existing.total && !existing.done) {
+        existing.done = true
         setTimeout(() => {
           transfers.value = transfers.value.filter(t => t.file !== p.file)
-        }, 2000)
+        }, 3000)
       }
     } else {
+      const isDone = p.total_bytes === 0 || p.bytes_transferred >= p.total_bytes
       transfers.value.push({
         file: p.file,
+        fileName,
         bytes: p.bytes_transferred,
         total: p.total_bytes,
+        speed: 0,
+        lastUpdate: now,
+        done: isDone,
       })
+      if (isDone) {
+        setTimeout(() => {
+          transfers.value = transfers.value.filter(t => t.file !== p.file)
+        }, 3000)
+      }
     }
   })
   unlistenFileDrop = await listen('tauri://drag-drop', (event) => {
@@ -652,11 +713,37 @@ async function onDownloadDir() {
   const file = contextMenu.value.file
   if (!file || !file.is_dir) return
   contextMenu.value.show = false
+  const transferKey = `folder:${file.path}`
+  transfers.value.push({
+    file: transferKey,
+    fileName: `📁 ${file.name}`,
+    bytes: 0,
+    total: 0,
+    speed: 0,
+    lastUpdate: Date.now(),
+    done: false,
+  })
   try {
     const savedPath = await invoke('sftp_download_dir', { sftpSessionId: props.sftpSessionId, remotePath: file.path })
+    const t = transfers.value.find(x => x.file === transferKey)
+    if (t) {
+      t.done = true
+      t.fileName = `📁 ${file.name} (saved)`
+      setTimeout(() => {
+        transfers.value = transfers.value.filter(x => x.file !== transferKey)
+      }, 3000)
+    }
     showToast(`Downloaded folder to ${savedPath}`, 'success')
   } catch (e) {
     console.error('Download folder failed:', e)
+    const t = transfers.value.find(x => x.file === transferKey)
+    if (t) {
+      t.done = true
+      t.fileName = `📁 ${file.name} (failed)`
+      setTimeout(() => {
+        transfers.value = transfers.value.filter(x => x.file !== transferKey)
+      }, 3000)
+    }
     showToast('Download folder failed: ' + e, 'error')
   }
 }
@@ -724,7 +811,7 @@ async function copyRemotePath() {
 
 async function onPreviewFile(file) {
   if (!file || file.is_dir) return
-  previewModal.value = { show: true, fileName: file.name, content: '', loading: true }
+  previewModal.value = { show: true, fileName: file.name, filePath: file.path, content: '', loading: true }
   try {
     const content = await invoke('sftp_read_file', { sftpSessionId: props.sftpSessionId, remotePath: file.path })
     previewModal.value.content = content
@@ -733,6 +820,69 @@ async function onPreviewFile(file) {
     previewModal.value.content = `Error: ${e}`
   } finally {
     previewModal.value.loading = false
+  }
+}
+
+async function previewEdit() {
+  const filePath = previewModal.value.filePath
+  const fileName = previewModal.value.fileName
+  if (!filePath) return
+  previewModal.value.show = false
+  try {
+    const localPath = await invoke('sftp_edit_file', {
+      sftpSessionId: props.sftpSessionId,
+      remotePath: filePath,
+    })
+    await openPath(localPath)
+    showToast(`Opened ${fileName} in editor`, 'success')
+    const startTime = Math.floor(Date.now() / 1000)
+    editingFiles.value.set(localPath, {
+      remotePath: filePath,
+      lastModified: startTime,
+      fileName: fileName,
+    })
+    const intervalId = setInterval(async () => {
+      const edit = editingFiles.value.get(localPath)
+      if (!edit) {
+        clearInterval(intervalId)
+        return
+      }
+      try {
+        const newMtime = await invoke('check_file_modified', {
+          localPath,
+          lastModified: edit.lastModified,
+        })
+        if (newMtime) {
+          edit.lastModified = newMtime
+          editingFiles.value.set(localPath, edit)
+          await invoke('sftp_upload_simple', {
+            sftpSessionId: props.sftpSessionId,
+            localPath,
+            remotePath: edit.remotePath,
+          })
+          showToast(`Auto-uploaded ${edit.fileName}`, 'success')
+        }
+      } catch (e) {
+        console.error('Edit poll error:', e)
+      }
+    }, 3000)
+  } catch (e) {
+    console.error('Edit failed:', e)
+    showToast('Edit failed: ' + e, 'error')
+  }
+}
+
+async function previewDownload() {
+  const filePath = previewModal.value.filePath
+  const fileName = previewModal.value.fileName
+  if (!filePath) return
+  previewModal.value.show = false
+  try {
+    const savedPath = await store.sftpDownload(props.sftpSessionId, filePath)
+    showToast(`Downloaded to ${savedPath}`, 'success')
+  } catch (e) {
+    console.error('Download failed:', e)
+    showToast('Download failed: ' + e, 'error')
   }
 }
 
@@ -867,5 +1017,11 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+}
+
+function formatSpeed(bytesPerSec) {
+  if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s'
+  if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s'
+  return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
 }
 </script>
