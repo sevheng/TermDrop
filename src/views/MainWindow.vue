@@ -60,18 +60,18 @@
       <!-- Terminal + SFTP area -->
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
-          <KeepAlive :max="5">
-            <TerminalTab
-              v-if="store.activeTab"
-              :key="store.activeTab.id"
-              :sessionId="store.activeTab.id"
-              :hostId="store.activeTab.hostId"
-              class="w-full h-full"
-            />
-          </KeepAlive>
+          <TerminalTab
+            v-for="tab in store.tabs"
+            :key="tab.id"
+            v-show="tab.id === store.activeTabId"
+            :sessionId="tab.id"
+            :hostId="tab.hostId"
+            :isActive="tab.id === store.activeTabId"
+            class="w-full h-full absolute top-0 left-0"
+          />
           <div
             v-if="!store.activeTabId"
-            class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500"
+            class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 absolute inset-0"
           >
             <div class="text-center">
               <TerminalIcon :size="40" class="mx-auto mb-3 opacity-50" />
@@ -95,51 +95,76 @@
           <!-- Panel tabs -->
           <div class="flex border-b border-[#3c3c3c]">
             <button
-              @click="showPortForwards = false"
+              @click="rightPanelTab = 'sftp'"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="!showPortForwards
+              :class="rightPanelTab === 'sftp'
                 ? 'text-[#007acc]'
                 : 'text-[#858585] hover:text-[#cccccc]'"
             >
               SFTP
               <span
-                v-if="!showPortForwards"
+                v-if="rightPanelTab === 'sftp'"
                 class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
             <button
-              @click="showPortForwards = true"
+              @click="rightPanelTab = 'tunnels'"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="showPortForwards
+              :class="rightPanelTab === 'tunnels'
                 ? 'text-[#007acc]'
                 : 'text-[#858585] hover:text-[#cccccc]'"
             >
               Tunnels
               <span
-                v-if="showPortForwards"
+                v-if="rightPanelTab === 'tunnels'"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
+              />
+            </button>
+            <button
+              @click="rightPanelTab = 'docker'"
+              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
+              :class="rightPanelTab === 'docker'
+                ? 'text-[#007acc]'
+                : 'text-[#858585] hover:text-[#cccccc]'"
+            >
+              Docker
+              <span
+                v-if="rightPanelTab === 'docker'"
                 class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
           </div>
 
           <div class="flex-1 overflow-hidden">
-            <PortForwardPanel
-              v-if="showPortForwards"
-              :hostId="store.activeTab.hostId"
-              @add="showForwardModal = true"
-              class="w-full h-full"
-            />
-            <template v-else>
+            <KeepAlive :max="15">
+              <PortForwardPanel
+                v-if="rightPanelTab === 'tunnels' && store.activeTab"
+                :key="'tunnels-' + store.activeTab.hostId"
+                :hostId="store.activeTab.hostId"
+                @add="showForwardModal = true"
+                class="w-full h-full"
+              />
+              <DockerPanel
+                v-else-if="rightPanelTab === 'docker' && store.activeTab"
+                :key="'docker-' + store.activeTab.hostId"
+                :hostId="store.activeTab.hostId"
+                @exec="onDockerExec"
+                class="w-full h-full"
+              />
               <SftpPanel
-                v-if="store.activeTab.sftpSessionId"
+                v-else-if="rightPanelTab === 'sftp' && store.activeTab?.sftpSessionId"
+                :key="'sftp-' + store.activeTab.sftpSessionId"
                 :sftpSessionId="store.activeTab.sftpSessionId"
                 class="w-full h-full"
               />
-              <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 h-full">
+              <div
+                v-else-if="rightPanelTab === 'sftp' && store.activeTab && !store.activeTab.sftpSessionId"
+                class="flex-1 flex flex-col items-center justify-center text-[#6e6e6e] h-full"
+              >
                 <Loader2 :size="24" class="animate-spin mb-2" />
                 <span class="text-sm">Connecting SFTP...</span>
               </div>
-            </template>
+            </KeepAlive>
           </div>
         </div>
       </div>
@@ -189,11 +214,12 @@ const PortForwardPanel = defineAsyncComponent(() => import('../components/PortFo
 const PortForwardModal = defineAsyncComponent(() => import('../components/PortForwardModal.vue'))
 const SettingsPanel = defineAsyncComponent(() => import('../components/SettingsPanel.vue'))
 const ShortcutsHelp = defineAsyncComponent(() => import('../components/ShortcutsHelp.vue'))
+const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel.vue'))
 
 const store = useConnectionStore()
 const showSettings = ref(false)
 const showShortcuts = ref(false)
-const showPortForwards = ref(false)
+const rightPanelTab = ref('sftp')
 const showForwardModal = ref(false)
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
@@ -230,8 +256,11 @@ function confirmDisconnect(sessionId, name) {
   })
 }
 
-function onSettingsSaved() {
-  // Theme is always VS Code Dark, nothing to toggle
+function onDockerExec({ containerId, containerName, shell }) {
+  const tab = store.activeTab
+  if (!tab) return
+  const cmd = `docker exec -it ${containerName} ${shell}\n`
+  store.writeData(tab.id, cmd)
 }
 
 async function onForwardSaved(forwardData) {
@@ -240,7 +269,7 @@ async function onForwardSaved(forwardData) {
     showForwardModal.value = false
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
     // Refresh the panel if it's open
-    if (showPortForwards.value) {
+    if (rightPanelTab.value === 'tunnels') {
       // The panel will auto-refresh via its watcher
     }
   } catch (err) {
