@@ -28,7 +28,7 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 keyring = "3"
 dirs = "5"
-ssh2 = "0.9"
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
