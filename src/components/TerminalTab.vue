@@ -866,6 +866,13 @@ async function initTerminal() {
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
   webglAddon = new WebglAddon()
+  webglAddon.onContextLoss(() => {
+    // WebGL context lost (e.g., tab hidden). Re-add addon and refresh.
+    if (term && webglAddon) {
+      term.loadAddon(webglAddon)
+      term.refresh(0, term.rows - 1)
+    }
+  })
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
   term.loadAddon(webglAddon)
@@ -1119,9 +1126,14 @@ watch(() => props.isActive, (active) => {
     }
     if (!term) return
     term.focus()
-    requestAnimationFrame(() => {
-      if (fitAddon) fitAddon.fit()
-      if (dockerFitAddon) dockerFitAddon.fit()
+    nextTick(() => {
+      requestAnimationFrame(() => {
+        if (fitAddon) fitAddon.fit()
+        if (dockerFitAddon) dockerFitAddon.fit()
+        // Force redraw after tab switch — WebGL canvas may be blank after display:none
+        if (term) term.refresh(0, term.rows - 1)
+        if (dockerTerm) dockerTerm.refresh(0, dockerTerm.rows - 1)
+      })
     })
     if (terminalContainer.value && resizeObserver) {
       resizeObserver.observe(terminalContainer.value)
