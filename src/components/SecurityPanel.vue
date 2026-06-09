@@ -186,14 +186,7 @@ onMounted(readFromCache)
 
 watch(() => props.hostId, readFromCache)
 
-// Poll cache every second to catch background completion
-let pollInterval = null
-onMounted(() => {
-  pollInterval = setInterval(readFromCache, 1000)
-})
-
-onUnmounted(() => {
-  if (pollInterval) clearInterval(pollInterval)
-})
+// Reactive: re-read from cache whenever the store version changes
+watch(() => store.securityReportVersion, readFromCache)
 
 </script>

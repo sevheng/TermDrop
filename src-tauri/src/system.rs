@@ -164,6 +164,109 @@ pub fn get_network(session: &Session) -> Result<NetworkInfo, String> {
     Ok(NetworkInfo { ports, interfaces, established_count })
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SystemPanel {
+    pub processes: Vec<Process>,
+    pub network: NetworkInfo,
+    pub disk: DiskInfo,
+}
+
+/// Batched system panel: processes + network + disk in a single SSH exec.
+pub fn get_system_panel(session: &Session) -> Result<SystemPanel, String> {
+    let output = run_command(session, r#"bash -c 'echo "---TERMDROP-PROCESSES---"; ps -eo pid,pcpu,pmem,etime,comm --sort=-pcpu | head -21; echo "---TERMDROP-NETWORK---"; ss -tlnp 2>/dev/null | tail -n +2 | head -30; echo "---TERMDROP-ESTABLISHED---"; ss -tn state established 2>/dev/null | wc -l; echo "---TERMDROP-INTERFACES---"; cat /proc/net/dev 2>/dev/null | tail -n +3; echo "---TERMDROP-DISK-MOUNTS---"; df -hP 2>/dev/null | tail -n +2; echo "---TERMDROP-DISK-DIRS---"; du -hd1 / 2>/dev/null | sort -rh | head -15'"#)?;
+
+    let mut processes = Vec::new();
+    let mut network_ports = Vec::new();
+    let mut network_interfaces = Vec::new();
+    let mut established_count = 0;
+    let mut disk_mounts = Vec::new();
+    let mut disk_dirs = Vec::new();
+
+    let mut section = "";
+    for line in output.lines() {
+        if line.starts_with("---TERMDROP-") && line.ends_with("---") {
+            section = &line[12..line.len()-3];
+            continue;
+        }
+        match section {
+            "PROCESSES" => {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 {
+                    let command = parts[4..].join(" ");
+                    processes.push(Process {
+                        pid: parts[0].to_string(),
+                        cpu: parts[1].to_string(),
+                        mem: parts[2].to_string(),
+                        uptime: parts[3].to_string(),
+                        command,
+                    });
+                }
+            }
+            "NETWORK" => {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 {
+                    network_ports.push(NetPort {
+                        proto: parts.get(0).unwrap_or(&"tcp").to_string(),
+                        state: parts.get(1).unwrap_or(&"").to_string(),
+                        local: parts.get(3).unwrap_or(&"").to_string(),
+                        process: parts.get(parts.len() - 1).unwrap_or(&"").to_string(),
+                    });
+                }
+            }
+            "ESTABLISHED" => {
+                established_count = line.trim().parse::<i32>().unwrap_or(0);
+            }
+            "INTERFACES" => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+                let Some((name, rest)) = trimmed.split_once(':') else { continue; };
+                let name = name.trim().to_string();
+                let nums: Vec<&str> = rest.split_whitespace().collect();
+                if nums.len() >= 9 {
+                    if let (Ok(rx), Ok(tx)) = (nums[0].parse::<u64>(), nums[8].parse::<u64>()) {
+                        network_interfaces.push(NetInterface {
+                            name,
+                            rx_bytes: rx,
+                            tx_bytes: tx,
+                            rx_rate: 0,
+                            tx_rate: 0,
+                        });
+                    }
+                }
+            }
+            "DISK-MOUNTS" => {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 6 {
+                    disk_mounts.push(DiskMount {
+                        filesystem: parts[0].to_string(),
+                        size: parts[1].to_string(),
+                        used: parts[2].to_string(),
+                        available: parts[3].to_string(),
+                        percent: parts[4].trim_end_matches('%').to_string(),
+                        mount: parts[5].to_string(),
+                    });
+                }
+            }
+            "DISK-DIRS" => {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    disk_dirs.push(DiskDir {
+                        size: parts[0].to_string(),
+                        path: parts[1].to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(SystemPanel {
+        processes,
+        network: NetworkInfo { ports: network_ports, interfaces: network_interfaces, established_count },
+        disk: DiskInfo { mounts: disk_mounts, dirs: disk_dirs },
+    })
+}
+
 pub fn get_disk_usage(session: &Session) -> Result<DiskInfo, String> {
     // Filesystems
     let df_out = run_command(session, "df -hP 2>/dev/null | tail -n +2");

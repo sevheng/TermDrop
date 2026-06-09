@@ -95,10 +95,10 @@
             <span class="text-[#858585]">Established:</span>
             <span class="text-[#cccccc] ml-1">{{ network?.established_count || 0 }}</span>
           </div>
-          <div v-if="network?.ports?.length" class="mb-1">
+          <div v-if="visiblePorts.length" class="mb-1">
             <div class="text-[#6e6e6e] font-medium mb-0.5">Listening Ports</div>
             <div
-              v-for="p in network.ports.slice(0, 8)"
+              v-for="p in visiblePorts"
               :key="p.local"
               class="grid grid-cols-3 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
             >
@@ -107,10 +107,10 @@
               <span class="truncate text-[#858585]">{{ p.process }}</span>
             </div>
           </div>
-          <div v-if="network?.interfaces?.length">
+          <div v-if="visibleInterfaces.length">
             <div class="text-[#6e6e6e] font-medium mb-0.5">Interfaces</div>
             <div
-              v-for="iface in network.interfaces.filter(i => i.name !== 'lo').slice(0, 4)"
+              v-for="iface in visibleInterfaces"
               :key="iface.name"
               class="grid grid-cols-4 gap-1 text-[#cccccc] py-0.5"
             >
@@ -302,7 +302,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -336,13 +336,10 @@ const searchInput = ref(null)
 let term = null
 let fitAddon = null
 let searchAddon = null
-let unlistenData = null
-let unlistenError = null
-let unlistenConnected = null
-let unlistenDisconnected = null
-let unlistenReconnected = null
 let resizeObserver = null
 let statusInterval = null
+let lazyDisposeTimer = null
+let hasBeenInitialized = false
 
 const isDisconnected = ref(false)
 
@@ -383,6 +380,9 @@ const network = ref(null)
 const diskInfo = ref(null)
 const sysLoading = ref(false)
 let sysPollInterval = null
+
+const visiblePorts = computed(() => network.value?.ports?.slice(0, 8) ?? [])
+const visibleInterfaces = computed(() => network.value?.interfaces?.filter(i => i.name !== 'lo').slice(0, 4) ?? [])
 
 const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
 
@@ -808,37 +808,24 @@ function onVisibilityChange() {
   }
 }
 
-async function fetchProcesses() {
+async function fetchPanelData(includeDisk = false) {
   if (!props.hostId) return
   try {
-    processes.value = await invoke('get_processes', { hostId: props.hostId })
+    const panel = await invoke('get_system_panel', { hostId: props.hostId })
+    processes.value = panel.processes || []
+    network.value = panel.network || null
+    if (includeDisk) {
+      diskInfo.value = panel.disk || null
+    }
   } catch (err) {
-    console.error('get_processes failed:', err)
-  }
-}
-
-async function fetchNetwork() {
-  if (!props.hostId) return
-  try {
-    network.value = await invoke('get_network', { hostId: props.hostId })
-  } catch (err) {
-    console.error('get_network failed:', err)
-  }
-}
-
-async function fetchDisk() {
-  if (!props.hostId) return
-  try {
-    diskInfo.value = await invoke('get_disk_usage', { hostId: props.hostId })
-  } catch (err) {
-    console.error('get_disk_usage failed:', err)
+    console.error('get_system_panel failed:', err)
   }
 }
 
 async function loadSystemData() {
   if (!props.hostId) return
   sysLoading.value = true
-  await Promise.all([fetchProcesses(), fetchNetwork(), fetchDisk()])
+  await fetchPanelData(true)
   sysLoading.value = false
 }
 
@@ -847,8 +834,7 @@ function startSysPolling() {
   if (!props.hostId) return
   loadSystemData()
   sysPollInterval = setInterval(() => {
-    fetchProcesses()
-    fetchNetwork()
+    fetchPanelData(false)
   }, 3000)
 }
 
@@ -915,48 +901,24 @@ async function initTerminal() {
   // Right-click context menu
   terminalContainer.value.addEventListener('contextmenu', showContextMenu)
 
-  // Listen for SSH data
-  unlistenData = await listen('ssh-data', (event) => {
-    const payload = event.payload
-    if (typeof payload === 'object' && payload.session_id === props.sessionId) {
-      term.write(payload.data)
-    } else if (typeof payload === 'string') {
-      term.write(payload)
-    }
-  })
-
-  // Listen for SSH errors
-  unlistenError = await listen('ssh-error', (event) => {
-    const payload = event.payload
-    if (typeof payload === 'object' && payload.session_id === props.sessionId) {
-      term.writeln(`\r\n\x1b[31mError: ${payload.error}\x1b[0m`)
-    }
-  })
-
-  // Listen for SSH connection established
-  unlistenConnected = await listen('ssh-connected', (event) => {
-    if (event.payload === props.sessionId) {
+  // Register with global event router in store (replaces per-tab listeners)
+  store.registerTerminal(props.sessionId, {
+    write: (data) => term.write(data),
+    writeError: (error) => term.writeln(`\r\n\x1b[31mError: ${error}\x1b[0m`),
+    onConnected: () => {
       setTimeout(() => {
         if (fitAddon) fitAddon.fit()
       }, 100)
       startStatusPolling()
-    }
-  })
-
-  // Listen for SSH disconnections
-  unlistenDisconnected = await listen('ssh-disconnected', (event) => {
-    if (event.payload === props.sessionId) {
+    },
+    onDisconnected: () => {
       isDisconnected.value = true
       stopStatusPolling()
       status.value = { load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' }
       statusError.value = ''
       closeDockerPane()
-    }
-  })
-
-  // Listen for SSH reconnections
-  unlistenReconnected = await listen('ssh-reconnected', (event) => {
-    if (event.payload === props.sessionId) {
+    },
+    onReconnected: () => {
       isDisconnected.value = false
       isReconnecting.value = false
       term.clear()
@@ -964,7 +926,7 @@ async function initTerminal() {
         if (fitAddon) fitAddon.fit()
       }, 100)
       startStatusPolling()
-    }
+    },
   })
 
   // Batch keystrokes to reduce IPC overhead (~60 fps max)
@@ -1014,13 +976,13 @@ function disposeTerminal() {
     invoke('ssh_write', { sessionId: props.sessionId, data: keyBuffer }).catch(() => {})
     keyBuffer = ''
   }
+  if (lazyDisposeTimer) {
+    clearTimeout(lazyDisposeTimer)
+    lazyDisposeTimer = null
+  }
   stopActiveOperations()
   stopSysPolling()
-  if (unlistenData) { unlistenData(); unlistenData = null }
-  if (unlistenError) { unlistenError(); unlistenError = null }
-  if (unlistenConnected) { unlistenConnected(); unlistenConnected = null }
-  if (unlistenDisconnected) { unlistenDisconnected(); unlistenDisconnected = null }
-  if (unlistenReconnected) { unlistenReconnected(); unlistenReconnected = null }
+  store.unregisterTerminal(props.sessionId)
   if (term) {
     term.dispose()
     term = null
@@ -1048,6 +1010,7 @@ async function reconnect() {
 
 onMounted(async () => {
   await initTerminal()
+  hasBeenInitialized = true
   startActiveOperations()
   // Fix race condition: if tab is already active when terminal finishes init,
   // the isActive watcher already fired early (term was null). Start polling now.
@@ -1073,8 +1036,23 @@ watch(() => props.sessionId, (newId, oldId) => {
 
 // Handle active state changes (tab switching)
 watch(() => props.isActive, (active) => {
-  if (!term) return
   if (active) {
+    // Cancel lazy dispose
+    if (lazyDisposeTimer) {
+      clearTimeout(lazyDisposeTimer)
+      lazyDisposeTimer = null
+    }
+    // Recreate terminal if it was lazily disposed
+    if (!term && hasBeenInitialized) {
+      initTerminal().then(() => {
+        startActiveOperations()
+        if (props.isActive) {
+          startStatusPolling()
+        }
+      })
+      return
+    }
+    if (!term) return
     term.focus()
     requestAnimationFrame(() => {
       if (fitAddon) fitAddon.fit()
@@ -1085,10 +1063,17 @@ watch(() => props.isActive, (active) => {
     }
     startStatusPolling()
   } else {
-    term.blur()
+    if (term) term.blur()
     stopStatusPolling()
     if (resizeObserver) {
       resizeObserver.disconnect()
+    }
+    // Start lazy dispose timer (30s)
+    if (!lazyDisposeTimer && term) {
+      lazyDisposeTimer = setTimeout(() => {
+        lazyDisposeTimer = null
+        disposeTerminal()
+      }, 30000)
     }
   }
 }, { immediate: true })

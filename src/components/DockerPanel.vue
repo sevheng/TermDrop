@@ -24,7 +24,7 @@
     </div>
 
     <!-- Container list -->
-    <div class="flex-1 overflow-y-auto min-h-[80px]">
+    <div class="flex-1 min-h-[80px] relative">
       <div v-if="loading" class="flex items-center justify-center py-8">
         <Loader2 :size="16" class="animate-spin text-[#858585]" />
       </div>
@@ -60,67 +60,83 @@
         <p class="text-xs">No containers</p>
         <p class="text-[10px] mt-1">Connect to a host with Docker</p>
       </div>
-      <div v-else>
-        <div
-          v-for="c in containers"
-          :key="c.id"
-          class="flex items-center gap-2 px-2 py-1 border-b border-[#3c3c3c]/50 hover:bg-[#2a2d2e]"
-        >
-          <!-- Status dot -->
-          <span
-            class="w-2 h-2 rounded-full shrink-0"
-            :class="c.running ? 'bg-[#89d185]' : 'bg-[#6e6e6e]'"
-          />
-          <!-- Info -->
-          <div class="flex-1 min-w-0">
-            <div class="text-[11px] text-[#cccccc] truncate">{{ c.name }}</div>
-            <div class="text-[10px] text-[#858585] truncate">{{ c.image }}</div>
-            <div class="text-[10px] text-[#6e6e6e] truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
+      <VirtualList
+        v-else
+        :items="containers"
+        :itemHeight="52"
+        :keyFn="(c) => c.id"
+        class="h-full"
+      >
+        <template #default="{ item: c }">
+          <div
+            class="flex items-center gap-2 px-2 py-1 border-b border-[#3c3c3c]/50 hover:bg-[#2a2d2e]"
+          >
+            <!-- Status dot -->
+            <span
+              class="w-2 h-2 rounded-full shrink-0"
+              :class="c.running ? 'bg-[#89d185]' : 'bg-[#6e6e6e]'"
+            />
+            <!-- Info -->
+            <div class="flex-1 min-w-0">
+              <div class="text-[11px] text-[#cccccc] truncate">{{ c.name }}</div>
+              <div class="text-[10px] text-[#858585] truncate">{{ c.image }}</div>
+              <div class="text-[10px] text-[#6e6e6e] truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
+            </div>
+            <!-- Actions -->
+            <div class="flex items-center gap-0.5 shrink-0">
+              <button
+                v-if="!c.running"
+                @click="startContainer(c.id)"
+                class="text-[#858585] hover:text-[#89d185] p-0.5"
+                title="Start"
+              >
+                <Play :size="12" />
+              </button>
+              <button
+                v-if="c.running"
+                @click="stopContainer(c.id)"
+                class="text-[#858585] hover:text-[#f44336] p-0.5"
+                title="Stop"
+              >
+                <Square :size="12" />
+              </button>
+              <button
+                @click="restartContainer(c.id)"
+                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                title="Restart"
+              >
+                <RotateCcw :size="12" />
+              </button>
+              <button
+                @click="viewLogs(c.id, c.name, c.running)"
+                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                title="Logs"
+              >
+                <FileText :size="12" />
+              </button>
+              <button
+                @click="execInto(c.id, c.name)"
+                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                title="Exec"
+              >
+                <Terminal :size="12" />
+              </button>
+            </div>
           </div>
-          <!-- Actions -->
-          <div class="flex items-center gap-0.5 shrink-0">
-            <button
-              v-if="!c.running"
-              @click="startContainer(c.id)"
-              class="text-[#858585] hover:text-[#89d185] p-0.5"
-              title="Start"
-            >
-              <Play :size="12" />
-            </button>
-            <button
-              v-if="c.running"
-              @click="stopContainer(c.id)"
-              class="text-[#858585] hover:text-[#f44336] p-0.5"
-              title="Stop"
-            >
-              <Square :size="12" />
-            </button>
-            <button
-              @click="restartContainer(c.id)"
-              class="text-[#858585] hover:text-[#cccccc] p-0.5"
-              title="Restart"
-            >
-              <RotateCcw :size="12" />
-            </button>
-            <button
-              @click="viewLogs(c.id, c.name, c.running)"
-              class="text-[#858585] hover:text-[#cccccc] p-0.5"
-              title="Logs"
-            >
-              <FileText :size="12" />
-            </button>
-            <button
-              @click="execInto(c.id, c.name)"
-              class="text-[#858585] hover:text-[#cccccc] p-0.5"
-              title="Exec"
-            >
-              <Terminal :size="12" />
-            </button>
-          </div>
-        </div>
-      </div>
+        </template>
+      </VirtualList>
     </div>
 
+    <ConfirmDialog
+      :show="confirmDialog.show"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :danger="confirmDialog.danger"
+      confirm-text="Confirm"
+      cancel-text="Cancel"
+      @confirm="confirmDialog.onConfirm"
+      @cancel="confirmDialog.show = false"
+    />
   </div>
 </template>
 
@@ -131,6 +147,8 @@ import {
   RefreshCw, Loader2, Container,
   Play, Square, RotateCcw, FileText, Terminal,
 } from 'lucide-vue-next'
+import VirtualList from './VirtualList.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps({
   hostId: {
@@ -148,6 +166,15 @@ const dockerNotInstalled = ref(false)
 const permissionDenied = ref(false)
 const installing = ref(false)
 let refreshInterval = null
+
+// Confirm dialog state
+const confirmDialog = ref({
+  show: false,
+  title: 'Confirm',
+  message: '',
+  danger: false,
+  onConfirm: () => {},
+})
 
 function shellEscape(s) {
   if (!s) return "''"
@@ -214,25 +241,46 @@ async function startContainer(id) {
 
 async function stopContainer(id) {
   const c = containers.value.find(x => x.id === id)
-  if (c) { c.running = false; c.status = 'Stopping...' }
-  try {
-    await invoke('docker_stop', { hostId: props.hostId, containerId: id })
-    loadContainers(true)
-  } catch (err) {
-    handleDockerError(err, 'Stop')
-    loadContainers(true)
+  if (!c) return
+  confirmDialog.value = {
+    show: true,
+    title: 'Stop Container',
+    message: `Stop "${c.name}"?`,
+    danger: true,
+    onConfirm: async () => {
+      confirmDialog.value.show = false
+      c.running = false
+      c.status = 'Stopping...'
+      try {
+        await invoke('docker_stop', { hostId: props.hostId, containerId: id })
+        loadContainers(true)
+      } catch (err) {
+        handleDockerError(err, 'Stop')
+        loadContainers(true)
+      }
+    },
   }
 }
 
 async function restartContainer(id) {
   const c = containers.value.find(x => x.id === id)
-  if (c) { c.status = 'Restarting...' }
-  try {
-    await invoke('docker_restart', { hostId: props.hostId, containerId: id })
-    loadContainers(true)
-  } catch (err) {
-    handleDockerError(err, 'Restart')
-    loadContainers(true)
+  if (!c) return
+  confirmDialog.value = {
+    show: true,
+    title: 'Restart Container',
+    message: `Restart "${c.name}"?`,
+    danger: true,
+    onConfirm: async () => {
+      confirmDialog.value.show = false
+      c.status = 'Restarting...'
+      try {
+        await invoke('docker_restart', { hostId: props.hostId, containerId: id })
+        loadContainers(true)
+      } catch (err) {
+        handleDockerError(err, 'Restart')
+        loadContainers(true)
+      }
+    },
   }
 }
 

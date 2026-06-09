@@ -334,9 +334,9 @@ const sortKey = ref('name')
 const sortOrder = ref('asc')
 const showColumnMenu = ref(false)
 const showColumns = ref({
-  size: true,
-  modified: true,
-  perms: true,
+  size: false,
+  modified: false,
+  perms: false,
 })
 const filterQuery = ref('')
 const selectedFiles = ref(new Set())

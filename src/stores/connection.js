@@ -8,8 +8,55 @@ export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
   const tabs = shallowRef([])
   const activeTabId = ref(null)
-  const tabListeners = reactive(new Map())
   const connectingHostId = ref(null)
+
+  // Global SSH event router: one listener per event type, routes to terminal callbacks by sessionId
+  const terminalHandlers = reactive(new Map())
+
+  function registerTerminal(sessionId, handlers) {
+    terminalHandlers.set(sessionId, handlers)
+  }
+
+  function unregisterTerminal(sessionId) {
+    terminalHandlers.delete(sessionId)
+  }
+
+  // Register global listeners once (fire-and-forget, lifetime of app)
+  listen('ssh-data', (event) => {
+    const payload = event.payload
+    if (typeof payload === 'object' && payload.session_id) {
+      const handler = terminalHandlers.get(payload.session_id)
+      if (handler && handler.write) handler.write(payload.data)
+    }
+  })
+
+  listen('ssh-error', (event) => {
+    const payload = event.payload
+    if (typeof payload === 'object' && payload.session_id) {
+      const handler = terminalHandlers.get(payload.session_id)
+      if (handler && handler.writeError) handler.writeError(payload.error)
+    }
+  })
+
+  listen('ssh-connected', (event) => {
+    const sessionId = event.payload
+    const handler = terminalHandlers.get(sessionId)
+    if (handler && handler.onConnected) handler.onConnected()
+  })
+
+  listen('ssh-disconnected', (event) => {
+    const sessionId = event.payload
+    tabs.value = tabs.value.map(t => t.id === sessionId ? { ...t, connected: false } : t)
+    const handler = terminalHandlers.get(sessionId)
+    if (handler && handler.onDisconnected) handler.onDisconnected()
+  })
+
+  listen('ssh-reconnected', (event) => {
+    const sessionId = event.payload
+    tabs.value = tabs.value.map(t => t.id === sessionId ? { ...t, connected: true } : t)
+    const handler = terminalHandlers.get(sessionId)
+    if (handler && handler.onReconnected) handler.onReconnected()
+  })
   const settings = ref({
     font_size: '14',
     download_path: '',
@@ -35,6 +82,7 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   const securityReports = ref(new Map())
+  const securityReportVersion = ref(0)
 
   function getSecurityReport(hostId) {
     return securityReports.value.get(hostId) || null
@@ -42,14 +90,17 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function setSecurityLoading(hostId) {
     securityReports.value.set(hostId, { report: null, loading: true, error: null })
+    securityReportVersion.value++
   }
 
   function setSecurityReport(hostId, report) {
     securityReports.value.set(hostId, { report, loading: false, error: null })
+    securityReportVersion.value++
   }
 
   function setSecurityError(hostId, error) {
     securityReports.value.set(hostId, { report: null, loading: false, error })
+    securityReportVersion.value++
   }
 
   async function runSecurityAudit(hostId) {
@@ -189,39 +240,10 @@ export const useConnectionStore = defineStore('connection', () => {
     runSecurityAudit(hostId).catch(() => {})
 
     connectingHostId.value = null
-
-    const unlistenDisconnect = await listen('ssh-disconnected', (event) => {
-      if (event.payload === sessionId) {
-        tabs.value = tabs.value.map(t =>
-          t.id === sessionId ? { ...t, connected: false } : t
-        )
-      }
-    })
-
-    const unlistenReconnected = await listen('ssh-reconnected', (event) => {
-      if (event.payload === sessionId) {
-        tabs.value = tabs.value.map(t =>
-          t.id === sessionId ? { ...t, connected: true } : t
-        )
-      }
-    })
-
-    tabListeners.set(sessionId, {
-      disconnect: unlistenDisconnect,
-      reconnected: unlistenReconnected,
-    })
-
     return sessionId
   }
 
   async function disconnect(sessionId) {
-    const listeners = tabListeners.get(sessionId)
-    if (listeners) {
-      listeners.disconnect()
-      listeners.reconnected()
-      tabListeners.delete(sessionId)
-    }
-
     const tab = tabs.value.find(t => t.id === sessionId)
     if (tab) {
       await invoke('sftp_disconnect', { sftpSessionId: tab.sftpSessionId }).catch(() => {})
@@ -368,7 +390,10 @@ export const useConnectionStore = defineStore('connection', () => {
     getNetStats,
     setNetStats,
     securityReports,
+    securityReportVersion,
     getSecurityReport,
     runSecurityAudit,
+    registerTerminal,
+    unregisterTerminal,
   }
 })

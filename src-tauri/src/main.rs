@@ -1065,6 +1065,22 @@ async fn get_system_stats(
 }
 
 #[tauri::command]
+async fn get_system_panel(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<system::SystemPanel, String> {
+    let session_arc = {
+        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+        exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let session = session_arc.lock().map_err(|e| e.to_string())?;
+        system::get_system_panel(&session).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn get_processes(
     state: State<'_, AppState>,
     host_id: i64,
@@ -1210,6 +1226,7 @@ fn main() {
             docker_install,
             run_security_audit,
             get_system_stats,
+            get_system_panel,
             get_processes,
             get_network,
             get_disk_usage,
