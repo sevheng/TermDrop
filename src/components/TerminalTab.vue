@@ -306,6 +306,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
@@ -336,6 +337,7 @@ const searchInput = ref(null)
 let term = null
 let fitAddon = null
 let searchAddon = null
+let webglAddon = null
 let resizeObserver = null
 let statusInterval = null
 let lazyDisposeTimer = null
@@ -355,6 +357,7 @@ const dockerPane = ref({
 const dockerPaneContainer = ref(null)
 let dockerTerm = null
 let dockerFitAddon = null
+let dockerWebglAddon = null
 let dockerPaneResizeObserver = null
 let unlistenPtyData = null
 let unlistenPtyError = null
@@ -529,7 +532,9 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   dockerFitAddon = new FitAddon()
+  dockerWebglAddon = new WebglAddon()
   dockerTerm.loadAddon(dockerFitAddon)
+  dockerTerm.loadAddon(dockerWebglAddon)
 
   dockerTerm.open(dockerPaneContainer.value)
   dockerFitAddon.fit()
@@ -639,6 +644,7 @@ async function closeDockerPane() {
     dockerTerm = null
   }
   dockerFitAddon = null
+  dockerWebglAddon = null
 
   dockerPane.value.show = false
   dockerPane.value.ptySessionId = null
@@ -846,8 +852,10 @@ async function initTerminal() {
 
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
+  webglAddon = new WebglAddon()
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
+  term.loadAddon(webglAddon)
 
   term.open(terminalContainer.value)
   fitAddon.fit()
@@ -977,6 +985,7 @@ function disposeTerminal() {
   }
   fitAddon = null
   searchAddon = null
+  webglAddon = null
   window.removeEventListener('terminal-settings-changed', onSettingsChanged)
   window.removeEventListener('click', onWindowClick)
   window.removeEventListener('contextmenu', onWindowContextMenu, true)
