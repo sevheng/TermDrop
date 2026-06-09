@@ -931,9 +931,50 @@ async function initTerminal() {
     },
   })
 
-  // Send keystrokes immediately
-  term.onData((data) => {
+  // Smart input buffer: immediate for typing, chunked for paste
+  let inputBuffer = ''
+  let inputFlushTimer = null
+  const INPUT_FLUSH_DELAY = 2
+  const PASTE_CHUNK_SIZE = 512
+  const PASTE_CHUNK_DELAY = 1
+
+  function flushInputBuffer() {
+    inputFlushTimer = null
+    if (!inputBuffer) return
+    const data = inputBuffer
+    inputBuffer = ''
     invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
+  }
+
+  function sendPasteChunks(data) {
+    let offset = 0
+    function sendNext() {
+      if (offset >= data.length) return
+      const chunk = data.slice(offset, offset + PASTE_CHUNK_SIZE)
+      offset += PASTE_CHUNK_SIZE
+      invoke('ssh_write', { sessionId: props.sessionId, data: chunk }).catch(() => {})
+      if (offset < data.length) {
+        setTimeout(sendNext, PASTE_CHUNK_DELAY)
+      }
+    }
+    sendNext()
+  }
+
+  term.onData((data) => {
+    if (data.length === 1) {
+      // Single char: send immediately (typing)
+      if (inputBuffer) flushInputBuffer()
+      invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
+    } else if (data.length > 50) {
+      // Large paste: chunk into pieces
+      if (inputBuffer) flushInputBuffer()
+      sendPasteChunks(data)
+    } else {
+      // Rapid typing: accumulate and flush on idle
+      inputBuffer += data
+      if (inputFlushTimer) clearTimeout(inputFlushTimer)
+      inputFlushTimer = setTimeout(flushInputBuffer, INPUT_FLUSH_DELAY)
+    }
   })
 
   // Notify remote shell when terminal size changes

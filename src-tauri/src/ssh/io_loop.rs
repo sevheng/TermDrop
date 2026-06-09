@@ -1,7 +1,12 @@
 use ssh2::Channel;
 use std::io::{Read, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+
+/// Flush output buffer if it exceeds this size (bytes).
+const OUTPUT_BATCH_SIZE: usize = 4096;
+/// Flush output buffer at this interval during heavy output (ms).
+const OUTPUT_FLUSH_INTERVAL_MS: u64 = 16;
 
 /// Run the main I/O loop for a PTY channel.
 /// Reads from `channel`, writes from `write_rx`, handles disconnect and resize.
@@ -14,6 +19,8 @@ pub fn run_io_loop(
     mut on_disconnect: impl FnMut(),
 ) {
     let mut buf = vec![0u8; 16384];
+    let mut output_buf = String::with_capacity(8192);
+    let mut last_flush = Instant::now();
     let mut intentional_disconnect = false;
 
     loop {
@@ -55,15 +62,43 @@ pub fn run_io_loop(
 
         // Read incoming data
         match channel.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                if !output_buf.is_empty() {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                }
+                break;
+            }
             Ok(n) => {
-                let data = String::from_utf8_lossy(&buf[..n]);
-                on_data(&data);
+                output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                // Flush immediately if buffer is small and idle, or if buffer is large
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_flush).as_millis() as u64;
+                if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                    last_flush = now;
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Flush any pending output before sleeping
+                if !output_buf.is_empty() {
+                    let elapsed = Instant::now().duration_since(last_flush).as_millis() as u64;
+                    if elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                        on_data(&output_buf);
+                        output_buf.clear();
+                        last_flush = Instant::now();
+                    }
+                }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(_) => break,
+            Err(_) => {
+                if !output_buf.is_empty() {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                }
+                break;
+            }
         }
     }
 
@@ -86,6 +121,8 @@ pub fn run_exec_pty_loop(
     mut on_disconnect: impl FnMut(),
 ) {
     let mut buf = vec![0u8; 16384];
+    let mut output_buf = String::with_capacity(8192);
+    let mut last_flush = Instant::now();
     let mut intentional_disconnect = false;
 
     loop {
@@ -108,15 +145,41 @@ pub fn run_exec_pty_loop(
         }
 
         match channel.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                if !output_buf.is_empty() {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                }
+                break;
+            }
             Ok(n) => {
-                let data = String::from_utf8_lossy(&buf[..n]);
-                on_data(&data);
+                output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_flush).as_millis() as u64;
+                if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                    last_flush = now;
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if !output_buf.is_empty() {
+                    let elapsed = Instant::now().duration_since(last_flush).as_millis() as u64;
+                    if elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                        on_data(&output_buf);
+                        output_buf.clear();
+                        last_flush = Instant::now();
+                    }
+                }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(_) => break,
+            Err(_) => {
+                if !output_buf.is_empty() {
+                    on_data(&output_buf);
+                    output_buf.clear();
+                }
+                break;
+            }
         }
     }
 
