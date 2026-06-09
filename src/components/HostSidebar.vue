@@ -11,13 +11,13 @@
         >
           <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
         </button>
-        <div class="relative">
+        <div class="relative" ref="importMenuRef">
           <button @click="showImportMenu = !showImportMenu" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import">
             <Download :size="12" />
           </button>
           <div
             v-if="showImportMenu"
-            class="absolute right-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[180px] py-1"
+            class="absolute left-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[180px] py-1"
           >
             <button
               @click="importSshConfig(); showImportMenu = false"
@@ -341,6 +341,7 @@ const showSshConfigDialog = ref(false)
 const sshConfigHosts = ref([])
 const selectedSshHosts = ref(new Set())
 const showImportMenu = ref(false)
+const importMenuRef = ref(null)
 const groupModalCurrentName = ref('')
 
 const confirmDialog = ref({
@@ -566,8 +567,11 @@ function openConfirm(options) {
   }
 }
 
-function onWindowClick() {
+function onWindowClick(e) {
   hideContextMenu()
+  if (showImportMenu.value && importMenuRef.value && !importMenuRef.value.contains(e.target)) {
+    showImportMenu.value = false
+  }
 }
 
 onMounted(() => {
