@@ -201,3 +201,26 @@ pub fn get_disk_usage(session: &Session) -> Result<DiskInfo, String> {
 
     Ok(DiskInfo { mounts, dirs })
 }
+
+pub fn get_system_stats(session: &Session) -> Result<serde_json::Value, String> {
+    // Single batched command: all 9 stats in one SSH exec, tab-separated.
+    // Tab is used as delimiter because none of these values contain tabs in practice.
+    let output = run_command(session, r#"bash -c 'load=$(awk "{print \$1}" /proc/loadavg); ram=$(free -m | awk "NR==2{used=\$3;total=\$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}"); disk=$(df -h / | awk "NR==2{print \$3\"/\"\$2\" (\"\$5\")\"}"); uptime=$(awk "{d=int(\$1/86400);h=int((\$1%86400)/3600);m=int((\$1%3600)/60); printf \"%dd %dh %dm\", d,h,m}" /proc/uptime); os=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | sed "s/PRETTY_NAME=//; s/\"//g"); kernel=$(uname -r); arch=$(uname -m); cores=$(nproc); netdev=$(cat /proc/net/dev | tail -n +3 | awk "{print \$1\" \"\$2\" \"\$10}"); printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$load" "$ram" "$disk" "$uptime" "$os" "$kernel" "$arch" "$cores" "$netdev"'"#)?;
+
+    let parts: Vec<&str> = output.trim_end().split('\t').collect();
+    let get = |i: usize| -> String {
+        parts.get(i).unwrap_or(&"").to_string()
+    };
+
+    Ok(serde_json::json!({
+        "load": get(0),
+        "ram": get(1),
+        "disk": get(2),
+        "uptime": get(3),
+        "os": get(4),
+        "kernel": get(5),
+        "arch": get(6),
+        "cores": get(7),
+        "netdev": get(8),
+    }))
+}

@@ -2,6 +2,47 @@
   <div class="relative w-full h-full flex flex-col">
     <div ref="terminalContainer" class="flex-1 min-h-0" :class="terminalBgClass"></div>
 
+    <!-- Docker Bottom Pane -->
+    <div
+      v-if="dockerPane.show"
+      class="shrink-0 border-t border-[#3c3c3c] flex flex-col bg-[#1e1e1e]"
+      :style="{ height: dockerPane.height + 'px' }"
+    >
+      <!-- Resize handle -->
+      <div
+        class="h-1.5 cursor-row-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors"
+        @mousedown="startResizeDockerPane"
+      ></div>
+      <!-- Header -->
+      <div class="flex items-center justify-between px-2 py-1 border-b border-[#3c3c3c] shrink-0">
+        <span class="text-[10px] text-[#cccccc] flex items-center gap-1.5">
+          <FileText v-if="dockerPane.type === 'logs'" :size="10" />
+          <TerminalIcon v-else :size="10" />
+          {{ dockerPane.title }}
+        </span>
+        <div class="flex items-center gap-1.5">
+          <button
+            v-if="dockerPane.type === 'logs'"
+            @click="toggleFollow"
+            class="text-[10px] px-2 py-0.5 rounded font-medium transition-colors"
+            :class="dockerPane.following
+              ? 'bg-[#89d185]/20 text-[#89d185] hover:bg-[#89d185]/30'
+              : 'bg-[#3c3c3c] text-[#858585] hover:bg-[#4c4c4c] hover:text-[#cccccc]'"
+          >
+            {{ dockerPane.following ? '● Following' : 'Follow' }}
+          </button>
+          <button
+            @click="closeDockerPane"
+            class="text-[#858585] hover:text-[#cccccc] px-1 text-xs leading-none"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <!-- Terminal container -->
+      <div ref="dockerPaneContainer" class="flex-1 min-h-0"></div>
+    </div>
+
     <!-- Expanded System Panel -->
     <div
       v-if="props.hostId && statusExpanded"
@@ -267,7 +308,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp } from 'lucide-vue-next'
+import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
@@ -304,6 +345,25 @@ let resizeObserver = null
 let statusInterval = null
 
 const isDisconnected = ref(false)
+
+// Docker bottom pane
+const dockerPane = ref({
+  show: false,
+  height: 200,
+  ptySessionId: null,
+  title: '',
+  type: null,
+  following: false,
+})
+const dockerPaneContainer = ref(null)
+let dockerTerm = null
+let dockerFitAddon = null
+let dockerPaneResizeObserver = null
+let unlistenPtyData = null
+let unlistenPtyError = null
+let unlistenPtyConnected = null
+let unlistenPtyDisconnected = null
+let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
 const contextMenu = ref({ show: false, x: 0, y: 0 })
 const terminalBgClass = ref('bg-gray-900')
@@ -439,6 +499,189 @@ function onWindowContextMenu() {
 
 function onSettingsChanged(event) {
   applySettings(event.detail)
+}
+
+// Docker pane methods
+function startResizeDockerPane(e) {
+  const startY = e.clientY
+  const startHeight = dockerPane.value.height
+  const onMove = (moveEvent) => {
+    const delta = startY - moveEvent.clientY
+    dockerPane.value.height = Math.max(80, Math.min(400, startHeight + delta))
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+async function openDockerPane({ type, containerId, containerName, command }) {
+  // Close any existing pane first
+  await closeDockerPane()
+
+  const ptySessionId = crypto.randomUUID()
+  dockerPane.value.show = true
+  dockerPane.value.ptySessionId = ptySessionId
+  dockerPane.value.type = type
+  dockerPane.value.following = type === 'logs' && command.includes(' -f ')
+  dockerPane.value.title = type === 'logs'
+    ? `Logs: ${containerName}`
+    : `Exec: ${containerName}`
+
+  await nextTick()
+
+  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
+  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
+
+  dockerTerm = new Terminal({
+    cursorBlink: true,
+    fontSize,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: TERMINAL_THEME,
+  })
+
+  dockerFitAddon = new FitAddon()
+  dockerTerm.loadAddon(dockerFitAddon)
+
+  dockerTerm.open(dockerPaneContainer.value)
+  dockerFitAddon.fit()
+
+  // Batch keystrokes
+  let dockerKeyBuffer = ''
+  function flushDockerKeyBuffer() {
+    dockerKeyFlushTimer = null
+    if (!dockerPane.value.show || dockerPane.value.ptySessionId !== ptySessionId) {
+      dockerKeyBuffer = ''
+      return
+    }
+    if (dockerKeyBuffer) {
+      invoke('exec_pty_write', { ptySessionId, data: dockerKeyBuffer }).catch((err) => {
+        // Ignore "not found" errors — session may have closed naturally
+        if (!String(err).includes('not found')) {
+          console.error('exec_pty_write failed:', err)
+        }
+      })
+      dockerKeyBuffer = ''
+    }
+  }
+
+  dockerTerm.onData((data) => {
+    dockerKeyBuffer += data
+    if (!dockerKeyFlushTimer) {
+      dockerKeyFlushTimer = setTimeout(flushDockerKeyBuffer, 16)
+    }
+  })
+
+  // Listen for PTY data
+  unlistenPtyData = await listen('exec-pty-data', (event) => {
+    const payload = event.payload
+    if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
+      dockerTerm.write(payload.data)
+    }
+  })
+
+  unlistenPtyError = await listen('exec-pty-error', (event) => {
+    const payload = event.payload
+    if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
+      dockerTerm.writeln(`\r\n\x1b[31mError: ${payload.error}\x1b[0m`)
+    }
+  })
+
+  unlistenPtyConnected = await listen('exec-pty-connected', (event) => {
+    if (event.payload === ptySessionId) {
+      setTimeout(() => {
+        if (dockerFitAddon) dockerFitAddon.fit()
+      }, 100)
+    }
+  })
+
+  unlistenPtyDisconnected = await listen('exec-pty-disconnected', (event) => {
+    if (event.payload === ptySessionId) {
+      dockerPane.value.following = false
+      // Auto-close exec panes when the shell exits
+      if (dockerPane.value.type === 'exec') {
+        closeDockerPane()
+      }
+    }
+  })
+
+  // Observe resize
+  if (!dockerPaneResizeObserver) {
+    dockerPaneResizeObserver = new ResizeObserver(() => {
+      if (dockerFitAddon) {
+        dockerFitAddon.fit()
+      }
+    })
+  }
+  if (dockerPaneContainer.value) {
+    dockerPaneResizeObserver.observe(dockerPaneContainer.value)
+  }
+
+  // Start the PTY session
+  try {
+    await invoke('exec_pty_connect', { hostId: props.hostId, ptySessionId, command })
+  } catch (err) {
+    console.error('exec_pty_connect failed:', err)
+    dockerTerm.writeln(`\r\n\x1b[31mFailed to start: ${err}\x1b[0m`)
+  }
+}
+
+async function closeDockerPane() {
+  if (dockerKeyFlushTimer) {
+    clearTimeout(dockerKeyFlushTimer)
+    dockerKeyFlushTimer = null
+  }
+
+  if (dockerPane.value.ptySessionId) {
+    await invoke('exec_pty_disconnect', { ptySessionId: dockerPane.value.ptySessionId }).catch(() => {})
+  }
+
+  if (dockerPaneResizeObserver) {
+    dockerPaneResizeObserver.disconnect()
+    dockerPaneResizeObserver = null
+  }
+
+  if (unlistenPtyData) { unlistenPtyData(); unlistenPtyData = null }
+  if (unlistenPtyError) { unlistenPtyError(); unlistenPtyError = null }
+  if (unlistenPtyConnected) { unlistenPtyConnected(); unlistenPtyConnected = null }
+  if (unlistenPtyDisconnected) { unlistenPtyDisconnected(); unlistenPtyDisconnected = null }
+
+  if (dockerTerm) {
+    dockerTerm.dispose()
+    dockerTerm = null
+  }
+  dockerFitAddon = null
+
+  dockerPane.value.show = false
+  dockerPane.value.ptySessionId = null
+  dockerPane.value.title = ''
+  dockerPane.value.type = null
+  dockerPane.value.following = false
+}
+
+function shellEscape(s) {
+  if (!s) return "''"
+  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
+  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
+}
+
+async function toggleFollow() {
+  if (!dockerPane.value.show || dockerPane.value.type !== 'logs') return
+  const following = dockerPane.value.following
+  const containerName = dockerPane.value.title.replace('Logs: ', '')
+  const escapedName = shellEscape(containerName)
+  const cmd = following
+    ? `docker logs --tail 200 ${escapedName}`
+    : `docker logs -f --tail 200 ${escapedName}`
+  await openDockerPane({ type: 'logs', containerId: '', containerName, command: cmd })
+}
+
+function onDockerPaneOpen(event) {
+  if (event.detail.sessionId === props.sessionId) {
+    openDockerPane(event.detail)
+  }
 }
 
 function formatBytes(bytes) {
@@ -707,6 +950,7 @@ async function initTerminal() {
       stopStatusPolling()
       status.value = { load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' }
       statusError.value = ''
+      closeDockerPane()
     }
   })
 
@@ -789,6 +1033,7 @@ function disposeTerminal() {
   if (terminalContainer.value) {
     terminalContainer.value.removeEventListener('contextmenu', showContextMenu)
   }
+  closeDockerPane()
 }
 
 async function reconnect() {
@@ -810,10 +1055,12 @@ onMounted(async () => {
     startStatusPolling()
   }
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('docker-pane-open', onDockerPaneOpen)
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('docker-pane-open', onDockerPaneOpen)
   disposeTerminal()
 })
 
@@ -831,6 +1078,7 @@ watch(() => props.isActive, (active) => {
     term.focus()
     requestAnimationFrame(() => {
       if (fitAddon) fitAddon.fit()
+      if (dockerFitAddon) dockerFitAddon.fit()
     })
     if (terminalContainer.value && resizeObserver) {
       resizeObserver.observe(terminalContainer.value)

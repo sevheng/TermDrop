@@ -161,7 +161,7 @@
                 v-else-if="rightPanelTab === 'docker' && store.activeTab"
                 :key="'docker-' + store.activeTab.hostId"
                 :hostId="store.activeTab.hostId"
-                @exec="onDockerExec"
+                @openPane="onDockerPaneOpen"
                 class="w-full h-full"
               />
               <SecurityPanel
@@ -276,11 +276,12 @@ function confirmDisconnect(sessionId, name) {
   })
 }
 
-function onDockerExec({ containerId, containerName, shell }) {
+function onDockerPaneOpen(detail) {
   const tab = store.activeTab
   if (!tab) return
-  const cmd = `docker exec -it ${containerName} ${shell}\n`
-  store.writeData(tab.id, cmd)
+  window.dispatchEvent(new CustomEvent('docker-pane-open', {
+    detail: { ...detail, sessionId: tab.id, hostId: tab.hostId }
+  }))
 }
 
 async function onForwardSaved(forwardData) {

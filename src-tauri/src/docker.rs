@@ -1,9 +1,16 @@
 use std::io::Read;
 use ssh2::Session;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
 pub const DOCKER_PERMISSION_DENIED: &str = "DOCKER_PERMISSION_DENIED";
+
+#[derive(Debug, Clone)]
+pub struct CachedDockerInfo {
+    pub containers: Vec<Container>,
+    pub cached_at: Instant,
+}
 
 fn is_permission_error(err: &str) -> bool {
     err.to_lowercase().contains("permission denied")
@@ -69,6 +76,7 @@ fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn is_docker_installed(session: &Session) -> Result<bool, String> {
     match run_command(session, "command -v docker") {
         Ok(out) => Ok(!out.trim().is_empty()),
@@ -91,15 +99,20 @@ pub fn install_docker(session: &Session) -> Result<String, String> {
 }
 
 pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String> {
-    if !is_docker_installed(session)? {
-        return Err(DOCKER_NOT_INSTALLED.to_string());
-    }
     let flag = if all { "-a" } else { "" };
     let format = "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.CreatedAt}}";
-    let output = run_docker_command(
+    let output = match run_docker_command(
         session,
         &format!("ps {} --format '{}'", flag, format),
-    )?;
+    ) {
+        Ok(out) => out,
+        Err(e) => {
+            if e.contains("not found") || e.contains("No such file") || e.contains("command not found") {
+                return Err(DOCKER_NOT_INSTALLED.to_string());
+            }
+            return Err(e);
+        }
+    };
 
     let mut containers = Vec::new();
     for line in output.lines() {
@@ -143,9 +156,14 @@ pub fn docker_logs(session: &Session, container_id: &str, tail: usize) -> Result
 }
 
 pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<String, String> {
-    // Try bash first, fallback to sh
-    let check = run_docker_command(session, &format!("exec {} bash -c 'echo bash'", container_id));
-    if check.is_ok() && check.unwrap().trim() == "bash" {
+    // Use docker inspect to check the container's configured shell/cmd
+    // Much faster than docker exec which spawns a process inside the container
+    let out = run_docker_command(
+        session,
+        &format!("inspect --format='{{{{.Config.Cmd}}}}' {}", container_id),
+    )?;
+    let out_lower = out.to_lowercase();
+    if out_lower.contains("bash") || out_lower.contains("/bin/bash") {
         Ok("bash".to_string())
     } else {
         Ok("sh".to_string())

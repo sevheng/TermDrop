@@ -11,6 +11,11 @@ pub struct SshSessionHandle {
     pub disconnect_tx: mpsc::UnboundedSender<()>,
 }
 
+pub struct ExecPtyHandle {
+    pub write_tx: mpsc::UnboundedSender<String>,
+    pub disconnect_tx: mpsc::UnboundedSender<()>,
+}
+
 /// Creates a new SSH session (blocking mode) for exec or SFTP reuse.
 pub fn create_exec_session(
     host: &str,
@@ -275,4 +280,211 @@ pub fn connect(
     });
 
     Ok(SshSessionHandle { host_id, write_tx, disconnect_tx })
+}
+
+pub fn exec_pty_connect(
+    window: Window,
+    pty_session_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    password: Option<String>,
+    key_path: Option<String>,
+    command: String,
+) -> Result<ExecPtyHandle, String> {
+    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
+    let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
+
+    std::thread::spawn(move || {
+        let addr = format!("{}:{}", host, port);
+        let tcp = match std::net::TcpStream::connect(&addr) {
+            Ok(t) => t,
+            Err(e) => {
+                let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("connect: {}", e)});
+                let _ = window.emit("exec-pty-error", payload);
+                return;
+            }
+        };
+
+        if let Err(e) = tcp.set_nonblocking(true) {
+            let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("set_nonblocking: {}", e)});
+            let _ = window.emit("exec-pty-error", payload);
+            return;
+        }
+
+        let mut session = match Session::new() {
+            Ok(s) => s,
+            Err(e) => {
+                let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("session: {}", e)});
+                let _ = window.emit("exec-pty-error", payload);
+                return;
+            }
+        };
+
+        session.set_tcp_stream(tcp);
+        session.set_blocking(false);
+
+        // Retry handshake in non-blocking mode
+        loop {
+            match session.handshake() {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("handshake: {}", io_err)});
+                    let _ = window.emit("exec-pty-error", payload);
+                    return;
+                }
+            }
+        }
+
+        // Retry auth in non-blocking mode
+        if let Some(key_path) = key_path {
+            let expanded = expand_key_path(&key_path);
+            loop {
+                match session.userauth_pubkey_file(&username, None, &expanded, None) {
+                    Ok(()) => break,
+                    Err(e) => {
+                        let io_err: std::io::Error = e.into();
+                        if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("key auth: {}", io_err)});
+                        let _ = window.emit("exec-pty-error", payload);
+                        return;
+                    }
+                }
+            }
+        } else if let Some(password) = password {
+            loop {
+                match session.userauth_password(&username, &password) {
+                    Ok(()) => break,
+                    Err(e) => {
+                        let io_err: std::io::Error = e.into();
+                        if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("auth: {}", io_err)});
+                        let _ = window.emit("exec-pty-error", payload);
+                        return;
+                    }
+                }
+            }
+        } else {
+            let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": "no credentials provided"});
+            let _ = window.emit("exec-pty-error", payload);
+            return;
+        }
+
+        // Retry channel session in non-blocking mode
+        let mut channel = loop {
+            match session.channel_session() {
+                Ok(c) => break c,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("channel: {}", io_err)});
+                    let _ = window.emit("exec-pty-error", payload);
+                    return;
+                }
+            }
+        };
+
+        loop {
+            match channel.request_pty("xterm-256color", None, None) {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("pty: {}", io_err)});
+                    let _ = window.emit("exec-pty-error", payload);
+                    return;
+                }
+            }
+        }
+
+        loop {
+            match channel.exec(&command) {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": format!("exec: {}", io_err)});
+                    let _ = window.emit("exec-pty-error", payload);
+                    return;
+                }
+            }
+        }
+
+        let _ = window.emit("exec-pty-connected", pty_session_id.clone());
+
+        let mut buf = vec![0u8; 16384];
+        let mut last_write = std::time::Instant::now();
+        let mut intentional_disconnect = false;
+        loop {
+            if disconnect_rx.try_recv().is_ok() {
+                intentional_disconnect = true;
+                break;
+            }
+
+            while let Ok(data) = write_rx.try_recv() {
+                let mut written = 0;
+                while written < data.len() {
+                    match channel.write(&data.as_bytes()[written..]) {
+                        Ok(n) => written += n,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                last_write = std::time::Instant::now();
+            }
+
+            if last_write.elapsed().as_secs() > 30 {
+                let _ = channel.write(b"\r");
+                last_write = std::time::Instant::now();
+            }
+
+            match channel.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]);
+                    let payload = serde_json::json!({
+                        "pty_session_id": &pty_session_id,
+                        "data": data.to_string(),
+                    });
+                    let _ = window.emit("exec-pty-data", payload);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+
+        let _ = channel.send_eof();
+        let _ = channel.wait_eof();
+        let _ = channel.close();
+        let _ = channel.wait_close();
+        if !intentional_disconnect {
+            let _ = window.emit("exec-pty-disconnected", pty_session_id);
+        }
+    });
+
+    Ok(ExecPtyHandle { write_tx, disconnect_tx })
 }

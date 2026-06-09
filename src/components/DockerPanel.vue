@@ -24,7 +24,7 @@
     </div>
 
     <!-- Container list -->
-    <div class="flex-1 overflow-y-auto">
+    <div class="flex-1 overflow-y-auto min-h-[80px]">
       <div v-if="loading" class="flex items-center justify-center py-8">
         <Loader2 :size="16" class="animate-spin text-[#858585]" />
       </div>
@@ -103,7 +103,7 @@
               <RotateCcw :size="12" />
             </button>
             <button
-              @click="viewLogs(c.id, c.name)"
+              @click="viewLogs(c.id, c.name, c.running)"
               class="text-[#858585] hover:text-[#cccccc] p-0.5"
               title="Logs"
             >
@@ -121,27 +121,11 @@
       </div>
     </div>
 
-    <!-- Logs modal -->
-    <div
-      v-if="logModal.show"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      @click.self="logModal.show = false"
-    >
-      <div class="bg-[#252526] border border-[#3c3c3c] rounded shadow-xl w-[32rem] h-[24rem] flex flex-col">
-        <div class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c]">
-          <span class="text-xs text-[#cccccc]">Logs: {{ logModal.containerName }}</span>
-          <button @click="logModal.show = false" class="text-[#858585] hover:text-[#cccccc]">×</button>
-        </div>
-        <div class="flex-1 overflow-auto p-2">
-          <pre class="text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap">{{ logModal.content }}</pre>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
   RefreshCw, Loader2, Container,
@@ -155,7 +139,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['exec'])
+const emit = defineEmits(['openPane'])
 
 const containers = ref([])
 const loading = ref(false)
@@ -163,11 +147,17 @@ const showAll = ref(false)
 const dockerNotInstalled = ref(false)
 const permissionDenied = ref(false)
 const installing = ref(false)
-const logModal = ref({ show: false, containerName: '', content: '' })
+let refreshInterval = null
 
-async function loadContainers() {
+function shellEscape(s) {
+  if (!s) return "''"
+  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
+  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
+}
+
+async function loadContainers(silent = false) {
   if (!props.hostId) return
-  loading.value = true
+  if (!silent) loading.value = true
   dockerNotInstalled.value = false
   permissionDenied.value = false
   try {
@@ -183,7 +173,7 @@ async function loadContainers() {
     }
     containers.value = []
   }
-  loading.value = false
+  if (!silent) loading.value = false
 }
 
 async function installDocker() {
@@ -211,51 +201,85 @@ function handleDockerError(err, action) {
 }
 
 async function startContainer(id) {
+  const c = containers.value.find(x => x.id === id)
+  if (c) { c.running = true; c.status = 'Starting...' }
   try {
     await invoke('docker_start', { hostId: props.hostId, containerId: id })
-    await loadContainers()
+    loadContainers(true)
   } catch (err) {
     handleDockerError(err, 'Start')
+    loadContainers(true)
   }
 }
 
 async function stopContainer(id) {
+  const c = containers.value.find(x => x.id === id)
+  if (c) { c.running = false; c.status = 'Stopping...' }
   try {
     await invoke('docker_stop', { hostId: props.hostId, containerId: id })
-    await loadContainers()
+    loadContainers(true)
   } catch (err) {
     handleDockerError(err, 'Stop')
+    loadContainers(true)
   }
 }
 
 async function restartContainer(id) {
+  const c = containers.value.find(x => x.id === id)
+  if (c) { c.status = 'Restarting...' }
   try {
     await invoke('docker_restart', { hostId: props.hostId, containerId: id })
-    await loadContainers()
+    loadContainers(true)
   } catch (err) {
     handleDockerError(err, 'Restart')
+    loadContainers(true)
   }
 }
 
-async function viewLogs(id, name) {
-  try {
-    const content = await invoke('docker_logs', { hostId: props.hostId, containerId: id, tail: 200 })
-    logModal.value = { show: true, containerName: name, content }
-  } catch (err) {
-    handleDockerError(err, 'Logs')
-  }
+async function viewLogs(id, name, running) {
+  const cmd = running
+    ? `docker logs -f --tail 200 ${shellEscape(name)}`
+    : `docker logs --tail 200 ${shellEscape(name)}`
+  emit('openPane', { type: 'logs', containerId: id, containerName: name, command: cmd })
 }
 
 async function execInto(id, name) {
   try {
     const shell = await invoke('docker_inspect_shell', { hostId: props.hostId, containerId: id })
-    emit('exec', { containerId: id, containerName: name, shell })
+    const cmd = `docker exec -it ${shellEscape(name)} ${shell}`
+    emit('openPane', { type: 'exec', containerId: id, containerName: name, command: cmd })
   } catch (err) {
     handleDockerError(err, 'Exec')
   }
 }
 
-onMounted(loadContainers)
+function startAutoRefresh() {
+  stopAutoRefresh()
+  refreshInterval = setInterval(() => {
+    if (!document.hidden && props.hostId) {
+      loadContainers(true)
+    }
+  }, 5000)
+}
 
-watch(() => props.hostId, loadContainers)
+function stopAutoRefresh() {
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+    refreshInterval = null
+  }
+}
+
+onMounted(() => {
+  loadContainers()
+  startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
+})
+
+watch(() => props.hostId, () => {
+  loadContainers()
+  startAutoRefresh()
+})
 </script>
