@@ -11,12 +11,30 @@
         >
           <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
         </button>
-        <button @click="importSshConfig" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import from ~/.ssh/config">
-          <FileTerminal :size="12" />
-        </button>
-        <button @click="importHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import hosts">
-          <Download :size="12" />
-        </button>
+        <div class="relative">
+          <button @click="showImportMenu = !showImportMenu" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import">
+            <Download :size="12" />
+          </button>
+          <div
+            v-if="showImportMenu"
+            class="absolute right-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[180px] py-1"
+          >
+            <button
+              @click="importSshConfig(); showImportMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+            >
+              <FileTerminal :size="12" />
+              From ~/.ssh/config
+            </button>
+            <button
+              @click="importHosts(); showImportMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+            >
+              <Download :size="12" />
+              From JSON file
+            </button>
+          </div>
+        </div>
         <button @click="store.exportHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Export hosts">
           <Upload :size="12" />
         </button>
@@ -322,6 +340,7 @@ const groupModalMode = ref('create')
 const showSshConfigDialog = ref(false)
 const sshConfigHosts = ref([])
 const selectedSshHosts = ref(new Set())
+const showImportMenu = ref(false)
 const groupModalCurrentName = ref('')
 
 const confirmDialog = ref({
