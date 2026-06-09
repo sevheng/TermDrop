@@ -1,6 +1,8 @@
-use ssh2::Channel;
+use ssh2::Channel as SshChannel;
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tauri::ipc::Channel as DataChannel;
 use tokio::sync::mpsc;
 
 /// Flush output buffer if it exceeds this size (bytes).
@@ -11,11 +13,12 @@ const OUTPUT_FLUSH_INTERVAL_MS: u64 = 16;
 /// Run the main I/O loop for a PTY channel.
 /// Reads from `channel`, writes from `write_rx`, handles disconnect and resize.
 pub fn run_io_loop(
-    mut channel: Channel,
+    mut channel: SshChannel,
     mut write_rx: mpsc::UnboundedReceiver<String>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
     mut resize_rx: mpsc::UnboundedReceiver<(u32, u32)>,
-    mut on_data: impl FnMut(&str),
+    data_channel: Arc<Mutex<Option<DataChannel<Vec<u8>>>>>,
+    mut on_data_fallback: impl FnMut(&str),
     mut on_disconnect: impl FnMut(),
 ) {
     let mut buf = vec![0u8; 16384];
@@ -63,29 +66,31 @@ pub fn run_io_loop(
         // Read incoming data
         match channel.read(&mut buf) {
             Ok(0) => {
-                if !output_buf.is_empty() {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                }
+                flush_output(&mut output_buf, &data_channel, &mut on_data_fallback);
                 break;
             }
             Ok(n) => {
-                output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
-                // Flush immediately if buffer is small and idle, or if buffer is large
-                let now = Instant::now();
-                let elapsed = now.duration_since(last_flush).as_millis() as u64;
-                if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                    last_flush = now;
+                // Try to send through binary channel first
+                if let Ok(lock) = data_channel.lock() {
+                    if let Some(ref ch) = *lock {
+                        let _ = ch.send(buf[..n].to_vec());
+                    } else {
+                        output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        let now = Instant::now();
+                        let elapsed = now.duration_since(last_flush).as_millis() as u64;
+                        if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                            on_data_fallback(&output_buf);
+                            output_buf.clear();
+                            last_flush = now;
+                        }
+                    }
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Flush any pending output before sleeping
                 if !output_buf.is_empty() {
                     let elapsed = Instant::now().duration_since(last_flush).as_millis() as u64;
                     if elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
-                        on_data(&output_buf);
+                        on_data_fallback(&output_buf);
                         output_buf.clear();
                         last_flush = Instant::now();
                     }
@@ -93,10 +98,7 @@ pub fn run_io_loop(
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(_) => {
-                if !output_buf.is_empty() {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                }
+                flush_output(&mut output_buf, &data_channel, &mut on_data_fallback);
                 break;
             }
         }
@@ -114,10 +116,11 @@ pub fn run_io_loop(
 
 /// Run the main I/O loop for an exec PTY channel (no resize support).
 pub fn run_exec_pty_loop(
-    mut channel: Channel,
+    mut channel: SshChannel,
     mut write_rx: mpsc::UnboundedReceiver<String>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
-    mut on_data: impl FnMut(&str),
+    data_channel: Arc<Mutex<Option<DataChannel<Vec<u8>>>>>,
+    mut on_data_fallback: impl FnMut(&str),
     mut on_disconnect: impl FnMut(),
 ) {
     let mut buf = vec![0u8; 16384];
@@ -146,27 +149,30 @@ pub fn run_exec_pty_loop(
 
         match channel.read(&mut buf) {
             Ok(0) => {
-                if !output_buf.is_empty() {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                }
+                flush_output(&mut output_buf, &data_channel, &mut on_data_fallback);
                 break;
             }
             Ok(n) => {
-                output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
-                let now = Instant::now();
-                let elapsed = now.duration_since(last_flush).as_millis() as u64;
-                if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                    last_flush = now;
+                if let Ok(lock) = data_channel.lock() {
+                    if let Some(ref ch) = *lock {
+                        let _ = ch.send(buf[..n].to_vec());
+                    } else {
+                        output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        let now = Instant::now();
+                        let elapsed = now.duration_since(last_flush).as_millis() as u64;
+                        if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                            on_data_fallback(&output_buf);
+                            output_buf.clear();
+                            last_flush = now;
+                        }
+                    }
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if !output_buf.is_empty() {
                     let elapsed = Instant::now().duration_since(last_flush).as_millis() as u64;
                     if elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
-                        on_data(&output_buf);
+                        on_data_fallback(&output_buf);
                         output_buf.clear();
                         last_flush = Instant::now();
                     }
@@ -174,10 +180,7 @@ pub fn run_exec_pty_loop(
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(_) => {
-                if !output_buf.is_empty() {
-                    on_data(&output_buf);
-                    output_buf.clear();
-                }
+                flush_output(&mut output_buf, &data_channel, &mut on_data_fallback);
                 break;
             }
         }
@@ -190,5 +193,16 @@ pub fn run_exec_pty_loop(
 
     if !intentional_disconnect {
         on_disconnect();
+    }
+}
+
+fn flush_output(
+    output_buf: &mut String,
+    _data_channel: &Arc<Mutex<Option<DataChannel<Vec<u8>>>>>,
+    on_data_fallback: &mut impl FnMut(&str),
+) {
+    if !output_buf.is_empty() {
+        on_data_fallback(output_buf);
+        output_buf.clear();
     }
 }

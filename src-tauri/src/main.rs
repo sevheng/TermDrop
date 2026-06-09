@@ -158,6 +158,30 @@ fn ssh_resize(
 }
 
 #[tauri::command]
+fn open_data_channel(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel: tauri::ipc::Channel<Vec<u8>>,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
+    *session.data_channel.lock().map_err(|e| e.to_string())? = Some(channel);
+    Ok(())
+}
+
+#[tauri::command]
+fn open_exec_pty_data_channel(
+    state: State<'_, AppState>,
+    pty_session_id: String,
+    channel: tauri::ipc::Channel<Vec<u8>>,
+) -> Result<(), String> {
+    let mut sessions = state.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get_mut(&pty_session_id).ok_or("PTY session not found")?;
+    *session.data_channel.lock().map_err(|e| e.to_string())? = Some(channel);
+    Ok(())
+}
+
+#[tauri::command]
 fn ssh_disconnect(
     state: State<'_, AppState>,
     session_id: String,
@@ -1211,6 +1235,8 @@ fn main() {
             ssh_connect,
             ssh_write,
             ssh_resize,
+            open_data_channel,
+            open_exec_pty_data_channel,
             ssh_disconnect,
             ssh_reconnect,
             ssh_exec,

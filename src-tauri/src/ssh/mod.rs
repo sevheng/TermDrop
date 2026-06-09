@@ -6,7 +6,8 @@ pub use session::create_exec_session;
 
 use ssh2::Session;
 use std::io::Read;
-use tauri::{Emitter, Window};
+use std::sync::{Arc, Mutex};
+use tauri::{ipc::Channel, Emitter, Window};
 use tokio::sync::mpsc;
 
 pub struct SshSessionHandle {
@@ -14,11 +15,13 @@ pub struct SshSessionHandle {
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub resize_tx: mpsc::UnboundedSender<(u32, u32)>,
+    pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
 }
 
 pub struct ExecPtyHandle {
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
+    pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
 }
 
 /// Run a command on an existing SSH session (reuses connection).
@@ -55,6 +58,8 @@ pub fn connect(
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
     let (resize_tx, resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
+    let data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>> = Arc::new(Mutex::new(None));
+    let data_channel_clone = data_channel.clone();
 
     std::thread::spawn(move || {
         let session = match session::create_session(&host, port, &username, password.as_deref(), key_path.as_deref()) {
@@ -82,6 +87,7 @@ pub fn connect(
             write_rx,
             disconnect_rx,
             resize_rx,
+            data_channel_clone,
             |data| {
                 let payload = serde_json::json!({
                     "session_id": &session_id,
@@ -95,7 +101,7 @@ pub fn connect(
         );
     });
 
-    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx, resize_tx })
+    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx, resize_tx, data_channel })
 }
 
 /// Connect to an SSH host and execute a command in a PTY.
@@ -111,6 +117,8 @@ pub fn exec_pty_connect(
 ) -> Result<ExecPtyHandle, String> {
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
+    let data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>> = Arc::new(Mutex::new(None));
+    let data_channel_clone = data_channel.clone();
 
     std::thread::spawn(move || {
         let session = match session::create_session(&host, port, &username, password.as_deref(), key_path.as_deref()) {
@@ -137,6 +145,7 @@ pub fn exec_pty_connect(
             channel,
             write_rx,
             disconnect_rx,
+            data_channel_clone,
             |data| {
                 let payload = serde_json::json!({
                     "pty_session_id": &pty_session_id,
@@ -150,5 +159,5 @@ pub fn exec_pty_connect(
         );
     });
 
-    Ok(ExecPtyHandle { write_tx, disconnect_tx })
+    Ok(ExecPtyHandle { write_tx, disconnect_tx, data_channel })
 }

@@ -308,7 +308,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -609,6 +609,19 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   if (dockerPaneContainer.value) {
     dockerPaneResizeObserver.observe(dockerPaneContainer.value)
   }
+
+  // Binary data channel for Docker exec PTY
+  const dockerDataChannel = new Channel()
+  dockerDataChannel.onmessage = (message) => {
+    if (message instanceof Uint8Array) {
+      dockerTerm.write(message)
+    } else if (Array.isArray(message)) {
+      dockerTerm.write(new Uint8Array(message))
+    } else if (typeof message === 'string') {
+      dockerTerm.write(message)
+    }
+  }
+  invoke('open_exec_pty_data_channel', { ptySessionId, channel: dockerDataChannel }).catch(() => {})
 
   // Start the PTY session
   try {
@@ -930,6 +943,20 @@ async function initTerminal() {
       startStatusPolling()
     },
   })
+
+  // Binary data channel for raw SSH output (bypasses JSON events)
+  const dataChannel = new Channel()
+  dataChannel.onmessage = (message) => {
+    // Handle various possible data formats from Tauri Channel
+    if (message instanceof Uint8Array) {
+      term.write(message)
+    } else if (Array.isArray(message)) {
+      term.write(new Uint8Array(message))
+    } else if (typeof message === 'string') {
+      term.write(message)
+    }
+  }
+  invoke('open_data_channel', { sessionId: props.sessionId, channel: dataChannel }).catch(() => {})
 
   // Smart input buffer: immediate for typing, chunked for paste
   let inputBuffer = ''
