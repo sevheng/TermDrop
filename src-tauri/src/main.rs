@@ -16,6 +16,7 @@ mod port_forward;
 mod docker;
 mod security;
 mod system;
+mod ssh_config_parser;
 
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
@@ -179,6 +180,36 @@ fn open_exec_pty_data_channel(
     let session = sessions.get_mut(&pty_session_id).ok_or("PTY session not found")?;
     *session.data_channel.lock().map_err(|e| e.to_string())? = Some(channel);
     Ok(())
+}
+
+#[tauri::command]
+fn parse_ssh_config() -> Result<Vec<ssh_config_parser::SshConfigHost>, String> {
+    ssh_config_parser::parse_ssh_config()
+}
+
+#[tauri::command]
+fn import_ssh_config_hosts(
+    state: State<'_, AppState>,
+    hosts: Vec<ssh_config_parser::SshConfigHost>,
+) -> Result<usize, String> {
+    let conn = state.db.get().map_err(db_err)?;
+    let mut count = 0;
+    for h in hosts {
+        let new_host = db::NewHost {
+            name: h.name,
+            host: h.host,
+            port: h.port,
+            username: h.username,
+            auth_type: h.auth_type,
+            key_path: h.key_path,
+            group: None,
+            favorite: None,
+        };
+        if let Ok(_) = db::add_host(&conn, &new_host) {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1263,6 +1294,8 @@ fn main() {
             update_host_last_connected,
             export_hosts,
             import_hosts,
+            parse_ssh_config,
+            import_ssh_config_hosts,
             write_file,
             get_setting,
             set_setting,

@@ -32,4 +32,5 @@ ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+whoami = "2.1.2"
 
