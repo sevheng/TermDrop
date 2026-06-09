@@ -9,6 +9,7 @@ pub struct SshSessionHandle {
     pub host_id: i64,
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
+    pub resize_tx: mpsc::UnboundedSender<(u32, u32)>,
 }
 
 pub struct ExecPtyHandle {
@@ -87,6 +88,7 @@ pub fn connect(
 ) -> Result<SshSessionHandle, String> {
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
+    let (resize_tx, mut resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
 
     std::thread::spawn(move || {
         let addr = format!("{}:{}", host, port);
@@ -226,12 +228,15 @@ pub fn connect(
         let _ = window.emit("ssh-connected", session_id.clone());
 
         let mut buf = vec![0u8; 16384];
-        let mut last_write = std::time::Instant::now();
         let mut intentional_disconnect = false;
         loop {
             if disconnect_rx.try_recv().is_ok() {
                 intentional_disconnect = true;
                 break;
+            }
+
+            while let Ok((cols, rows)) = resize_rx.try_recv() {
+                let _ = channel.request_pty_size(cols, rows, None, None);
             }
 
             while let Ok(data) = write_rx.try_recv() {
@@ -245,12 +250,6 @@ pub fn connect(
                         Err(_) => break,
                     }
                 }
-                last_write = std::time::Instant::now();
-            }
-
-            if last_write.elapsed().as_secs() > 30 {
-                let _ = channel.write(b"\r");
-                last_write = std::time::Instant::now();
             }
 
             match channel.read(&mut buf) {
@@ -279,7 +278,7 @@ pub fn connect(
         }
     });
 
-    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx })
+    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx, resize_tx })
 }
 
 pub fn exec_pty_connect(
@@ -433,7 +432,6 @@ pub fn exec_pty_connect(
         let _ = window.emit("exec-pty-connected", pty_session_id.clone());
 
         let mut buf = vec![0u8; 16384];
-        let mut last_write = std::time::Instant::now();
         let mut intentional_disconnect = false;
         loop {
             if disconnect_rx.try_recv().is_ok() {
@@ -452,12 +450,6 @@ pub fn exec_pty_connect(
                         Err(_) => break,
                     }
                 }
-                last_write = std::time::Instant::now();
-            }
-
-            if last_write.elapsed().as_secs() > 30 {
-                let _ = channel.write(b"\r");
-                last_write = std::time::Instant::now();
             }
 
             match channel.read(&mut buf) {

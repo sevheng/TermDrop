@@ -141,6 +141,19 @@ fn ssh_write(
 }
 
 #[tauri::command]
+fn ssh_resize(
+    state: State<'_, AppState>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get(&session_id).ok_or("Session not found")?;
+    session.resize_tx.send((cols, rows)).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn ssh_disconnect(
     state: State<'_, AppState>,
     session_id: String,
@@ -566,6 +579,17 @@ fn sftp_read_file(
     let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
     sftp::sftp_read_file(handle, &remote_path)
+}
+
+#[tauri::command]
+fn sftp_read_file_base64(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<String, String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
+    sftp::sftp_read_file_base64(handle, &remote_path)
 }
 
 #[tauri::command]
@@ -1180,6 +1204,7 @@ fn main() {
             store_password,
             ssh_connect,
             ssh_write,
+            ssh_resize,
             ssh_disconnect,
             ssh_reconnect,
             ssh_exec,
@@ -1194,6 +1219,7 @@ fn main() {
             sftp_rmdir,
             sftp_realpath,
             sftp_read_file,
+            sftp_read_file_base64,
             sftp_edit_file,
             sftp_write_file,
             check_file_modified,

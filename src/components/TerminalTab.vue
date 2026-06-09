@@ -877,12 +877,7 @@ async function initTerminal() {
       copySelection()
       return false
     }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') {
-      navigator.clipboard.readText().then(text => {
-        if (text) term.paste(text)
-      }).catch(err => console.warn('Paste failed:', err))
-      return false
-    }
+
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
       selectAll()
       return false
@@ -935,6 +930,11 @@ async function initTerminal() {
     if (!keyFlushTimer) {
       keyFlushTimer = setTimeout(flushKeyBuffer, 16)
     }
+  })
+
+  // Notify remote shell when terminal size changes
+  term.onResize(({ cols, rows }) => {
+    invoke('ssh_resize', { sessionId: props.sessionId, cols, rows }).catch(() => {})
   })
 
   // Listen for settings changes

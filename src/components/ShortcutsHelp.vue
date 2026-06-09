@@ -67,7 +67,6 @@ function onClose() {
 
 const terminalShortcuts = [
   { keys: 'Ctrl + Shift + C', label: 'Copy selection' },
-  { keys: 'Ctrl + Shift + V', label: 'Paste from clipboard' },
   { keys: 'Ctrl + Shift + A', label: 'Select all' },
   { keys: 'Ctrl + F', label: 'Find in terminal' },
 ]

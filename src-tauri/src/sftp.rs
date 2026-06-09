@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use ssh2::Session;
 use serde::Serialize;
 use tauri::{Emitter, Window};
+use base64::Engine;
 
 const SFTP_BUF_SIZE: usize = 65536; // 64KB
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -335,7 +336,7 @@ pub fn sftp_read_file(
     handle: &SftpSessionHandle,
     remote_path: &str,
 ) -> Result<String, String> {
-    const MAX_SIZE: u64 = 1024 * 1024; // 1MB
+    const MAX_SIZE: u64 = 5 * 1024 * 1024; // 5MB
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
     let mut remote_file = sftp.open(Path::new(remote_path))
@@ -352,6 +353,28 @@ pub fn sftp_read_file(
         .map_err(|e| format!("read: {}", e))?;
     String::from_utf8(content)
         .map_err(|_| "File contains non-UTF-8 data".to_string())
+}
+
+pub fn sftp_read_file_base64(
+    handle: &SftpSessionHandle,
+    remote_path: &str,
+) -> Result<String, String> {
+    const MAX_SIZE: u64 = 10 * 1024 * 1024; // 10MB for images
+    let session = handle.session.lock().map_err(|e| e.to_string())?;
+    let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
+    let mut remote_file = sftp.open(Path::new(remote_path))
+        .map_err(|e| format!("open: {}", e))?;
+    let stat = remote_file.stat()
+        .map_err(|e| format!("stat: {}", e))?;
+    let size = stat.size.unwrap_or(0);
+    if size > MAX_SIZE {
+        return Err(format!("File too large: {} bytes (max {})", size, MAX_SIZE));
+    }
+    let mut content = Vec::with_capacity(size as usize);
+    use std::io::Read;
+    remote_file.read_to_end(&mut content)
+        .map_err(|e| format!("read: {}", e))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&content))
 }
 
 pub fn sftp_rmdir(
