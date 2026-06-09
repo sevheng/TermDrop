@@ -386,20 +386,6 @@ const visibleInterfaces = computed(() => network.value?.interfaces?.filter(i => 
 
 const tooltip = ref({ show: false, text: '', x: 0, y: 0 })
 
-// Keystroke batching
-let keyBuffer = ''
-let keyFlushTimer = null
-
-function flushKeyBuffer() {
-  if (keyBuffer) {
-    invoke('ssh_write', { sessionId: props.sessionId, data: keyBuffer }).catch((err) => {
-      console.error('ssh_write failed:', err)
-    })
-    keyBuffer = ''
-  }
-  keyFlushTimer = null
-}
-
 function applySettings(settings) {
   if (!term) return
   if (settings.fontSize !== undefined) {
@@ -902,7 +888,14 @@ async function initTerminal() {
     writeError: (error) => term.writeln(`\r\n\x1b[31mError: ${error}\x1b[0m`),
     onConnected: () => {
       setTimeout(() => {
-        if (fitAddon) fitAddon.fit()
+        if (fitAddon) {
+          fitAddon.fit()
+          // Send exact size to remote so shell matches the real terminal dimensions
+          const { cols, rows } = term
+          if (cols > 0 && rows > 0) {
+            invoke('ssh_resize', { sessionId: props.sessionId, cols, rows }).catch(() => {})
+          }
+        }
       }, 100)
       startStatusPolling()
     },
@@ -918,22 +911,26 @@ async function initTerminal() {
       isReconnecting.value = false
       term.clear()
       setTimeout(() => {
-        if (fitAddon) fitAddon.fit()
+        if (fitAddon) {
+          fitAddon.fit()
+          const { cols, rows } = term
+          if (cols > 0 && rows > 0) {
+            invoke('ssh_resize', { sessionId: props.sessionId, cols, rows }).catch(() => {})
+          }
+        }
       }, 100)
       startStatusPolling()
     },
   })
 
-  // Batch keystrokes to reduce IPC overhead (~60 fps max)
+  // Send keystrokes immediately
   term.onData((data) => {
-    keyBuffer += data
-    if (!keyFlushTimer) {
-      keyFlushTimer = setTimeout(flushKeyBuffer, 16)
-    }
+    invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
   })
 
   // Notify remote shell when terminal size changes
   term.onResize(({ cols, rows }) => {
+    if (cols <= 0 || rows <= 0) return
     invoke('ssh_resize', { sessionId: props.sessionId, cols, rows }).catch(() => {})
   })
 
@@ -967,15 +964,6 @@ function stopActiveOperations() {
 }
 
 function disposeTerminal() {
-  // Flush pending keystrokes before disposal
-  if (keyFlushTimer) {
-    clearTimeout(keyFlushTimer)
-    keyFlushTimer = null
-  }
-  if (keyBuffer) {
-    invoke('ssh_write', { sessionId: props.sessionId, data: keyBuffer }).catch(() => {})
-    keyBuffer = ''
-  }
   if (lazyDisposeTimer) {
     clearTimeout(lazyDisposeTimer)
     lazyDisposeTimer = null

@@ -75,6 +75,8 @@ async fn ssh_connect(
     state: State<'_, AppState>,
     host_id: i64,
     password: Option<String>,
+    cols: u32,
+    rows: u32,
 ) -> Result<String, String> {
     let host = {
         let conn = state.db.get().map_err(db_err)?;
@@ -105,6 +107,8 @@ async fn ssh_connect(
         host.username.clone(),
         password.clone(),
         key_path.clone(),
+        cols,
+        rows,
     )?;
 
     // Create a persistent exec session for this host
@@ -244,6 +248,8 @@ async fn ssh_reconnect(
         host.username.clone(),
         password.clone(),
         key_path.clone(),
+        80,
+        24,
     )?;
 
     {

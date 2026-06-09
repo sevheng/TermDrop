@@ -85,6 +85,8 @@ pub fn connect(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    initial_cols: u32,
+    initial_rows: u32,
 ) -> Result<SshSessionHandle, String> {
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
@@ -194,7 +196,7 @@ pub fn connect(
         };
 
         loop {
-            match channel.request_pty("xterm-256color", None, None) {
+            match channel.request_pty("xterm-256color", None, Some((initial_cols, initial_rows, 0, 0))) {
                 Ok(()) => break,
                 Err(e) => {
                     let io_err: std::io::Error = e.into();
@@ -236,7 +238,19 @@ pub fn connect(
             }
 
             while let Ok((cols, rows)) = resize_rx.try_recv() {
-                let _ = channel.request_pty_size(cols, rows, None, None);
+                loop {
+                    match channel.request_pty_size(cols, rows, None, None) {
+                        Ok(()) => break,
+                        Err(e) => {
+                            let io_err: std::io::Error = e.into();
+                            if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                                std::thread::sleep(Duration::from_millis(5));
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                }
             }
 
             while let Ok(data) = write_rx.try_recv() {

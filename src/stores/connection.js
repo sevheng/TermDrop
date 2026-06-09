@@ -187,8 +187,13 @@ export const useConnectionStore = defineStore('connection', () => {
     const isKeyAuth = host?.auth_type === 'key'
     connectingHostId.value = hostId
 
+    // Estimate terminal size before creating PTY so the remote shell
+    // starts with roughly the right dimensions instead of default 80x24.
+    const estCols = Math.max(80, Math.floor((window.innerWidth - 48) / 8))
+    const estRows = Math.max(24, Math.floor((window.innerHeight - 200) / 16))
+
     let sessionId
-    const sshArgs = { hostId }
+    const sshArgs = { hostId, cols: estCols, rows: estRows }
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
