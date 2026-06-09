@@ -1130,7 +1130,22 @@ watch(() => props.isActive, (active) => {
       requestAnimationFrame(() => {
         if (fitAddon) fitAddon.fit()
         if (dockerFitAddon) dockerFitAddon.fit()
-        // Force redraw after tab switch — WebGL canvas may be blank after display:none
+        // Recreate WebGL addon after tab was hidden — browser may have dropped the context
+        if (term && webglAddon) {
+          try {
+            webglAddon.dispose()
+            webglAddon = new WebglAddon()
+            webglAddon.onContextLoss(() => {
+              if (term && webglAddon) {
+                webglAddon.dispose()
+                webglAddon = new WebglAddon()
+                term.loadAddon(webglAddon)
+                term.refresh(0, term.rows - 1)
+              }
+            })
+            term.loadAddon(webglAddon)
+          } catch (_) {}
+        }
         if (term) term.refresh(0, term.rows - 1)
         if (dockerTerm) dockerTerm.refresh(0, dockerTerm.rows - 1)
       })
