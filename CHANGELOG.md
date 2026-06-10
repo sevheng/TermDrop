@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2025-06-10
+
+### Added
+- **Tauri Auto-Updater** — automatic update checks on startup, manual check in Settings, download progress UI, and one-click install & relaunch
+- Update signing with minisign keypair
+- GitHub Releases integration for serving update manifests
+
 ## [0.2.2] — 2025-06-10
 
 ### Fixed

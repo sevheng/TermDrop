@@ -64,7 +64,7 @@ const store = useConnectionStore()
 
 const fontSize = ref(14)
 const downloadPath = ref('')
-const appVersion = ref('0.2.2')
+const appVersion = ref('0.2.3')
 const checking = ref(false)
 const lastChecked = ref('')
 
