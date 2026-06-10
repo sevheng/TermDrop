@@ -15,6 +15,28 @@ pub fn expand_key_path(key_path: &str) -> std::path::PathBuf {
 
 /// Create a TCP connection, perform SSH handshake, and authenticate.
 /// Returns a ready-to-use `Session` in **non-blocking** mode.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub fn resolve_and_connect(host: &str, port: u16) -> Result<std::net::TcpStream, String> {
+    let addr = format!("{}:{}", host, port);
+    // Try to parse as SocketAddr first (IP address)
+    if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
+        return std::net::TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)
+            .map_err(|e| format!("connect: {}", e));
+    }
+    // Otherwise resolve hostname
+    let addrs = std::net::ToSocketAddrs::to_socket_addrs(&addr)
+        .map_err(|e| format!("resolve: {}", e))?;
+    let mut last_err = None;
+    for socket_addr in addrs {
+        match std::net::TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
+            Ok(tcp) => return Ok(tcp),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(format!("connect: {}", last_err.unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved"))))
+}
+
 pub fn create_session(
     host: &str,
     port: u16,
@@ -22,9 +44,7 @@ pub fn create_session(
     password: Option<&str>,
     key_path: Option<&str>,
 ) -> Result<Session, String> {
-    let addr = format!("{}:{}", host, port);
-    let tcp = std::net::TcpStream::connect(&addr)
-        .map_err(|e| format!("connect: {}", e))?;
+    let tcp = resolve_and_connect(host, port)?;
 
     tcp.set_nonblocking(true)
         .map_err(|e| format!("set_nonblocking: {}", e))?;
@@ -95,9 +115,7 @@ pub fn create_exec_session(
     password: Option<&str>,
     key_path: Option<&str>,
 ) -> Result<Session, String> {
-    let addr = format!("{}:{}", host, port);
-    let tcp = std::net::TcpStream::connect(&addr)
-        .map_err(|e| format!("connect: {}", e))?;
+    let tcp = resolve_and_connect(host, port)?;
     let mut session = Session::new()
         .map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);

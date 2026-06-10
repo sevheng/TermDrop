@@ -45,9 +45,7 @@ pub fn sftp_connect(
     key_path: Option<String>,
     host_id: i64,
 ) -> Result<SftpSessionHandle, String> {
-    let addr = format!("{}:{}", host, port);
-    let tcp = std::net::TcpStream::connect(&addr)
-        .map_err(|e| format!("connect: {}", e))?;
+    let tcp = crate::ssh::session::resolve_and_connect(&host, port)?;
     let mut session = Session::new()
         .map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);

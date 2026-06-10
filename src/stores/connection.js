@@ -1,8 +1,33 @@
 import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, reactive } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+
+const INVOKE_TIMEOUT_MS = 10000 // 10 seconds
+
+/**
+ * Wrap Tauri invoke() with a freeze-detection timer.
+ * If the call takes longer than INVOKE_TIMEOUT_MS, a warning toast is shown.
+ */
+function invoke(cmd, args = {}) {
+  const start = performance.now()
+  let warned = false
+  const timer = setTimeout(() => {
+    warned = true
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: `${cmd} is taking longer than expected...`, type: 'warning' }
+    }))
+  }, INVOKE_TIMEOUT_MS)
+
+  return tauriInvoke(cmd, args).finally(() => {
+    clearTimeout(timer)
+    const elapsed = performance.now() - start
+    if (elapsed > INVOKE_TIMEOUT_MS) {
+      console.warn(`[SLOW] ${cmd} took ${elapsed.toFixed(0)}ms`, args)
+    }
+  })
+}
 
 export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])

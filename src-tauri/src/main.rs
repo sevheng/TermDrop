@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-
 use tauri::{Emitter, State, Window};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use tracing::{info, instrument};
 
 mod db;
 mod crypto;
@@ -71,6 +71,7 @@ fn store_password(host_id: i64, password: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[instrument(skip(window, state), fields(host_id))]
 async fn ssh_connect(
     window: Window,
     state: State<'_, AppState>,
@@ -100,7 +101,7 @@ async fn ssh_connect(
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let handle = ssh::connect(
-        window,
+        window.clone(),
         session_id.clone(),
         host_id,
         host.host.clone(),
@@ -112,14 +113,18 @@ async fn ssh_connect(
         rows,
     )?;
 
-    // Create a persistent exec session for this host
-    let exec_session = ssh::create_exec_session(
-        &host.host,
-        host.port as u16,
-        &host.username,
-        password.as_deref(),
-        key_path.as_deref(),
-    )?;
+    // Create a persistent exec session off the async thread to avoid UI freeze
+    let host_clone = host.host.clone();
+    let port = host.port as u16;
+    let username = host.username.clone();
+    let password_clone = password.clone();
+    let key_path_clone = key_path.clone();
+    let exec_session = tokio::task::spawn_blocking(move || {
+        ssh::create_exec_session(&host_clone, port, &username, password_clone.as_deref(), key_path_clone.as_deref())
+    })
+    .await
+    .map_err(|e| format!("exec session task failed: {}", e))?
+    .map_err(|e| format!("exec session: {}", e))?;
 
     {
         let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -130,6 +135,7 @@ async fn ssh_connect(
         exec_sessions.insert(host_id, Arc::new(Mutex::new(exec_session)));
     }
 
+    info!(session_id = %session_id, host_id = host_id, "SSH connected");
     Ok(session_id)
 }
 
@@ -241,6 +247,7 @@ fn ssh_disconnect(
 }
 
 #[tauri::command]
+#[instrument(skip(window, state), fields(session_id))]
 async fn ssh_reconnect(
     window: Window,
     state: State<'_, AppState>,
@@ -280,18 +287,22 @@ async fn ssh_reconnect(
         }
     }
 
-    // Remove old exec session and create new one
+    // Remove old exec session and create new one off the async thread
     {
         let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.remove(&host_id);
     }
-    let exec_session = ssh::create_exec_session(
-        &host.host,
-        host.port as u16,
-        &host.username,
-        password.as_deref(),
-        key_path.as_deref(),
-    )?;
+    let host_clone = host.host.clone();
+    let port = host.port as u16;
+    let username = host.username.clone();
+    let password_clone = password.clone();
+    let key_path_clone = key_path.clone();
+    let exec_session = tokio::task::spawn_blocking(move || {
+        ssh::create_exec_session(&host_clone, port, &username, password_clone.as_deref(), key_path_clone.as_deref())
+    })
+    .await
+    .map_err(|e| format!("exec session task failed: {}", e))?
+    .map_err(|e| format!("exec session: {}", e))?;
 
     // Open new connection with same session_id
     let handle = ssh::connect(
@@ -321,6 +332,7 @@ async fn ssh_reconnect(
 }
 
 #[tauri::command]
+#[instrument(skip(state), fields(host_id))]
 async fn sftp_connect(
     state: State<'_, AppState>,
     host_id: i64,
@@ -346,18 +358,23 @@ async fn sftp_connect(
     };
 
     let sftp_id = uuid::Uuid::new_v4().to_string();
-    let handle = sftp::sftp_connect(
-        host.host,
-        host.port as u16,
-        host.username,
-        password,
-        key_path,
-        host_id,
-    )?;
+    let sftp_id_clone = sftp_id.clone();
+    let host_host = host.host.clone();
+    let port = host.port as u16;
+    let username = host.username.clone();
+
+    // Run blocking SFTP connect off the async thread
+    let handle = tokio::task::spawn_blocking(move || {
+        sftp::sftp_connect(host_host, port, username, password, key_path, host_id)
+    })
+    .await
+    .map_err(|e| format!("sftp connect task failed: {}", e))?
+    .map_err(|e| format!("sftp connect: {}", e))?;
 
     let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     sftp_sessions.insert(sftp_id.clone(), Arc::new(handle));
 
+    info!(sftp_id = %sftp_id_clone, host_id = host_id, "SFTP connected");
     Ok(sftp_id)
 }
 
@@ -1226,6 +1243,21 @@ fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result
 }
 
 fn main() {
+    // Initialize structured logging to file
+    let log_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("termdrop")
+        .join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "termdrop.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+        .with_ansi(false)
+        .init();
+    info!("TermDrop starting up");
+
     let db_path = dirs::data_dir()
         .unwrap_or_else(|| std::env::temp_dir())
         .join("termdrop.db");
