@@ -306,7 +306,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
-import { WebglAddon } from '@xterm/addon-webgl'
+import { CanvasAddon } from '@xterm/addon-canvas'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, Channel } from '@tauri-apps/api/core'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
@@ -337,7 +337,7 @@ const searchInput = ref(null)
 let term = null
 let fitAddon = null
 let searchAddon = null
-let webglAddon = null
+let canvasAddon = null
 let resizeObserver = null
 let statusInterval = null
 let lazyDisposeTimer = null
@@ -357,7 +357,7 @@ const dockerPane = ref({
 const dockerPaneContainer = ref(null)
 let dockerTerm = null
 let dockerFitAddon = null
-let dockerWebglAddon = null
+let dockerCanvasAddon = null
 let dockerPaneResizeObserver = null
 let unlistenPtyData = null
 let unlistenPtyError = null
@@ -532,9 +532,9 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   dockerFitAddon = new FitAddon()
-  dockerWebglAddon = new WebglAddon()
+  dockerCanvasAddon = new CanvasAddon()
   dockerTerm.loadAddon(dockerFitAddon)
-  dockerTerm.loadAddon(dockerWebglAddon)
+  dockerTerm.loadAddon(dockerCanvasAddon)
 
   dockerTerm.open(dockerPaneContainer.value)
   dockerFitAddon.fit()
@@ -657,7 +657,7 @@ async function closeDockerPane() {
     dockerTerm = null
   }
   dockerFitAddon = null
-  dockerWebglAddon = null
+  dockerCanvasAddon = null
 
   dockerPane.value.show = false
   dockerPane.value.ptySessionId = null
@@ -865,17 +865,10 @@ async function initTerminal() {
 
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
-  webglAddon = new WebglAddon()
-  webglAddon.onContextLoss(() => {
-    // WebGL context lost (e.g., tab hidden). Re-add addon and refresh.
-    if (term && webglAddon) {
-      term.loadAddon(webglAddon)
-      term.refresh(0, term.rows - 1)
-    }
-  })
+  canvasAddon = new CanvasAddon()
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
-  term.loadAddon(webglAddon)
+  term.loadAddon(canvasAddon)
 
   term.open(terminalContainer.value)
   fitAddon.fit()
@@ -1060,7 +1053,7 @@ function disposeTerminal() {
   }
   fitAddon = null
   searchAddon = null
-  webglAddon = null
+  canvasAddon = null
   window.removeEventListener('terminal-settings-changed', onSettingsChanged)
   window.removeEventListener('click', onWindowClick)
   window.removeEventListener('contextmenu', onWindowContextMenu, true)
@@ -1130,22 +1123,7 @@ watch(() => props.isActive, (active) => {
       requestAnimationFrame(() => {
         if (fitAddon) fitAddon.fit()
         if (dockerFitAddon) dockerFitAddon.fit()
-        // Recreate WebGL addon after tab was hidden — browser may have dropped the context
-        if (term && webglAddon) {
-          try {
-            webglAddon.dispose()
-            webglAddon = new WebglAddon()
-            webglAddon.onContextLoss(() => {
-              if (term && webglAddon) {
-                webglAddon.dispose()
-                webglAddon = new WebglAddon()
-                term.loadAddon(webglAddon)
-                term.refresh(0, term.rows - 1)
-              }
-            })
-            term.loadAddon(webglAddon)
-          } catch (_) {}
-        }
+        // Force redraw after tab switch
         if (term) term.refresh(0, term.rows - 1)
         if (dockerTerm) dockerTerm.refresh(0, dockerTerm.rows - 1)
       })
