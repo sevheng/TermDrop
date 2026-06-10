@@ -8,22 +8,55 @@
     </div>
   </div>
   <template v-else>
-    <MainWindow />
+    <MainWindow @update-available="onUpdateAvailable" />
     <ToastContainer />
+    <UpdateModal
+      :show="updateModal.show"
+      :version="updateModal.version"
+      :notes="updateModal.notes"
+      :downloadAndInstall="updateModal.downloadAndInstall"
+      @close="updateModal.show = false"
+    />
   </template>
 </template>
 
 <script setup>
-import { ref, onErrorCaptured } from 'vue'
+import { ref, onErrorCaptured, onMounted } from 'vue'
 import MainWindow from './views/MainWindow.vue'
 import ToastContainer from './components/ToastContainer.vue'
+import UpdateModal from './components/UpdateModal.vue'
+import { checkForUpdates } from './composables/useUpdater.js'
 
 const fatalError = ref(null)
+
+const updateModal = ref({
+  show: false,
+  version: '',
+  notes: '',
+  downloadAndInstall: null,
+})
 
 onErrorCaptured((err, instance, info) => {
   fatalError.value = `${info}: ${err?.message || err}`
   console.error('[Error Boundary]', fatalError.value, err)
   return false // prevent propagation
+})
+
+onMounted(async () => {
+  // Check for updates on startup
+  try {
+    const result = await checkForUpdates()
+    if (result.available) {
+      updateModal.value = {
+        show: true,
+        version: result.version,
+        notes: result.notes,
+        downloadAndInstall: result.downloadAndInstall,
+      }
+    }
+  } catch (err) {
+    console.error('Startup update check failed:', err)
+  }
 })
 
 function reload() {
@@ -32,6 +65,15 @@ function reload() {
 
 function dismiss() {
   fatalError.value = null
+}
+
+function onUpdateAvailable(result) {
+  updateModal.value = {
+    show: true,
+    version: result.version,
+    notes: result.notes,
+    downloadAndInstall: result.downloadAndInstall,
+  }
 }
 </script>
 

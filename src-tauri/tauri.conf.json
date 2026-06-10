@@ -42,5 +42,15 @@
       "minimumSystemVersion": "10.13",
       "signingIdentity": null
     }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/sevheng/TermDrop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "RWVUTEpjN2Q2cnFJOElocE52NVBQdVBHcjUxS3lHTERVVnV5QnMyYWpxKzcvbGpkelpCd0FabVE="
+    }
   }
 }

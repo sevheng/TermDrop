@@ -193,6 +193,7 @@
       :show="showSettings"
       @close="showSettings = false"
       @saved="onSettingsSaved"
+      @update-available="$emit('update-available', $event)"
     />
 
     <ShortcutsHelp
@@ -227,6 +228,8 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
+
+const emit = defineEmits(['update-available'])
 
 const SftpPanel = defineAsyncComponent(() => import('../components/SftpPanel.vue'))
 const PortForwardPanel = defineAsyncComponent(() => import('../components/PortForwardPanel.vue'))
