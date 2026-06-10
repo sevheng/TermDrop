@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2025-06-10
+
+### Fixed
+- **Windows SSH handshake** — added `openssl-on-win32` feature to force OpenSSL crypto backend on Windows, fixing "Unable to exchange encryption keys" (LIBSSH2_ERROR_KEX_FAILURE)
+
 ## [0.2.1] — 2025-06-10
 
 ### Added
