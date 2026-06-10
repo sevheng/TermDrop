@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2025-06-10
+
+### Added
+- **SSH Config Import** — parse `~/.ssh/config` and import host entries with one click
+- **TermDrop App Icon** — custom icon with teardrop + terminal prompt symbol for all platforms
+
+### Performance
+- **Terminal Rendering** — switched from WebGL to Canvas renderer for stable tab switching
+- **Buffered I/O** — smart input routing and 4KB/16ms output batching for smoother terminal feel
+- **Binary Data Channel** — raw `Vec<u8>` IPC channel instead of JSON events for lower latency
+
+### Fixed
+- Blank terminal when switching between tabs (Canvas context loss)
+- "Unable to exchange encryption keys" on Windows (enabled `vendored-openssl`)
+
 ## [0.2.0] — 2025-06-09
 
 ### Added
