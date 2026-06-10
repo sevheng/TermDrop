@@ -1,25 +1,31 @@
 <template>
   <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col relative">
     <!-- Path breadcrumbs -->
-    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center gap-0.5 text-xs overflow-x-auto whitespace-nowrap">
+    <div
+      class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center gap-0.5 text-xs overflow-x-auto whitespace-nowrap"
+      style="scrollbar-width: thin; scrollbar-color: #3c3c3c transparent;"
+    >
       <span
         v-for="(segment, index) in breadcrumbs"
         :key="index"
-        class="flex items-center gap-0.5 shrink-0"
+        class="flex items-center gap-0.5 shrink-0 min-w-0"
       >
         <button
           v-if="index === 0"
           @click="navigateTo(segment.path)"
-          class="text-[#858585] hover:text-[#cccccc] p-0.5 rounded"
+          class="text-[#858585] hover:text-[#cccccc] p-0.5 rounded shrink-0"
           title="Go to root"
         >
           <Home :size="12" />
         </button>
         <button
           v-else
-          @click="navigateTo(segment.path)"
-          class="text-[#858585] hover:text-[#cccccc] px-0.5 rounded"
-          :class="index === breadcrumbs.length - 1 ? 'text-[#cccccc] font-medium cursor-default' : ''"
+          @click="index < breadcrumbs.length - 1 && navigateTo(segment.path)"
+          class="px-1 py-0.5 rounded truncate max-w-[120px]"
+          :class="index === breadcrumbs.length - 1
+            ? 'text-[#cccccc] font-medium cursor-default bg-[#3c3c3c]/50'
+            : 'text-[#858585] hover:text-[#cccccc] hover:bg-[#3c3c3c]/30 cursor-pointer'"
+          :title="segment.path"
         >
           {{ segment.name }}
         </button>
@@ -495,12 +501,13 @@ function showToast(message, type = 'success') {
 }
 
 const breadcrumbs = computed(() => {
-  const parts = currentPath.value.split('/').filter(Boolean)
+  const normalized = currentPath.value.replace(/\\/g, '/').replace(/\/+/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
   const result = [{ name: 'root', path: '/' }]
   let path = ''
   for (const part of parts) {
     path += '/' + part
-    result.push({ name: part, path })
+    result.push({ name: part || '/', path })
   }
   return result
 })
