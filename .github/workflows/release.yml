@@ -14,11 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - platform: macos-14
             args: '--target aarch64-apple-darwin'
           - platform: ubuntu-22.04
             args: ''
-          - platform: windows-latest
+          - platform: windows-2022
             args: ''
 
     runs-on: ${{ matrix.platform }}
