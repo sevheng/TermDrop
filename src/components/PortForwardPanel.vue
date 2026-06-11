@@ -80,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink } from 'lucide-vue-next'
 import { openUrl } from '@tauri-apps/plugin-opener'
