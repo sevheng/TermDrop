@@ -213,7 +213,8 @@
     <PortForwardModal
       :show="showForwardModal"
       :hostId="store.activeTab?.hostId"
-      @close="showForwardModal = false"
+      :prefill="forwardPrefill"
+      @close="showForwardModal = false; forwardPrefill = null"
       @save="onForwardSaved"
     />
 
@@ -255,6 +256,7 @@ const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')
 const showForwardModal = ref(false)
+const forwardPrefill = ref(null)
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
 
@@ -307,10 +309,19 @@ async function onForwardSaved(forwardData) {
   try {
     await store.addPortForward(forwardData)
     showForwardModal.value = false
+    forwardPrefill.value = null
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
     window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: forwardData.host_id } }))
   } catch (err) {
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to add: ' + err, type: 'error' } }))
+  }
+}
+
+function onOpenPortForwardModal(event) {
+  const { hostId, prefill } = event.detail
+  if (hostId && store.activeTab?.hostId === hostId) {
+    forwardPrefill.value = prefill || null
+    showForwardModal.value = true
   }
 }
 
@@ -407,9 +418,11 @@ onMounted(() => {
   document.documentElement.classList.add('dark')
 
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('open-port-forward-modal', onOpenPortForwardModal)
 })
 </script>

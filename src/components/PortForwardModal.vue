@@ -117,6 +117,7 @@ import { Loader2 } from 'lucide-vue-next'
 const props = defineProps({
   show: Boolean,
   hostId: Number,
+  prefill: Object,
 })
 
 const emit = defineEmits(['save', 'close'])
@@ -135,13 +136,24 @@ const loading = ref(false)
 
 watch(() => props.show, (visible) => {
   if (visible) {
-    form.value = {
-      name: '',
-      kind: 'local',
-      local_host: '127.0.0.1',
-      local_port: null,
-      remote_host: 'localhost',
-      remote_port: null,
+    if (props.prefill) {
+      form.value = {
+        name: props.prefill.name || '',
+        kind: props.prefill.kind || 'local',
+        local_host: props.prefill.local_host || '127.0.0.1',
+        local_port: props.prefill.local_port ?? null,
+        remote_host: props.prefill.remote_host || 'localhost',
+        remote_port: props.prefill.remote_port ?? null,
+      }
+    } else {
+      form.value = {
+        name: '',
+        kind: 'local',
+        local_host: '127.0.0.1',
+        local_port: null,
+        remote_host: 'localhost',
+        remote_port: null,
+      }
     }
     errors.value = {}
   }

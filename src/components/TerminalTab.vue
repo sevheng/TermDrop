@@ -530,31 +530,24 @@ async function showContextMenu(event) {
   }
 }
 
-async function createForwardFromSelection() {
+function createForwardFromSelection() {
   contextMenu.value.show = false
   if (!contextMenuForward.value || !props.hostId) return
 
   const port = contextMenuForward.value.port
-  try {
-    const id = await store.addPortForward({
-      host_id: props.hostId,
-      name: `Forward ${port}`,
-      kind: 'local',
-      local_host: '127.0.0.1',
-      local_port: port,
-      remote_host: 'localhost',
-      remote_port: port,
-    })
-    await store.startPortForward(id)
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: `Port forward created and started on ${port}`, type: 'success' }
-    }))
-    window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: props.hostId } }))
-  } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: 'Failed to create forward: ' + err, type: 'error' }
-    }))
-  }
+  window.dispatchEvent(new CustomEvent('open-port-forward-modal', {
+    detail: {
+      hostId: props.hostId,
+      prefill: {
+        name: `Forward ${port}`,
+        kind: 'local',
+        local_host: '127.0.0.1',
+        local_port: port,
+        remote_host: 'localhost',
+        remote_port: port,
+      }
+    }
+  }))
 }
 
 function onWindowClick() {
