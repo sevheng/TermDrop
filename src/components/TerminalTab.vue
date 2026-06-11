@@ -549,6 +549,7 @@ async function createForwardFromSelection() {
     window.dispatchEvent(new CustomEvent('app-toast', {
       detail: { message: `Port forward created and started on ${port}`, type: 'success' }
     }))
+    window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: props.hostId } }))
   } catch (err) {
     window.dispatchEvent(new CustomEvent('app-toast', {
       detail: { message: 'Failed to create forward: ' + err, type: 'error' }

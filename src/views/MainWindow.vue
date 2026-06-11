@@ -308,10 +308,7 @@ async function onForwardSaved(forwardData) {
     await store.addPortForward(forwardData)
     showForwardModal.value = false
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
-    // Refresh the panel if it's open
-    if (rightPanelTab.value === 'tunnels') {
-      // The panel will auto-refresh via its watcher
-    }
+    window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: forwardData.host_id } }))
   } catch (err) {
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to add: ' + err, type: 'error' } }))
   }

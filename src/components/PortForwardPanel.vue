@@ -141,7 +141,20 @@ async function deleteForward(id) {
   }
 }
 
+function onPortForwardAdded(event) {
+  if (event.detail.hostId === props.hostId) {
+    loadForwards()
+  }
+}
+
 watch(() => props.hostId, loadForwards, { immediate: true })
 
-onMounted(loadForwards)
+onMounted(() => {
+  loadForwards()
+  window.addEventListener('port-forward-added', onPortForwardAdded)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('port-forward-added', onPortForwardAdded)
+})
 </script>
