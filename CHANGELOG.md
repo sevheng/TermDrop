@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-06-11
+
+### Added
+- **MongoDB Sync & Dump/Restore** — new host capability for MongoDB databases
+  - Side-by-side Remote/Local database tree view with bidirectional sync toggle
+  - Sync selected collections via bundled `mongodump`/`mongorestore` CLI tools
+  - Dump to BSON files (with gzip compression) when no local URI is configured
+  - Restore from BSON files back to remote
+  - Database-level checkbox to select all collections at once
+  - Bundled MongoDB Database Tools — no external installation required
+- `MongoDbModal` for adding standalone MongoDB connections (no SSH required)
+- `DbTree` shared component for database tree rendering
+
+### Changed
+- Host sidebar now routes MongoDB-only hosts directly to MongoDB panel on click
+- MongoDB-only hosts show Database icon and cleaned-up URI subtitle
+- Removed separate "Open MongoDB" button from host list — click row directly
+
 ## [0.2.3] — 2025-06-10
 
 ### Added
