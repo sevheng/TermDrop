@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-06-11
+
+### Fixed
+- **MongoDB cross-platform tools** — bundle platform-specific `mongodump` / `mongorestore` binaries (Linux x86_64, macOS x86_64 + aarch64, Windows x86_64) so dump/restore/sync work on every OS instead of shipping a Linux binary everywhere
+
+### Changed
+- **MongoDB panel UX**
+  - Single full-width database tree when only a remote URI is configured (dump/restore mode)
+  - Cleaner two-pane headers in sync mode with compact `Remote`/`Local` labels and `From`/`To` badges
+  - Direction pill in the header and a larger center swapper for bidirectional sync
+
 ## [0.2.4] — 2026-06-11
 
 ### Added
