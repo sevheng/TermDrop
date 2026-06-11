@@ -20,6 +20,11 @@ mod ssh;
 mod ssh_config_parser;
 mod system;
 
+pub struct CachedSecurityReport {
+    report: security::SecurityReport,
+    cached_at: std::time::Instant,
+}
+
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
     sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
@@ -28,6 +33,8 @@ pub struct AppState {
     exec_pty_sessions: Mutex<HashMap<String, ssh::ExecPtyHandle>>,
     docker_cache: Arc<Mutex<HashMap<i64, docker::CachedDockerInfo>>>,
     docker_ps_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    security_report_cache: Arc<Mutex<HashMap<i64, CachedSecurityReport>>>,
+    security_report_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
     forward_manager: port_forward::ForwardManager,
 }
 
@@ -1362,7 +1369,82 @@ async fn docker_install(state: State<'_, AppState>, host_id: i64) -> Result<Stri
 async fn run_security_audit(
     state: State<'_, AppState>,
     host_id: i64,
+    force: bool,
 ) -> Result<security::SecurityReport, String> {
+    const CACHE_FRESH_SECS: u64 = 30;
+    const CACHE_STALE_SECS: u64 = 300;
+
+    // Fast path: fresh cache
+    if !force {
+        let cache = state.security_report_cache.lock().map_err(|e| e.to_string())?;
+        if let Some(cached) = cache.get(&host_id) {
+            if cached.cached_at.elapsed().as_secs() < CACHE_FRESH_SECS {
+                return Ok(cached.report.clone());
+            }
+        }
+    }
+
+    // Serialize fetches per host (request coalescing)
+    let fetch_lock = {
+        let mut fetching = state
+            .security_report_fetching
+            .lock()
+            .map_err(|e| e.to_string())?;
+        fetching
+            .entry(host_id)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+
+    let _guard = fetch_lock.lock().await;
+
+    // Re-check cache after acquiring lock
+    if !force {
+        let cache = state.security_report_cache.lock().map_err(|e| e.to_string())?;
+        if let Some(cached) = cache.get(&host_id) {
+            let elapsed = cached.cached_at.elapsed().as_secs();
+            if elapsed < CACHE_FRESH_SECS {
+                return Ok(cached.report.clone());
+            }
+            if elapsed < CACHE_STALE_SECS {
+                // Return stale immediately, refresh in background
+                let cache_clone = state.security_report_cache.clone();
+                let session_arc = {
+                    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+                    exec_sessions
+                        .get(&host_id)
+                        .cloned()
+                        .ok_or("No active session for this host")?
+                };
+                tokio::task::spawn(async move {
+                    match with_timeout(
+                        move || {
+                            let session = session_arc.lock().map_err(|e| e.to_string())?;
+                            security::run_security_audit(&session).map_err(|e| e.to_string())
+                        },
+                        60,
+                    )
+                    .await
+                    {
+                        Ok(report) => {
+                            let mut cache = cache_clone.lock().unwrap();
+                            cache.insert(
+                                host_id,
+                                CachedSecurityReport {
+                                    report,
+                                    cached_at: std::time::Instant::now(),
+                                },
+                            );
+                        }
+                        _ => {}
+                    }
+                });
+                return Ok(cached.report.clone());
+            }
+        }
+    }
+
+    // Cache is empty or very stale — block and fetch
     let session_arc = {
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions
@@ -1371,14 +1453,30 @@ async fn run_security_audit(
             .ok_or("No active session for this host")?
     };
 
-    with_timeout(
+    let report = with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
             security::run_security_audit(&session).map_err(|e| e.to_string())
         },
         60,
     )
-    .await
+    .await?;
+
+    {
+        let mut cache = state
+            .security_report_cache
+            .lock()
+            .map_err(|e| e.to_string())?;
+        cache.insert(
+            host_id,
+            CachedSecurityReport {
+                report: report.clone(),
+                cached_at: std::time::Instant::now(),
+            },
+        );
+    }
+
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1614,6 +1712,8 @@ fn main() {
             exec_pty_sessions: Mutex::new(HashMap::new()),
             docker_cache: Arc::new(Mutex::new(HashMap::new())),
             docker_ps_fetching: Arc::new(Mutex::new(HashMap::new())),
+            security_report_cache: Arc::new(Mutex::new(HashMap::new())),
+            security_report_fetching: Arc::new(Mutex::new(HashMap::new())),
             forward_manager: port_forward::ForwardManager::new(),
         })
         .invoke_handler(tauri::generate_handler![

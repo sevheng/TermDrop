@@ -2,9 +2,12 @@
   <div class="h-full flex flex-col bg-[#1e1e1e]">
     <!-- Toolbar -->
     <div class="flex items-center justify-between px-2 py-1 border-b border-[#3c3c3c]">
-      <span class="text-[10px] text-[#6e6e6e]">{{ report?.checks?.length || 0 }} checks</span>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] text-[#6e6e6e]">{{ report?.checks?.length || 0 }} checks</span>
+        <span v-if="timeAgo" class="text-[10px] text-[#858585]">· updated {{ timeAgo }}</span>
+      </div>
       <button
-        @click="runAudit"
+        @click="runAudit(true)"
         :disabled="loading"
         class="text-xs text-[#858585] hover:text-[#cccccc] disabled:text-[#3c3c3c] flex items-center gap-1"
       >
@@ -28,7 +31,7 @@
         <p class="text-xs text-[#f44336]">Audit failed</p>
         <p class="text-[10px] mt-1">{{ error }}</p>
         <button
-          @click="runAudit"
+          @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
         >
           Retry
@@ -41,7 +44,7 @@
         <p class="text-xs">No audit data</p>
         <p class="text-[10px] mt-1">Connect to a host to run audit</p>
         <button
-          @click="runAudit"
+          @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
         >
           Run Audit
@@ -113,6 +116,18 @@ const store = useConnectionStore()
 const report = ref(null)
 const loading = ref(false)
 const error = ref(null)
+const lastUpdated = ref(null)
+
+const timeAgo = computed(() => {
+  if (!lastUpdated.value) return ''
+  const seconds = Math.floor((Date.now() - lastUpdated.value) / 1000)
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h ago`
+})
 
 const scoreLabel = computed(() => {
   if (!report.value) return ''
@@ -162,6 +177,7 @@ function readFromCache() {
     report.value = null
     loading.value = false
     error.value = null
+    lastUpdated.value = null
     return
   }
   const cached = store.getSecurityReport(props.hostId)
@@ -169,16 +185,20 @@ function readFromCache() {
     report.value = cached.report
     loading.value = cached.loading
     error.value = cached.error
+    if (cached.report && !lastUpdated.value) {
+      lastUpdated.value = Date.now()
+    }
   } else {
     report.value = null
     loading.value = false
     error.value = null
+    lastUpdated.value = null
   }
 }
 
-function runAudit() {
+function runAudit(force = false) {
   if (!props.hostId) return
-  store.runSecurityAudit(props.hostId)
+  store.runSecurityAudit(props.hostId, force)
   readFromCache()
 }
 

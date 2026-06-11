@@ -128,10 +128,10 @@ export const useConnectionStore = defineStore('connection', () => {
     securityReportVersion.value++
   }
 
-  async function runSecurityAudit(hostId) {
+  async function runSecurityAudit(hostId, force = false) {
     setSecurityLoading(hostId)
     try {
-      const report = await invoke('run_security_audit', { hostId })
+      const report = await invoke('run_security_audit', { hostId, force })
       setSecurityReport(hostId, report)
     } catch (err) {
       setSecurityError(hostId, String(err))
