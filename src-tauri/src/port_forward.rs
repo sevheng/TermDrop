@@ -335,6 +335,7 @@ fn pipe_bidirectional(client: TcpStream, channel: ssh2::Channel) -> Result<(), S
                         break;
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
@@ -354,7 +355,10 @@ fn pipe_bidirectional(client: TcpStream, channel: ssh2::Channel) -> Result<(), S
         }
     }
 
-    let _ = t1.join();
+    // Shut down the client socket first so the read thread unblocks,
+    // then wait for it to finish. Reversing these causes a deadlock
+    // when the remote side closes the connection first.
     let _ = client_write.shutdown(Shutdown::Both);
+    let _ = t1.join();
     Ok(())
 }
