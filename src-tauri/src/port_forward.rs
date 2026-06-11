@@ -201,7 +201,7 @@ fn handle_local_connection(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
-    client: TcpStream,
+    mut client: TcpStream,
     remote_host: String,
     remote_port: u16,
 ) -> Result<(), String> {
@@ -209,11 +209,16 @@ fn handle_local_connection(
     let kp = key_path.as_deref();
     let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
 
-    let channel = session
-        .channel_direct_tcpip(&remote_host, remote_port, Some(("127.0.0.1", ssh_port)))
+    let mut channel = session
+        .channel_direct_tcpip(&remote_host, remote_port, Some(("127.0.0.1", 0)))
         .map_err(|e| format!("direct_tcpip: {}", e))?;
 
-    pipe_bidirectional(client, channel)?;
+    // Switch to non-blocking mode so a single thread can poll both directions
+    session.set_blocking(false);
+    client.set_nonblocking(true).map_err(|e| e.to_string())?;
+
+    pipe_bidirectional_nb(&mut client, &mut channel)?;
+    let _ = client.shutdown(Shutdown::Both);
     Ok(())
 }
 
@@ -304,8 +309,8 @@ fn handle_socks_connection(
     let kp = key_path.as_deref();
     let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
 
-    let channel = session
-        .channel_direct_tcpip(&dst.0, dst.2, Some(("127.0.0.1", ssh_port)))
+    let mut channel = session
+        .channel_direct_tcpip(&dst.0, dst.2, Some(("127.0.0.1", 0)))
         .map_err(|e| format!("direct_tcpip: {}", e))?;
 
     // Respond success
@@ -313,52 +318,102 @@ fn handle_socks_connection(
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .map_err(|e| format!("socks success resp: {}", e))?;
 
-    pipe_bidirectional(client, channel)?;
+    // Switch to non-blocking mode so a single thread can poll both directions
+    session.set_blocking(false);
+    client.set_nonblocking(true).map_err(|e| e.to_string())?;
+
+    pipe_bidirectional_nb(&mut client, &mut channel)?;
+    let _ = client.shutdown(Shutdown::Both);
     Ok(())
 }
 
-fn pipe_bidirectional(client: TcpStream, channel: ssh2::Channel) -> Result<(), String> {
-    let channel = Arc::new(Mutex::new(channel));
-    let channel_clone = channel.clone();
+fn pipe_bidirectional_nb(
+    client: &mut TcpStream,
+    channel: &mut ssh2::Channel,
+) -> Result<(), String> {
+    let mut buf_c2s = [0u8; 8192];
+    let mut buf_s2c = [0u8; 8192];
 
-    let mut client_read = client.try_clone().map_err(|e| e.to_string())?;
-    let mut client_write = client;
+    // Pending data when a non-blocking write only accepts part of the buffer
+    let mut pending_c2s: Vec<u8> = Vec::new();
+    let mut pending_s2c: Vec<u8> = Vec::new();
 
-    let t1 = thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        loop {
-            match client_read.read(&mut buf) {
+    loop {
+        let mut progress = false;
+
+        // --- Client -> Server (SSH channel) ---
+        if pending_c2s.is_empty() {
+            match client.read(&mut buf_c2s) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let mut ch = channel.lock().unwrap();
-                    if ch.write_all(&buf[..n]).is_err() {
-                        break;
-                    }
+                    pending_c2s.extend_from_slice(&buf_c2s[..n]);
+                    progress = true;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
-    });
-
-    let mut buf = [0u8; 8192];
-    loop {
-        let mut ch = channel_clone.lock().unwrap();
-        match ch.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                if client_write.write_all(&buf[..n]).is_err() {
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    eprintln!("port-forward client read error: {}", e);
                     break;
                 }
             }
-            Err(_) => break,
+        }
+
+        if !pending_c2s.is_empty() {
+            match channel.write(&pending_c2s) {
+                Ok(0) => {
+                    eprintln!("port-forward channel write returned 0");
+                    break;
+                }
+                Ok(n) => {
+                    pending_c2s.drain(..n);
+                    progress = true;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    eprintln!("port-forward channel write error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // --- Server (SSH channel) -> Client ---
+        if pending_s2c.is_empty() {
+            match channel.read(&mut buf_s2c) {
+                Ok(0) => break,
+                Ok(n) => {
+                    pending_s2c.extend_from_slice(&buf_s2c[..n]);
+                    progress = true;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    eprintln!("port-forward channel read error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        if !pending_s2c.is_empty() {
+            match client.write(&pending_s2c) {
+                Ok(0) => {
+                    eprintln!("port-forward client write returned 0");
+                    break;
+                }
+                Ok(n) => {
+                    pending_s2c.drain(..n);
+                    progress = true;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    eprintln!("port-forward client write error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // Prevent busy-waiting when both directions are idle
+        if !progress {
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
-    // Shut down the client socket first so the read thread unblocks,
-    // then wait for it to finish. Reversing these causes a deadlock
-    // when the remote side closes the connection first.
-    let _ = client_write.shutdown(Shutdown::Both);
-    let _ = t1.join();
     Ok(())
 }
