@@ -297,6 +297,14 @@
       <button @click="copySelection" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Copy</button>
       <button @click="pasteFromClipboard" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Paste</button>
       <button @click="selectAll" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Select All</button>
+      <div v-if="contextMenuForward" class="border-t border-[#3c3c3c] my-1"></div>
+      <button
+        v-if="contextMenuForward"
+        @click="createForwardFromSelection"
+        class="block w-full text-left px-3 py-1 text-xs text-[#75beff] hover:bg-[#2a2d2e]"
+      >
+        {{ contextMenuForward.label }}
+      </button>
     </div>
   </div>
 </template>
@@ -371,6 +379,7 @@ let unlistenPtyDisconnected = null
 let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
 const contextMenu = ref({ show: false, x: 0, y: 0 })
+const contextMenuForward = ref(null) // { port, label } or null
 const terminalBgClass = ref('bg-gray-900')
 
 const searchVisible = ref(false)
@@ -459,8 +468,46 @@ function selectAll() {
   term.selectAll()
 }
 
+function detectForwardInfo(text) {
+  if (!text) return null
+  const trimmed = text.trim()
+
+  // Match URLs like http://localhost:3000 or https://127.0.0.1:8080/path
+  try {
+    const url = new URL(trimmed)
+    if (url.port) {
+      return { port: parseInt(url.port), label: `Forward ${url.hostname}:${url.port}` }
+    }
+    // Default ports
+    if (url.protocol === 'http:') return { port: 80, label: `Forward ${url.hostname}:80` }
+    if (url.protocol === 'https:') return { port: 443, label: `Forward ${url.hostname}:443` }
+  } catch {
+    // not a URL
+  }
+
+  // Match host:port like localhost:3000 or 127.0.0.1:8080
+  const hostPortMatch = trimmed.match(/^([a-zA-Z0-9._-]+):(\d{2,5})$/)
+  if (hostPortMatch) {
+    const port = parseInt(hostPortMatch[2])
+    return { port, label: `Forward ${hostPortMatch[1]}:${port}` }
+  }
+
+  // Match plain port like :3000 or just 3000
+  const portMatch = trimmed.match(/^:?(\d{2,5})$/)
+  if (portMatch) {
+    const port = parseInt(portMatch[1])
+    if (port >= 1 && port <= 65535) {
+      return { port, label: `Forward port ${port}` }
+    }
+  }
+
+  return null
+}
+
 async function showContextMenu(event) {
   event.preventDefault()
+  const selection = term ? term.getSelection() : ''
+  contextMenuForward.value = detectForwardInfo(selection)
   contextMenu.value = {
     show: true,
     x: event.clientX,
@@ -480,6 +527,32 @@ async function showContextMenu(event) {
     if (y < 8) y = 8
     contextMenu.value.x = x
     contextMenu.value.y = y
+  }
+}
+
+async function createForwardFromSelection() {
+  contextMenu.value.show = false
+  if (!contextMenuForward.value || !props.hostId) return
+
+  const port = contextMenuForward.value.port
+  try {
+    const id = await store.addPortForward({
+      host_id: props.hostId,
+      name: `Forward ${port}`,
+      kind: 'local',
+      local_host: '127.0.0.1',
+      local_port: port,
+      remote_host: 'localhost',
+      remote_port: port,
+    })
+    await store.startPortForward(id)
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: `Port forward created and started on ${port}`, type: 'success' }
+    }))
+  } catch (err) {
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: 'Failed to create forward: ' + err, type: 'error' }
+    }))
   }
 }
 
