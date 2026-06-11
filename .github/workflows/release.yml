@@ -44,6 +44,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Debug signing key
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          echo "=== Debug Signing Key ==="
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY is EMPTY"
+          else
+            echo "✅ TAURI_SIGNING_PRIVATE_KEY is SET"
+            echo "   Length: ${#SIGNING_KEY} chars"
+            echo "   First 30 chars: ${SIGNING_KEY:0:30}..."
+            echo "   Last 20 chars: ...${SIGNING_KEY: -20}"
+          fi
+          echo "=== tauri.conf.json pubkey ==="
+          grep '"pubkey"' src-tauri/tauri.conf.json || echo "❌ No pubkey found"
+          echo "=== End Debug ==="
+
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
