@@ -6,31 +6,66 @@
         <Database :size="16" class="text-[#007acc] shrink-0" />
         <span class="text-sm font-medium text-[#cccccc] truncate">{{ host?.name || 'MongoDB' }}</span>
         <span
-          class="text-[10px] px-1.5 py-0.5 rounded"
+          class="text-[10px] px-1.5 py-0.5 rounded shrink-0"
           :class="hasLocalUri ? 'bg-[#0e639c]/30 text-[#75beff]' : 'bg-[#6e6e6e]/30 text-[#858585]'"
         >
           {{ hasLocalUri ? 'Sync mode' : 'Dump/Restore' }}
         </span>
       </div>
-      <div class="flex items-center gap-3 text-[10px] text-[#6e6e6e] min-w-0">
-        <span class="truncate" :title="remoteUri">Remote: {{ remoteUri }}</span>
-        <span v-if="localUri" class="truncate" :title="localUri">Local: {{ localUri }}</span>
-        <span v-else class="text-[#858585]">No local URI</span>
+      <div class="flex items-center gap-2 text-[10px] min-w-0">
+        <template v-if="!hasLocalUri">
+          <span
+            class="px-1.5 py-0.5 rounded bg-[#0e639c]/20 text-[#75beff] truncate max-w-[16rem]"
+            :title="remoteUri"
+          >
+            Remote
+          </span>
+        </template>
+        <template v-else>
+          <div
+            class="flex items-center gap-1 px-2 py-1 rounded bg-[#3c3c3c] text-[#cccccc]"
+            :title="`Remote: ${remoteUri}\nLocal: ${localUri}`"
+          >
+            <span :class="isRemoteToLocal ? 'text-[#75beff]' : 'text-[#89d185]'">
+              {{ isRemoteToLocal ? 'Remote' : 'Local' }}
+            </span>
+            <span class="text-[#858585]">→</span>
+            <span :class="isRemoteToLocal ? 'text-[#89d185]' : 'text-[#75beff]'">
+              {{ isRemoteToLocal ? 'Local' : 'Remote' }}
+            </span>
+          </div>
+        </template>
       </div>
     </div>
 
     <!-- DB Trees row -->
     <div class="flex-1 flex overflow-hidden">
       <!-- Source (From) panel -->
-      <div class="flex-1 border-r border-[#3c3c3c] flex flex-col min-w-0"
-        :class="isRemoteToLocal ? '' : 'opacity-80'"
+      <div
+        class="flex flex-col min-w-0"
+        :class="[
+          hasLocalUri ? 'flex-1 border-r border-[#3c3c3c]' : 'w-full',
+          isRemoteToLocal ? '' : 'opacity-80'
+        ]"
       >
         <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center justify-between bg-[#252526]/50">
-          <span class="text-[10px] font-semibold uppercase"
-            :class="isRemoteToLocal ? 'text-[#75beff]' : 'text-[#89d185]'"
-          >
-            {{ isRemoteToLocal ? 'Remote — From' : 'Local — From' }}
-          </span>
+          <div class="flex items-center gap-1.5">
+            <span
+              class="text-[10px] font-semibold uppercase"
+              :class="isRemoteToLocal ? 'text-[#75beff]' : 'text-[#89d185]'"
+            >
+              {{ isRemoteToLocal ? 'Remote' : 'Local' }}
+            </span>
+            <span
+              v-if="hasLocalUri"
+              class="text-[9px] px-1 py-0.5 rounded border"
+              :class="isRemoteToLocal
+                ? 'border-[#75beff]/30 text-[#75beff] bg-[#0e639c]/10'
+                : 'border-[#89d185]/30 text-[#89d185] bg-[#388a34]/10'"
+            >
+              From
+            </span>
+          </div>
           <button
             @click="isRemoteToLocal ? loadRemoteDatabases() : loadLocalDatabases()"
             class="text-[#858585] hover:text-[#cccccc] p-0.5"
@@ -51,49 +86,64 @@
         />
       </div>
 
-      <!-- Direction swap (sync mode only) -->
-      <div v-if="hasLocalUri" class="w-10 flex flex-col items-center justify-center border-r border-[#3c3c3c] bg-[#1e1e1e]">
-        <button
-          @click="flipDirection"
-          class="p-1.5 rounded hover:bg-[#3c3c3c] text-[#858585] hover:text-[#cccccc] transition-colors"
-          title="Swap direction"
-        >
-          <ArrowRightLeft :size="14" />
-        </button>
-        <span class="text-[9px] text-[#6e6e6e] mt-1 writing-vertical">{{ isRemoteToLocal ? 'R→L' : 'L→R' }}</span>
-      </div>
-
-      <!-- Destination (To) panel -->
-      <div class="flex-1 flex flex-col min-w-0"
-        :class="isRemoteToLocal ? 'opacity-80' : ''"
-      >
-        <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center justify-between bg-[#252526]/50">
-          <span class="text-[10px] font-semibold uppercase"
-            :class="isRemoteToLocal ? 'text-[#89d185]' : 'text-[#75beff]'"
-          >
-            {{ isRemoteToLocal ? 'Local — To' : 'Remote — To' }}
-          </span>
+      <!-- Direction swap + destination (sync mode only) -->
+      <template v-if="hasLocalUri">
+        <div class="w-12 flex flex-col items-center justify-center border-r border-[#3c3c3c] bg-[#1e1e1e]">
           <button
-            @click="isRemoteToLocal ? loadLocalDatabases() : loadRemoteDatabases()"
-            class="text-[#858585] hover:text-[#cccccc] p-0.5"
-            :title="isRemoteToLocal ? 'Refresh local' : 'Refresh remote'"
+            @click="flipDirection"
+            class="p-2 rounded-lg hover:bg-[#3c3c3c] text-[#858585] hover:text-[#cccccc] transition-colors"
+            title="Swap direction"
           >
-            <RefreshCw :size="10" />
+            <ArrowRightLeft :size="16" />
           </button>
+          <span class="text-[9px] font-medium text-[#6e6e6e] mt-1.5">
+            {{ isRemoteToLocal ? 'R→L' : 'L→R' }}
+          </span>
         </div>
-        <DbTree
-          :databases="destDatabases"
-          :expanded-dbs="destExpandedDbs"
-          :selected-collections="new Map()"
-          :selectable="false"
-          :loading="isRemoteToLocal ? loadingLocal : loadingRemote"
-          @toggle-db="toggleDestDb"
-        />
-      </div>
+
+        <!-- Destination (To) panel -->
+        <div class="flex-1 flex flex-col min-w-0"
+          :class="isRemoteToLocal ? 'opacity-80' : ''"
+        >
+          <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center justify-between bg-[#252526]/50">
+            <div class="flex items-center gap-1.5">
+              <span
+                class="text-[10px] font-semibold uppercase"
+                :class="isRemoteToLocal ? 'text-[#89d185]' : 'text-[#75beff]'"
+              >
+                {{ isRemoteToLocal ? 'Local' : 'Remote' }}
+              </span>
+              <span
+                class="text-[9px] px-1 py-0.5 rounded border"
+                :class="isRemoteToLocal
+                  ? 'border-[#89d185]/30 text-[#89d185] bg-[#388a34]/10'
+                  : 'border-[#75beff]/30 text-[#75beff] bg-[#0e639c]/10'"
+              >
+                To
+              </span>
+            </div>
+            <button
+              @click="isRemoteToLocal ? loadLocalDatabases() : loadRemoteDatabases()"
+              class="text-[#858585] hover:text-[#cccccc] p-0.5"
+              :title="isRemoteToLocal ? 'Refresh local' : 'Refresh remote'"
+            >
+              <RefreshCw :size="10" />
+            </button>
+          </div>
+          <DbTree
+            :databases="destDatabases"
+            :expanded-dbs="destExpandedDbs"
+            :selected-collections="new Map()"
+            :selectable="false"
+            :loading="isRemoteToLocal ? loadingLocal : loadingRemote"
+            @toggle-db="toggleDestDb"
+          />
+        </div>
+      </template>
     </div>
 
     <!-- Action footer -->
-    <div class="border-t border-[#3c3c3c] px-4 py-3 space-y-2 shrink-0 bg-[#252526]">
+    <div class="border-t border-[#3c3c3c] px-4 py-3.5 space-y-3 shrink-0 bg-[#252526]">
       <!-- Drop checkbox only for sync mode -->
       <label v-if="hasLocalUri" class="flex items-center gap-1.5 text-[11px] text-[#cccccc] cursor-pointer">
         <input type="checkbox" v-model="dropFirst" class="accent-[#007acc]" />
