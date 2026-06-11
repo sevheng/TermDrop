@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 docs/
+
+# Generated per-platform Tauri config overlays
+src-tauri/tauri.linux.conf.json
+src-tauri/tauri.macos.conf.json
+src-tauri/tauri.windows.conf.json

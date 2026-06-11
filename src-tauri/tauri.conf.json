@@ -32,10 +32,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "binaries/mongodump": "mongodump",
-      "binaries/mongorestore": "mongorestore"
-    },
+    "resources": {},
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
