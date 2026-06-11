@@ -371,60 +371,16 @@ fn check_disk_space(session: &Session) -> SecurityCheck {
 }
 
 pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
-    let timeout = std::time::Duration::from_secs(15);
-
-    let checks = std::thread::scope(|s| {
-        let (tx1, rx1) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx1.send(check_ssh_password_auth(session));
-        });
-
-        let (tx2, rx2) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx2.send(check_ssh_root_login(session));
-        });
-
-        let (tx3, rx3) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx3.send(check_ssh_port(session));
-        });
-
-        let (tx4, rx4) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx4.send(check_firewall(session));
-        });
-
-        let (tx5, rx5) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx5.send(check_failed_logins(session));
-        });
-
-        let (tx6, rx6) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx6.send(check_sudo_users(session));
-        });
-
-        let (tx7, rx7) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx7.send(check_security_updates(session));
-        });
-
-        let (tx8, rx8) = std::sync::mpsc::channel();
-        s.spawn(move || {
-            let _ = tx8.send(check_disk_space(session));
-        });
-
-        vec![
-            rx1.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("SSH Password Authentication", timeout)),
-            rx2.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("SSH Root Login", timeout)),
-            rx3.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("SSH Port", timeout)),
-            rx4.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("Firewall", timeout)),
-            rx5.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("Failed Login Attempts", timeout)),
-            rx6.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("Users with Elevated Privileges", timeout)),
-            rx7.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("Security Updates", timeout)),
-            rx8.recv_timeout(timeout).unwrap_or_else(|_| timeout_check("Root Disk Space", timeout)),
-        ]
-    });
+    let checks = vec![
+        check_ssh_password_auth(session),
+        check_ssh_root_login(session),
+        check_ssh_port(session),
+        check_firewall(session),
+        check_failed_logins(session),
+        check_sudo_users(session),
+        check_security_updates(session),
+        check_disk_space(session),
+    ];
 
     let pass_count = checks.iter().filter(|c| c.status == "pass").count() as u16;
     let total = checks.len() as u16;
@@ -435,13 +391,4 @@ pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
     };
 
     Ok(SecurityReport { score, checks })
-}
-
-fn timeout_check(name: &str, timeout: std::time::Duration) -> SecurityCheck {
-    SecurityCheck {
-        name: name.to_string(),
-        status: "warn".to_string(),
-        message: "Check timed out".to_string(),
-        detail: Some(format!("Exceeded {}s timeout", timeout.as_secs())),
-    }
 }
