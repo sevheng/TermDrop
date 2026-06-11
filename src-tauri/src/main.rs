@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{Emitter, State, Window};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -16,6 +17,7 @@ mod port_forward;
 mod docker;
 mod security;
 mod system;
+mod mongodb;
 mod ssh_config_parser;
 
 pub struct AppState {
@@ -31,6 +33,20 @@ pub struct AppState {
 
 fn db_err(e: r2d2::Error) -> String {
     e.to_string()
+}
+
+async fn with_timeout<F, R>(f: F, secs: u64) -> Result<R, String>
+where
+    F: FnOnce() -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    tokio::time::timeout(
+        Duration::from_secs(secs),
+        tokio::task::spawn_blocking(f),
+    )
+    .await
+    .map_err(|_| format!("Operation timed out after {} seconds", secs))?
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -210,6 +226,8 @@ fn import_ssh_config_hosts(
             key_path: h.key_path,
             group: None,
             favorite: None,
+            mongo_uri: None,
+            mongo_local_uri: None,
         };
         if let Ok(_) = db::add_host(&conn, &new_host) {
             count += 1;
@@ -379,14 +397,18 @@ async fn sftp_connect(
 }
 
 #[tauri::command]
-fn sftp_list(
+async fn sftp_list(
     state: State<'_, AppState>,
     sftp_session_id: String,
     path: String,
 ) -> Result<Vec<sftp::SftpFile>, String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_list(handle, &path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_list(&handle, &path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -401,7 +423,9 @@ async fn sftp_upload(
         let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
         sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
     };
-    sftp::sftp_upload(window, &handle, &local_path, &remote_path)
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_upload(window, &handle, &local_path, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -423,7 +447,10 @@ async fn sftp_download(
         .unwrap_or_else(|| std::env::temp_dir());
     let local_path = download_dir.join(&file_name);
     let local_path_str = local_path.to_string_lossy().to_string();
-    sftp::sftp_download(window, &handle, &remote_path, &local_path_str)?;
+    let local_path_str_for_dl = local_path_str.clone();
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_download(window, &handle, &remote_path, &local_path_str_for_dl)
+    }).await.map_err(|e| e.to_string())??;
     Ok(local_path_str)
 }
 
@@ -469,14 +496,18 @@ async fn sftp_download_dir(
     let remote_temp = format!("/tmp/termdrop-{}.tar.gz", uuid::Uuid::new_v4());
 
     // Create tar.gz on remote
-    {
-        let session = exec_session.lock().map_err(|e| e.to_string())?;
+    let exec_session_clone = exec_session.clone();
+    let remote_temp_clone = remote_temp.clone();
+    let parent_path_clone = parent_path.clone();
+    let folder_name_clone = folder_name.clone();
+    tokio::task::spawn_blocking(move || {
+        let session = exec_session_clone.lock().map_err(|e| e.to_string())?;
         let mut channel = session.channel_session().map_err(|e| e.to_string())?;
         let cmd = format!(
             "tar -czf {} -C {} {}",
-            shell_escape(&remote_temp),
-            shell_escape(&parent_path),
-            shell_escape(&folder_name)
+            shell_escape(&remote_temp_clone),
+            shell_escape(&parent_path_clone),
+            shell_escape(&folder_name_clone)
         );
         channel.exec(&cmd).map_err(|e| e.to_string())?;
         let mut stdout = String::new();
@@ -489,7 +520,8 @@ async fn sftp_download_dir(
         if status != 0 {
             return Err(format!("tar failed: {}", if stderr.is_empty() { stdout } else { stderr }));
         }
-    }
+        Ok(())
+    }).await.map_err(|e| e.to_string())??;
 
     // Download the archive (blocking I/O off the async thread)
     let download_dir = dirs::download_dir()
@@ -512,22 +544,29 @@ async fn sftp_download_dir(
     // Extract locally
     let extract_dir = download_dir.join(&folder_name);
     let extract_dir_str = extract_dir.to_string_lossy().to_string();
-    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("create dir: {}", e))?;
+    let local_archive_str_clone = local_archive_str.clone();
+    let extract_dir_str_clone = extract_dir_str.clone();
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&extract_dir_str_clone).map_err(|e| format!("create dir: {}", e))?;
+        let output = std::process::Command::new("tar")
+            .args(["-xzf", &local_archive_str_clone, "-C", &extract_dir_str_clone, "--strip-components=1"])
+            .output()
+            .map_err(|e| format!("extract: {}", e))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("extract failed: {}", err));
+        }
+        Ok(())
+    }).await.map_err(|e| e.to_string())??;
 
-    let output = std::process::Command::new("tar")
-        .args(["-xzf", &local_archive_str, "-C", &extract_dir_str, "--strip-components=1"])
-        .output()
-        .map_err(|e| format!("extract: {}", e))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("extract failed: {}", err));
-    }
-
-    // Clean up local archive
-    let _ = std::fs::remove_file(&local_archive);
-
-    // Clean up remote temp
-    let _ = sftp::sftp_delete(&handle, &remote_temp);
+    // Clean up local archive and remote temp (best effort)
+    let local_archive_clone = local_archive.clone();
+    let remote_temp_clone = remote_temp.clone();
+    let handle_clone = handle.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::remove_file(&local_archive_clone);
+        let _ = sftp::sftp_delete(&handle_clone, &remote_temp_clone);
+    }).await;
 
     Ok(extract_dir_str)
 }
@@ -557,7 +596,11 @@ async fn sftp_edit_file(
     let local_path_str = local_path.to_string_lossy().to_string();
 
     // Download the file
-    sftp::sftp_download_simple(&handle, &remote_path, &local_path_str)?;
+    let remote_path_clone = remote_path.clone();
+    let local_path_str_clone = local_path_str.clone();
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_download_simple(&handle, &remote_path_clone, &local_path_str_clone)
+    }).await.map_err(|e| e.to_string())??;
 
     Ok(local_path_str)
 }
@@ -589,85 +632,115 @@ async fn sftp_write_file(
         let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
         sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
     };
-    sftp::sftp_write_file(&handle, &remote_path, &content)
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_write_file(&handle, &remote_path, &content)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_realpath(
+async fn sftp_realpath(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_realpath(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_realpath(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_delete(
+async fn sftp_delete(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_delete(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_delete(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_rename(
+async fn sftp_rename(
     state: State<'_, AppState>,
     sftp_session_id: String,
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_rename(handle, &old_path, &new_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_rename(&handle, &old_path, &new_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_mkdir(
+async fn sftp_mkdir(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_mkdir(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_mkdir(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_rmdir(
+async fn sftp_rmdir(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_rmdir(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_rmdir(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_read_file(
+async fn sftp_read_file(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_read_file(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_read_file(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sftp_read_file_base64(
+async fn sftp_read_file_base64(
     state: State<'_, AppState>,
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    let handle = sftp_sessions.get(&sftp_session_id).ok_or("SFTP session not found")?;
-    sftp::sftp_read_file_base64(handle, &remote_path)
+    let handle = {
+        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+        sftp_sessions.get(&sftp_session_id).cloned().ok_or("SFTP session not found")?
+    };
+    tokio::task::spawn_blocking(move || {
+        sftp::sftp_read_file_base64(&handle, &remote_path)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -717,14 +790,20 @@ async fn ssh_exec(
         _ => (None, host.key_path.clone()),
     };
 
-    let session = ssh::create_exec_session(
-        &host.host,
-        host.port as u16,
-        &host.username,
-        password.as_deref(),
-        key_path.as_deref(),
-    )?;
-    ssh::exec_with_session(&session, &command)
+    let host_host = host.host.clone();
+    let host_port = host.port as u16;
+    let host_username = host.username.clone();
+    let command_clone = command.clone();
+    tokio::task::spawn_blocking(move || {
+        let session = ssh::create_exec_session(
+            &host_host,
+            host_port,
+            &host_username,
+            password.as_deref(),
+            key_path.as_deref(),
+        )?;
+        ssh::exec_with_session(&session, &command_clone)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -987,11 +1066,11 @@ async fn docker_ps(
                     exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
                 };
                 tokio::task::spawn(async move {
-                    match tokio::task::spawn_blocking(move || {
+                    match with_timeout(move || {
                         let session = session_arc.lock().map_err(|e| e.to_string())?;
                         docker::docker_ps(&session, all).map_err(|e| e.to_string())
-                    }).await {
-                        Ok(Ok(containers)) => {
+                    }, 60).await {
+                        Ok(containers) => {
                             let mut cache = cache_clone.lock().unwrap();
                             cache.insert(host_id, docker::CachedDockerInfo {
                                 containers,
@@ -1012,10 +1091,10 @@ async fn docker_ps(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    let containers = tokio::task::spawn_blocking(move || {
+    let containers = with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_ps(&session, all).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())??;
+    }, 60).await?;
 
     {
         let mut cache = state.docker_cache.lock().map_err(|e| e.to_string())?;
@@ -1045,10 +1124,10 @@ async fn docker_start(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_start(&session, &container_id).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1062,10 +1141,10 @@ async fn docker_stop(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_stop(&session, &container_id).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1079,10 +1158,10 @@ async fn docker_restart(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_restart(&session, &container_id).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1096,10 +1175,10 @@ async fn docker_logs(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_logs(&session, &container_id, tail).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1112,10 +1191,10 @@ async fn docker_inspect_shell(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::docker_inspect_shell(&session, &container_id).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1128,10 +1207,10 @@ async fn docker_install(
         let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         docker::install_docker(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1144,10 +1223,10 @@ async fn run_security_audit(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         security::run_security_audit(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1160,10 +1239,10 @@ async fn get_system_stats(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         system::get_system_stats(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1176,10 +1255,10 @@ async fn get_system_panel(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         system::get_system_panel(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1192,10 +1271,10 @@ async fn get_processes(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         system::get_processes(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1208,10 +1287,10 @@ async fn get_network(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         system::get_network(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1224,10 +1303,10 @@ async fn get_disk_usage(
         exec_sessions.get(&host_id).cloned().ok_or("No active session for this host")?
     };
 
-    tokio::task::spawn_blocking(move || {
+    with_timeout(move || {
         let session = session_arc.lock().map_err(|e| e.to_string())?;
         system::get_disk_usage(&session).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    }, 60).await
 }
 
 #[tauri::command]
@@ -1240,6 +1319,50 @@ fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>
 fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
     let conn = state.db.get().map_err(db_err)?;
     db::set_setting(&conn, &key, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mongodb_list_databases(uri: String) -> Result<Vec<String>, String> {
+    mongodb::list_databases(&uri).await
+}
+
+#[tauri::command]
+async fn mongodb_list_collections(uri: String, db: String) -> Result<Vec<String>, String> {
+    mongodb::list_collections(&uri, &db).await
+}
+
+#[tauri::command]
+async fn mongodb_sync(
+    window: Window,
+    remote_uri: String,
+    local_uri: String,
+    db: String,
+    collections: Vec<String>,
+    drop_first: bool,
+) -> Result<(), String> {
+    mongodb::sync_collections(window, &remote_uri, &local_uri, &db, collections, drop_first).await
+}
+
+#[tauri::command]
+async fn mongodb_dump(
+    window: Window,
+    remote_uri: String,
+    db: String,
+    collections: Vec<String>,
+    output_dir: String,
+) -> Result<(), String> {
+    mongodb::dump_collections(window, &remote_uri, &db, collections, &output_dir).await
+}
+
+#[tauri::command]
+async fn mongodb_restore(
+    window: Window,
+    remote_uri: String,
+    db: String,
+    collections: Vec<String>,
+    input_dir: String,
+) -> Result<(), String> {
+    mongodb::restore_collections(window, &remote_uri, &db, collections, &input_dir).await
 }
 
 fn main() {
@@ -1354,6 +1477,11 @@ fn main() {
             get_processes,
             get_network,
             get_disk_usage,
+            mongodb_list_databases,
+            mongodb_list_collections,
+            mongodb_sync,
+            mongodb_dump,
+            mongodb_restore,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

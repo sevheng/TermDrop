@@ -29,7 +29,9 @@
               ? 'bg-[#37373d] text-[#cccccc]'
               : 'text-[#858585] hover:text-[#cccccc]'"
           >
+            <Database v-if="tab.type === 'mongodb'" :size="12" class="shrink-0 text-[#007acc]" />
             <span
+              v-else
               class="w-2 h-2 rounded-full shrink-0"
               :class="tab.connected !== false ? 'bg-green-500' : 'bg-red-500'"
             ></span>
@@ -61,12 +63,19 @@
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
           <TerminalTab
-            v-for="tab in store.tabs"
+            v-for="tab in store.tabs.filter(t => t.type !== 'mongodb')"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :sessionId="tab.id"
             :hostId="tab.hostId"
             :isActive="tab.id === store.activeTabId"
+            class="w-full h-full absolute top-0 left-0"
+          />
+          <MongodbPanel
+            v-for="tab in store.tabs.filter(t => t.type === 'mongodb')"
+            :key="tab.id"
+            v-show="tab.id === store.activeTabId"
+            :hostId="tab.hostId"
             class="w-full h-full absolute top-0 left-0"
           />
           <div
@@ -82,13 +91,13 @@
 
         <!-- SFTP panel resize handle -->
         <div
-          v-if="store.activeTab"
+          v-if="store.activeTab && store.activeTab.type !== 'mongodb'"
           class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
-          v-if="store.activeTab"
+          v-if="store.activeTab && store.activeTab.type !== 'mongodb'"
           class="border-l border-[#3c3c3c] shrink-0 bg-[#1e1e1e] flex flex-col"
           :style="{ width: sftpWidth + 'px' }"
         >
@@ -217,6 +226,7 @@
       @confirm="confirmDialog.onConfirm"
       @cancel="confirmDialog.show = false"
     />
+
   </div>
 </template>
 
@@ -226,7 +236,7 @@ import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X } from 'lucide-vue-next'
+import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 
 const emit = defineEmits(['update-available'])
@@ -238,6 +248,7 @@ const SettingsPanel = defineAsyncComponent(() => import('../components/SettingsP
 const ShortcutsHelp = defineAsyncComponent(() => import('../components/ShortcutsHelp.vue'))
 const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel.vue'))
 const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityPanel.vue'))
+const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
 
 const store = useConnectionStore()
 const showSettings = ref(false)
@@ -269,12 +280,17 @@ function openConfirm(options) {
 }
 
 function confirmDisconnect(sessionId, name) {
+  const tab = store.tabs.find(t => t.id === sessionId)
   openConfirm({
     title: 'Close Session',
     message: `Close session "${name}"?`,
     danger: true,
     onConfirm: () => {
-      store.disconnect(sessionId)
+      if (tab?.type === 'mongodb') {
+        store.closeMongoTab(sessionId)
+      } else {
+        store.disconnect(sessionId)
+      }
     },
   })
 }

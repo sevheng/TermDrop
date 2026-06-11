@@ -165,8 +165,8 @@ fn create_ssh_session(
     password: Option<&str>,
     key_path: Option<&str>,
 ) -> Result<Session, String> {
-    let addr = format!("{}:{}", host, port);
-    let tcp = TcpStream::connect(&addr).map_err(|e| format!("connect: {}", e))?;
+    let tcp = crate::ssh::session::resolve_and_connect(host, port)
+        .map_err(|e| format!("connect: {}", e))?;
     let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);
     session.handshake().map_err(|e| format!("handshake: {}", e))?;

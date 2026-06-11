@@ -285,6 +285,36 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
+  function openMongoTab(hostId) {
+    const host = hosts.value.find(h => h.id === hostId)
+    if (!host?.mongo_uri) return
+
+    const existing = tabs.value.find(t => t.type === 'mongodb' && t.hostId === hostId)
+    if (existing) {
+      activeTabId.value = existing.id
+      return existing.id
+    }
+
+    const tab = {
+      id: `mongo-${hostId}-${Date.now()}`,
+      type: 'mongodb',
+      hostId,
+      name: host.name,
+      connected: true,
+      connecting: false,
+    }
+    tabs.value = [...tabs.value, tab]
+    activeTabId.value = tab.id
+    return tab.id
+  }
+
+  function closeMongoTab(sessionId) {
+    tabs.value = tabs.value.filter(t => t.id !== sessionId)
+    if (activeTabId.value === sessionId) {
+      activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
+    }
+  }
+
   async function writeData(sessionId, data) {
     await invoke('ssh_write', { sessionId, data })
   }
@@ -396,6 +426,8 @@ export const useConnectionStore = defineStore('connection', () => {
     importHosts,
     connect,
     disconnect,
+    openMongoTab,
+    closeMongoTab,
     writeData,
     setActiveTab,
     sftpList,

@@ -134,6 +134,39 @@
           <p v-if="errors.key_path" class="text-xs text-[#f44336] mt-1">{{ errors.key_path }}</p>
           <p v-else class="text-xs text-[#6e6e6e] mt-1">Supports ~ for home directory</p>
         </div>
+
+        <!-- MongoDB (optional) -->
+        <div class="border-t border-[#3c3c3c] pt-3 mt-2">
+          <button
+            type="button"
+            @click="showMongoDb = !showMongoDb"
+            class="flex items-center gap-1.5 text-xs text-[#858585] hover:text-[#cccccc] mb-2"
+          >
+            <component :is="showMongoDb ? ChevronDown : ChevronRight" :size="14" />
+            <Database :size="12" />
+            MongoDB (optional)
+          </button>
+          <div v-if="showMongoDb" class="space-y-3">
+            <div>
+              <label class="block text-xs text-[#858585] mb-1.5">Remote URI</label>
+              <input
+                v-model="form.mongo_uri"
+                type="text"
+                placeholder="mongodb://user:pass@host:27017/db"
+                class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none focus:border-[#007acc]"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-[#858585] mb-1.5">Local URI</label>
+              <input
+                v-model="form.mongo_local_uri"
+                type="text"
+                placeholder="mongodb://localhost:27017/db_test"
+                class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none focus:border-[#007acc]"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Actions -->
@@ -161,7 +194,7 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Eye, EyeOff, Loader2, FileSearch } from 'lucide-vue-next'
+import { Eye, EyeOff, Loader2, FileSearch, Database, ChevronDown, ChevronRight } from 'lucide-vue-next'
 
 const props = defineProps({
   show: Boolean,
@@ -180,11 +213,14 @@ const form = ref({
   auth_type: 'password',
   key_path: '',
   password: '',
+  mongo_uri: '',
+  mongo_local_uri: '',
 })
 
 const errors = ref({})
 const loading = ref(false)
 const showPassword = ref(false)
+const showMongoDb = ref(false)
 
 function resetForm() {
   if (props.host) {
@@ -196,7 +232,10 @@ function resetForm() {
       auth_type: props.host.auth_type || 'password',
       key_path: props.host.key_path || '',
       password: '',
+      mongo_uri: props.host.mongo_uri || '',
+      mongo_local_uri: props.host.mongo_local_uri || '',
     }
+    showMongoDb.value = !!(props.host.mongo_uri || props.host.mongo_local_uri)
   } else {
     form.value = {
       name: '',
@@ -206,7 +245,10 @@ function resetForm() {
       auth_type: 'password',
       key_path: '',
       password: '',
+      mongo_uri: '',
+      mongo_local_uri: '',
     }
+    showMongoDb.value = false
   }
   errors.value = {}
   showPassword.value = false
@@ -288,6 +330,8 @@ async function onSave() {
       username: form.value.username.trim(),
       auth_type: form.value.auth_type,
       key_path: form.value.auth_type === 'key' ? form.value.key_path.trim() : null,
+      mongo_uri: form.value.mongo_uri.trim() || null,
+      mongo_local_uri: form.value.mongo_local_uri.trim() || null,
     }
 
     const password = form.value.auth_type === 'password' ? form.value.password : null

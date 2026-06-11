@@ -38,9 +38,30 @@
         <button @click="store.exportHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Export hosts">
           <Upload :size="12" />
         </button>
-        <button @click="openModal()" class="text-[#858585] hover:text-[#cccccc] p-1" title="Add host">
-          <Plus :size="12" />
-        </button>
+        <div class="relative" ref="addMenuRef">
+          <button @click="showAddMenu = !showAddMenu" class="text-[#858585] hover:text-[#cccccc] p-1" title="Add">
+            <Plus :size="12" />
+          </button>
+          <div
+            v-if="showAddMenu"
+            class="absolute right-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[140px] py-1"
+          >
+            <button
+              @click="openModal(); showAddMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+            >
+              <Server :size="12" />
+              Host
+            </button>
+            <button
+              @click="openMongoModal(); showAddMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+            >
+              <Database :size="12" />
+              MongoDB
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -154,9 +175,9 @@
     >
       <!-- Host menu -->
       <template v-if="contextMenu.type === 'host'">
-        <button @click="menuAction(() => connectHost(contextMenu.data.id))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
+        <button @click="menuAction(() => activateHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Zap :size="12" class="text-[#007acc]" />
-          Connect
+          {{ isMongoOnlyHost(contextMenu.data) ? 'Open' : 'Connect' }}
         </button>
         <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Pencil :size="12" class="text-gray-400" />
@@ -222,6 +243,13 @@
       :host="editingHost"
       @close="showModal = false"
       @save="handleSave"
+    />
+
+    <MongoDbModal
+      :show="showMongoModal"
+      :host="editingHost"
+      @close="showMongoModal = false"
+      @save="handleMongoSave"
     />
 
     <GroupModal
@@ -298,12 +326,13 @@ import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '@tauri-apps/api/core'
 import {
-  Plus, Server, Search, Upload, Download, FileTerminal,
+  Plus, Server, Database, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,
   List, LayoutGrid, Star,
   Zap, Pencil, Trash2,
 } from 'lucide-vue-next'
 import HostModal from './HostModal.vue'
+import MongoDbModal from './MongoDbModal.vue'
 import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
@@ -311,6 +340,7 @@ import HostRow from './HostRow.vue'
 const store = useConnectionStore()
 
 const showModal = ref(false)
+const showMongoModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
@@ -342,6 +372,8 @@ const sshConfigHosts = ref([])
 const selectedSshHosts = ref(new Set())
 const showImportMenu = ref(false)
 const importMenuRef = ref(null)
+const showAddMenu = ref(false)
+const addMenuRef = ref(null)
 const groupModalCurrentName = ref('')
 
 const confirmDialog = ref({
@@ -572,6 +604,9 @@ function onWindowClick(e) {
   if (showImportMenu.value && importMenuRef.value && !importMenuRef.value.contains(e.target)) {
     showImportMenu.value = false
   }
+  if (showAddMenu.value && addMenuRef.value && !addMenuRef.value.contains(e.target)) {
+    showAddMenu.value = false
+  }
 }
 
 onMounted(() => {
@@ -588,7 +623,17 @@ function openModal() {
   showModal.value = true
 }
 
+function openMongoModal() {
+  editingHost.value = null
+  showMongoModal.value = true
+}
+
 function editHost(host) {
+  if (host.mongo_uri && !host.host) {
+    editingHost.value = host
+    showMongoModal.value = true
+    return
+  }
   editingHost.value = host
   showModal.value = true
 }
@@ -617,7 +662,50 @@ async function handleSave({ id, hostData, password }) {
   await store.loadHosts()
 }
 
+async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
+  const hostData = {
+    name,
+    host: '',
+    port: 0,
+    username: '',
+    auth_type: 'password',
+    key_path: null,
+    group: null,
+    favorite: null,
+    mongo_uri,
+    mongo_local_uri,
+  }
+  if (id) {
+    await store.updateHost(id, hostData)
+  } else {
+    await store.addHost(hostData)
+  }
+  showMongoModal.value = false
+  await store.loadHosts()
+}
+
+function isMongoOnlyHost(host) {
+  return !!(host?.mongo_uri && !host?.host)
+}
+
+async function activateHost(host) {
+  if (isMongoOnlyHost(host)) {
+    store.openMongoTab(host.id)
+  } else {
+    try {
+      await store.connect(host.id)
+    } catch (err) {
+      console.error('Connection failed:', err)
+    }
+  }
+}
+
 async function connectHost(id) {
+  const host = store.hosts.find(h => h.id === id)
+  if (isMongoOnlyHost(host)) {
+    store.openMongoTab(id)
+    return
+  }
   try {
     await store.connect(id)
   } catch (err) {
