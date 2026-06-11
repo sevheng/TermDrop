@@ -59,6 +59,14 @@
               Stop
             </button>
             <button
+              v-if="activeStatus[fw.id] && fw.kind === 'local'"
+              @click="openForward(fw)"
+              class="text-[10px] bg-[#0e639c]/10 hover:bg-[#0e639c]/20 text-[#75beff] py-1 px-2 rounded transition-colors"
+              title="Open in browser"
+            >
+              <ExternalLink :size="10" />
+            </button>
+            <button
               @click="deleteForward(fw.id)"
               class="text-[10px] bg-[#f44336]/10 hover:bg-[#f44336]/20 text-[#f44336] py-1 px-2 rounded transition-colors"
             >
@@ -74,7 +82,8 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2 } from 'lucide-vue-next'
+import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink } from 'lucide-vue-next'
+import { openUrl } from '@tauri-apps/plugin-opener'
 
 const props = defineProps({
   hostId: Number,
@@ -103,6 +112,13 @@ async function startForward(id) {
   } catch (err) {
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to start: ' + err, type: 'error' } }))
   }
+}
+
+function openForward(fw) {
+  const url = `http://${fw.local_host}:${fw.local_port}`
+  openUrl(url).catch((err) => {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open: ' + err, type: 'error' } }))
+  })
 }
 
 async function stopForward(id) {

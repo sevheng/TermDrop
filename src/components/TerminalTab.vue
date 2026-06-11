@@ -307,9 +307,11 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { CanvasAddon } from '@xterm/addon-canvas'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, Channel } from '@tauri-apps/api/core'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -339,6 +341,7 @@ let term = null
 let fitAddon = null
 let searchAddon = null
 let canvasAddon = null
+let webLinksAddon = null
 let resizeObserver = null
 let statusInterval = null
 let lazyDisposeTimer = null
@@ -359,6 +362,7 @@ const dockerPaneContainer = ref(null)
 let dockerTerm = null
 let dockerFitAddon = null
 let dockerCanvasAddon = null
+let dockerWebLinksAddon = null
 let dockerPaneResizeObserver = null
 let unlistenPtyData = null
 let unlistenPtyError = null
@@ -534,8 +538,15 @@ async function openDockerPane({ type, containerId, containerName, command }) {
 
   dockerFitAddon = new FitAddon()
   dockerCanvasAddon = new CanvasAddon()
+  dockerWebLinksAddon = new WebLinksAddon((event, uri) => {
+    event.preventDefault()
+    openUrl(uri).catch((err) => {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
+    })
+  })
   dockerTerm.loadAddon(dockerFitAddon)
   dockerTerm.loadAddon(dockerCanvasAddon)
+  dockerTerm.loadAddon(dockerWebLinksAddon)
 
   dockerTerm.open(dockerPaneContainer.value)
   dockerFitAddon.fit()
@@ -867,9 +878,16 @@ async function initTerminal() {
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
   canvasAddon = new CanvasAddon()
+  webLinksAddon = new WebLinksAddon((event, uri) => {
+    event.preventDefault()
+    openUrl(uri).catch((err) => {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
+    })
+  })
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
   term.loadAddon(canvasAddon)
+  term.loadAddon(webLinksAddon)
 
   term.open(terminalContainer.value)
   fitAddon.fit()
