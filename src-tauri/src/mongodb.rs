@@ -1,7 +1,7 @@
-use mongodb::{Client, options::ClientOptions};
-use tauri::{Emitter, Window};
-use std::time::Duration;
 use futures_util::stream::TryStreamExt;
+use mongodb::{options::ClientOptions, Client};
+use std::time::Duration;
+use tauri::{Emitter, Window};
 
 /// Resolve the path to a MongoDB tool binary.
 /// Tries bundled binary first, then falls back to PATH.
@@ -37,8 +37,7 @@ pub async fn list_databases(uri: &str) -> Result<Vec<String>, String> {
     let options = ClientOptions::parse(uri)
         .await
         .map_err(|e| format!("parse uri: {}", e))?;
-    let client = Client::with_options(options)
-        .map_err(|e| format!("create client: {}", e))?;
+    let client = Client::with_options(options).map_err(|e| format!("create client: {}", e))?;
     let dbs = client
         .list_database_names()
         .await
@@ -50,8 +49,7 @@ pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String
     let options = ClientOptions::parse(uri)
         .await
         .map_err(|e| format!("parse uri: {}", e))?;
-    let client = Client::with_options(options)
-        .map_err(|e| format!("create client: {}", e))?;
+    let client = Client::with_options(options).map_err(|e| format!("create client: {}", e))?;
     let collections = client
         .database(db)
         .list_collection_names()
@@ -98,8 +96,8 @@ async fn try_cli_sync(
     let collections = collections.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        let archive_path = std::env::temp_dir()
-            .join(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
+        let archive_path =
+            std::env::temp_dir().join(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
         let archive_path_str = archive_path.to_string_lossy().to_string();
 
         // Step 1: mongodump from remote (dump whole DB; mongorestore will filter collections)
@@ -110,7 +108,8 @@ async fn try_cli_sync(
             .arg("--gzip")
             .arg(format!("--archive={}", archive_path_str));
 
-        let output = dump_cmd.output()
+        let output = dump_cmd
+            .output()
             .map_err(|e| format!("mongodump failed to start: {} (is it installed?)", e))?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
@@ -130,10 +129,11 @@ async fn try_cli_sync(
 
         // Only restore selected collections
         for coll in &collections {
-            restore_cmd.arg(format!("--nsInclude={}.{}" , db, coll));
+            restore_cmd.arg(format!("--nsInclude={}.{}", db, coll));
         }
 
-        let output = restore_cmd.output()
+        let output = restore_cmd
+            .output()
             .map_err(|e| format!("mongorestore failed to start: {} (is it installed?)", e))?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
@@ -160,26 +160,29 @@ async fn driver_sync(
     let remote_options = ClientOptions::parse(remote_uri)
         .await
         .map_err(|e| format!("parse remote uri: {}", e))?;
-    let remote_client = Client::with_options(remote_options)
-        .map_err(|e| format!("remote client: {}", e))?;
+    let remote_client =
+        Client::with_options(remote_options).map_err(|e| format!("remote client: {}", e))?;
 
     let local_options = ClientOptions::parse(local_uri)
         .await
         .map_err(|e| format!("parse local uri: {}", e))?;
-    let local_client = Client::with_options(local_options)
-        .map_err(|e| format!("local client: {}", e))?;
+    let local_client =
+        Client::with_options(local_options).map_err(|e| format!("local client: {}", e))?;
 
     let remote_db = remote_client.database(db);
     let local_db = local_client.database(db);
 
     for collection_name in &collections {
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": db,
-            "collection": collection_name,
-            "stage": "count",
-            "synced": 0,
-            "total": 0,
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": db,
+                "collection": collection_name,
+                "stage": "count",
+                "synced": 0,
+                "total": 0,
+            }),
+        );
 
         let remote_coll = remote_db.collection::<mongodb::bson::Document>(collection_name);
         let local_coll = local_db.collection::<mongodb::bson::Document>(collection_name);
@@ -204,39 +207,55 @@ async fn driver_sync(
         let mut synced: u64 = 0;
         let mut last_emit = std::time::Instant::now();
 
-        while let Some(doc) = cursor.try_next().await.map_err(|e| format!("cursor {}: {}", collection_name, e))? {
+        while let Some(doc) = cursor
+            .try_next()
+            .await
+            .map_err(|e| format!("cursor {}: {}", collection_name, e))?
+        {
             batch.push(doc);
             synced += 1;
 
             if batch.len() >= BATCH_SIZE {
-                local_coll.insert_many(&batch).await.map_err(|e| format!("insert {}: {}", collection_name, e))?;
+                local_coll
+                    .insert_many(&batch)
+                    .await
+                    .map_err(|e| format!("insert {}: {}", collection_name, e))?;
                 batch.clear();
             }
 
             // Emit progress every 500ms or on batch boundary
             if last_emit.elapsed() >= Duration::from_millis(500) {
-                let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-                    "db": db,
-                    "collection": collection_name,
-                    "stage": "copy",
-                    "synced": synced,
-                    "total": total,
-                }));
+                let _ = window.emit(
+                    "mongodb-sync-progress",
+                    serde_json::json!({
+                        "db": db,
+                        "collection": collection_name,
+                        "stage": "copy",
+                        "synced": synced,
+                        "total": total,
+                    }),
+                );
                 last_emit = std::time::Instant::now();
             }
         }
 
         if !batch.is_empty() {
-            local_coll.insert_many(&batch).await.map_err(|e| format!("insert {}: {}", collection_name, e))?;
+            local_coll
+                .insert_many(&batch)
+                .await
+                .map_err(|e| format!("insert {}: {}", collection_name, e))?;
         }
 
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": db,
-            "collection": collection_name,
-            "stage": "done",
-            "synced": synced,
-            "total": total,
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": db,
+                "collection": collection_name,
+                "stage": "done",
+                "synced": synced,
+                "total": total,
+            }),
+        );
     }
 
     let _ = window.emit("mongodb-sync-done", serde_json::json!({"db": db}));
@@ -257,13 +276,16 @@ pub async fn dump_collections(
     let output_dir = output_dir.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": &db,
-            "collection": "",
-            "stage": "dump",
-            "synced": 0,
-            "total": collections.len(),
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": &db,
+                "collection": "",
+                "stage": "dump",
+                "synced": 0,
+                "total": collections.len(),
+            }),
+        );
 
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
         cmd.arg(format!("--uri={}", remote_uri))
@@ -285,13 +307,16 @@ pub async fn dump_collections(
             return Err(format!("mongodump failed: {}", err));
         }
 
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": &db,
-            "collection": "",
-            "stage": "done",
-            "synced": collections.len(),
-            "total": collections.len(),
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": &db,
+                "collection": "",
+                "stage": "done",
+                "synced": collections.len(),
+                "total": collections.len(),
+            }),
+        );
 
         Ok(())
     })
@@ -313,13 +338,16 @@ pub async fn restore_collections(
     let input_dir = input_dir.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": &db,
-            "collection": "",
-            "stage": "restore",
-            "synced": 0,
-            "total": collections.len(),
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": &db,
+                "collection": "",
+                "stage": "restore",
+                "synced": 0,
+                "total": collections.len(),
+            }),
+        );
 
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
         cmd.arg(format!("--uri={}", remote_uri))
@@ -339,13 +367,16 @@ pub async fn restore_collections(
             return Err(format!("mongorestore failed: {}", err));
         }
 
-        let _ = window.emit("mongodb-sync-progress", serde_json::json!({
-            "db": &db,
-            "collection": "",
-            "stage": "done",
-            "synced": collections.len(),
-            "total": collections.len(),
-        }));
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "db": &db,
+                "collection": "",
+                "stage": "done",
+                "synced": collections.len(),
+                "total": collections.len(),
+            }),
+        );
 
         Ok(())
     })

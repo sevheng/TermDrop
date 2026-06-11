@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result as SqlResult, params};
+use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -68,10 +68,16 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
         conn.execute("ALTER TABLE hosts ADD COLUMN \"group\" TEXT DEFAULT ''", [])?;
     }
     if !columns.contains(&"favorite".to_string()) {
-        conn.execute("ALTER TABLE hosts ADD COLUMN favorite INTEGER DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN favorite INTEGER DEFAULT 0",
+            [],
+        )?;
     }
     if !columns.contains(&"last_connected_at".to_string()) {
-        conn.execute("ALTER TABLE hosts ADD COLUMN last_connected_at DATETIME", [])?;
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN last_connected_at DATETIME",
+            [],
+        )?;
     }
     if !columns.contains(&"mongo_uri".to_string()) {
         conn.execute("ALTER TABLE hosts ADD COLUMN mongo_uri TEXT", [])?;
@@ -185,7 +191,11 @@ pub fn update_host_group(conn: &Connection, id: i64, group: &str) -> SqlResult<(
     Ok(())
 }
 
-pub fn update_hosts_group_by_name(conn: &Connection, old_group: &str, new_group: &str) -> SqlResult<usize> {
+pub fn update_hosts_group_by_name(
+    conn: &Connection,
+    old_group: &str,
+    new_group: &str,
+) -> SqlResult<usize> {
     let count = conn.execute(
         "UPDATE hosts SET \"group\" = ?1 WHERE \"group\" = ?2",
         params![new_group, old_group],

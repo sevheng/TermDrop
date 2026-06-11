@@ -1,10 +1,10 @@
+use base64::Engine;
+use serde::Serialize;
+use ssh2::Session;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use ssh2::Session;
-use serde::Serialize;
 use tauri::{Emitter, Window};
-use base64::Engine;
 
 const SFTP_BUF_SIZE: usize = 65536; // 64KB
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -46,18 +46,20 @@ pub fn sftp_connect(
     host_id: i64,
 ) -> Result<SftpSessionHandle, String> {
     let tcp = crate::ssh::session::resolve_and_connect(&host, port)?;
-    let mut session = Session::new()
-        .map_err(|e| format!("session: {}", e))?;
+    let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);
-    session.handshake()
+    session
+        .handshake()
         .map_err(|e| format!("handshake: {}", e))?;
 
     if let Some(key_path) = key_path {
         let expanded = expand_key_path(&key_path);
-        session.userauth_pubkey_file(&username, None, &expanded, None)
+        session
+            .userauth_pubkey_file(&username, None, &expanded, None)
             .map_err(|e| format!("key auth: {}", e))?;
     } else if let Some(password) = password {
-        session.userauth_password(&username, &password)
+        session
+            .userauth_password(&username, &password)
             .map_err(|e| format!("auth: {}", e))?;
     } else {
         return Err("no credentials provided".to_string());
@@ -69,18 +71,17 @@ pub fn sftp_connect(
     })
 }
 
-pub fn sftp_list(
-    handle: &SftpSessionHandle,
-    path: &str,
-) -> Result<Vec<SftpFile>, String> {
+pub fn sftp_list(handle: &SftpSessionHandle, path: &str) -> Result<Vec<SftpFile>, String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let entries = sftp.readdir(Path::new(path))
+    let entries = sftp
+        .readdir(Path::new(path))
         .map_err(|e| format!("readdir: {}", e))?;
 
     let mut files = Vec::new();
     for (pathbuf, stat) in entries {
-        let name = pathbuf.file_name()
+        let name = pathbuf
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         if name == "." || name == ".." {
@@ -117,15 +118,16 @@ pub fn sftp_upload(
     local_path: &str,
     remote_path: &str,
 ) -> Result<(), String> {
-    let local_file = std::fs::File::open(local_path)
-        .map_err(|e| format!("open local: {}", e))?;
-    let metadata = local_file.metadata()
+    let local_file = std::fs::File::open(local_path).map_err(|e| format!("open local: {}", e))?;
+    let metadata = local_file
+        .metadata()
         .map_err(|e| format!("metadata: {}", e))?;
     let total = metadata.len();
 
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.create(Path::new(remote_path))
+    let mut remote_file = sftp
+        .create(Path::new(remote_path))
         .map_err(|e| format!("create remote: {}", e))?;
 
     let mut buf = vec![0u8; SFTP_BUF_SIZE];
@@ -136,8 +138,12 @@ pub fn sftp_upload(
 
     loop {
         let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 { break; }
-        remote_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        remote_file
+            .write_all(&buf[..n])
+            .map_err(|e| e.to_string())?;
         transferred += n as u64;
 
         let percent = if total > 0 {
@@ -148,7 +154,10 @@ pub fn sftp_upload(
         let elapsed = last_emit.elapsed();
         let percent_delta = percent - last_percent;
 
-        if elapsed >= PROGRESS_MIN_INTERVAL || percent_delta >= PROGRESS_MIN_PERCENT_DELTA || transferred >= total {
+        if elapsed >= PROGRESS_MIN_INTERVAL
+            || percent_delta >= PROGRESS_MIN_PERCENT_DELTA
+            || transferred >= total
+        {
             let payload = serde_json::json!({
                 "file": remote_path,
                 "bytes_transferred": transferred,
@@ -179,16 +188,16 @@ pub fn sftp_download(
 ) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.open(Path::new(remote_path))
+    let mut remote_file = sftp
+        .open(Path::new(remote_path))
         .map_err(|e| format!("open remote: {}", e))?;
     let total = remote_file.stat().map(|s| s.size.unwrap_or(0)).unwrap_or(0);
 
     if let Some(parent) = Path::new(local_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
     }
-    let mut local_file = std::fs::File::create(local_path)
-        .map_err(|e| format!("create local: {}", e))?;
+    let mut local_file =
+        std::fs::File::create(local_path).map_err(|e| format!("create local: {}", e))?;
 
     let mut buf = vec![0u8; SFTP_BUF_SIZE];
     let mut transferred = 0u64;
@@ -197,7 +206,9 @@ pub fn sftp_download(
 
     loop {
         let n = remote_file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         local_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 
@@ -209,7 +220,10 @@ pub fn sftp_download(
         let elapsed = last_emit.elapsed();
         let percent_delta = percent - last_percent;
 
-        if elapsed >= PROGRESS_MIN_INTERVAL || percent_delta >= PROGRESS_MIN_PERCENT_DELTA || transferred >= total {
+        if elapsed >= PROGRESS_MIN_INTERVAL
+            || percent_delta >= PROGRESS_MIN_PERCENT_DELTA
+            || transferred >= total
+        {
             let payload = serde_json::json!({
                 "file": remote_path,
                 "bytes_transferred": transferred,
@@ -239,40 +253,37 @@ pub fn sftp_download_simple(
 ) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.open(Path::new(remote_path))
+    let mut remote_file = sftp
+        .open(Path::new(remote_path))
         .map_err(|e| format!("open remote: {}", e))?;
 
     if let Some(parent) = Path::new(local_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
     }
-    let mut local_file = std::fs::File::create(local_path)
-        .map_err(|e| format!("create local: {}", e))?;
+    let mut local_file =
+        std::fs::File::create(local_path).map_err(|e| format!("create local: {}", e))?;
 
     let mut buf = vec![0u8; SFTP_BUF_SIZE];
     loop {
         let n = remote_file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         local_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-pub fn sftp_realpath(
-    handle: &SftpSessionHandle,
-    remote_path: &str,
-) -> Result<String, String> {
+pub fn sftp_realpath(handle: &SftpSessionHandle, remote_path: &str) -> Result<String, String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let resolved = sftp.realpath(Path::new(remote_path))
+    let resolved = sftp
+        .realpath(Path::new(remote_path))
         .map_err(|e| format!("realpath: {}", e))?;
     Ok(resolved.to_string_lossy().to_string())
 }
 
-pub fn sftp_delete(
-    handle: &SftpSessionHandle,
-    remote_path: &str,
-) -> Result<(), String> {
+pub fn sftp_delete(handle: &SftpSessionHandle, remote_path: &str) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
     sftp.unlink(Path::new(remote_path))
@@ -292,10 +303,7 @@ pub fn sftp_rename(
     Ok(())
 }
 
-pub fn sftp_mkdir(
-    handle: &SftpSessionHandle,
-    remote_path: &str,
-) -> Result<(), String> {
+pub fn sftp_mkdir(handle: &SftpSessionHandle, remote_path: &str) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
     sftp.mkdir(Path::new(remote_path), 0o755)
@@ -303,14 +311,11 @@ pub fn sftp_mkdir(
     Ok(())
 }
 
-fn sftp_rmdir_recursive(
-    sftp: &ssh2::Sftp,
-    path: &Path,
-) -> Result<(), String> {
-    let entries = sftp.readdir(path)
-        .map_err(|e| format!("readdir: {}", e))?;
+fn sftp_rmdir_recursive(sftp: &ssh2::Sftp, path: &Path) -> Result<(), String> {
+    let entries = sftp.readdir(path).map_err(|e| format!("readdir: {}", e))?;
     for (entry_path, stat) in entries {
-        let name = entry_path.file_name()
+        let name = entry_path
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         if name == "." || name == ".." {
@@ -325,32 +330,28 @@ fn sftp_rmdir_recursive(
                 .map_err(|e| format!("unlink: {}", e))?;
         }
     }
-    sftp.rmdir(path)
-        .map_err(|e| format!("rmdir: {}", e))?;
+    sftp.rmdir(path).map_err(|e| format!("rmdir: {}", e))?;
     Ok(())
 }
 
-pub fn sftp_read_file(
-    handle: &SftpSessionHandle,
-    remote_path: &str,
-) -> Result<String, String> {
+pub fn sftp_read_file(handle: &SftpSessionHandle, remote_path: &str) -> Result<String, String> {
     const MAX_SIZE: u64 = 5 * 1024 * 1024; // 5MB
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.open(Path::new(remote_path))
+    let mut remote_file = sftp
+        .open(Path::new(remote_path))
         .map_err(|e| format!("open: {}", e))?;
-    let stat = remote_file.stat()
-        .map_err(|e| format!("stat: {}", e))?;
+    let stat = remote_file.stat().map_err(|e| format!("stat: {}", e))?;
     let size = stat.size.unwrap_or(0);
     if size > MAX_SIZE {
         return Err(format!("File too large: {} bytes (max {})", size, MAX_SIZE));
     }
     let mut content = Vec::with_capacity(size as usize);
     use std::io::Read;
-    remote_file.read_to_end(&mut content)
+    remote_file
+        .read_to_end(&mut content)
         .map_err(|e| format!("read: {}", e))?;
-    String::from_utf8(content)
-        .map_err(|_| "File contains non-UTF-8 data".to_string())
+    String::from_utf8(content).map_err(|_| "File contains non-UTF-8 data".to_string())
 }
 
 pub fn sftp_read_file_base64(
@@ -360,25 +361,23 @@ pub fn sftp_read_file_base64(
     const MAX_SIZE: u64 = 10 * 1024 * 1024; // 10MB for images
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.open(Path::new(remote_path))
+    let mut remote_file = sftp
+        .open(Path::new(remote_path))
         .map_err(|e| format!("open: {}", e))?;
-    let stat = remote_file.stat()
-        .map_err(|e| format!("stat: {}", e))?;
+    let stat = remote_file.stat().map_err(|e| format!("stat: {}", e))?;
     let size = stat.size.unwrap_or(0);
     if size > MAX_SIZE {
         return Err(format!("File too large: {} bytes (max {})", size, MAX_SIZE));
     }
     let mut content = Vec::with_capacity(size as usize);
     use std::io::Read;
-    remote_file.read_to_end(&mut content)
+    remote_file
+        .read_to_end(&mut content)
         .map_err(|e| format!("read: {}", e))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&content))
 }
 
-pub fn sftp_rmdir(
-    handle: &SftpSessionHandle,
-    remote_path: &str,
-) -> Result<(), String> {
+pub fn sftp_rmdir(handle: &SftpSessionHandle, remote_path: &str) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
     sftp_rmdir_recursive(&sftp, Path::new(remote_path))
@@ -391,9 +390,11 @@ pub fn sftp_write_file(
 ) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp.create(Path::new(remote_path))
+    let mut remote_file = sftp
+        .create(Path::new(remote_path))
         .map_err(|e| format!("create remote: {}", e))?;
-    remote_file.write_all(content.as_bytes())
+    remote_file
+        .write_all(content.as_bytes())
         .map_err(|e| format!("write: {}", e))?;
     Ok(())
 }

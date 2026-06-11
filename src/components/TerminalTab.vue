@@ -309,6 +309,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { CanvasAddon } from '@xterm/addon-canvas'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, Channel } from '@tauri-apps/api/core'
+import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -430,7 +431,7 @@ async function copySelection() {
   const selection = term.getSelection()
   if (selection) {
     try {
-      await navigator.clipboard.writeText(selection)
+      await writeText(selection)
     } catch (e) {
       console.warn('Copy failed:', e)
     }
@@ -440,7 +441,7 @@ async function copySelection() {
 async function pasteFromClipboard() {
   contextMenu.value.show = false
   try {
-    const text = await navigator.clipboard.readText()
+    const text = await readText()
     if (text) {
       term.paste(text)
     }

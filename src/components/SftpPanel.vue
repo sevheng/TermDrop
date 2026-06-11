@@ -328,6 +328,7 @@ import { useConnectionStore } from '../stores/connection.js'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { openPath } from '@tauri-apps/plugin-opener'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
@@ -944,7 +945,7 @@ async function copyRemotePath() {
   if (!file) return
   contextMenu.value.show = false
   try {
-    await navigator.clipboard.writeText(file.path)
+    await writeText(file.path)
     showToast('Path copied to clipboard', 'success')
   } catch (e) {
     console.warn('Copy path failed:', e)

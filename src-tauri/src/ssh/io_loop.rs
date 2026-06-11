@@ -78,7 +78,9 @@ pub fn run_io_loop(
                         output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_flush).as_millis() as u64;
-                        if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                        if output_buf.len() >= OUTPUT_BATCH_SIZE
+                            || elapsed >= OUTPUT_FLUSH_INTERVAL_MS
+                        {
                             on_data_fallback(&output_buf);
                             output_buf.clear();
                             last_flush = now;
@@ -160,7 +162,9 @@ pub fn run_exec_pty_loop(
                         output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_flush).as_millis() as u64;
-                        if output_buf.len() >= OUTPUT_BATCH_SIZE || elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
+                        if output_buf.len() >= OUTPUT_BATCH_SIZE
+                            || elapsed >= OUTPUT_FLUSH_INTERVAL_MS
+                        {
                             on_data_fallback(&output_buf);
                             output_buf.clear();
                             last_flush = now;

@@ -1,6 +1,6 @@
-use std::io::Read;
-use ssh2::Session;
 use serde::{Deserialize, Serialize};
+use ssh2::Session;
+use std::io::Read;
 use std::time::Instant;
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
@@ -31,17 +31,20 @@ pub struct Container {
 }
 
 fn run_command(session: &Session, command: &str) -> Result<String, String> {
-    let mut channel = session.channel_session()
+    let mut channel = session
+        .channel_session()
         .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command)
-        .map_err(|e| format!("exec: {}", e))?;
+    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
 
     let mut stdout = String::new();
-    channel.read_to_string(&mut stdout)
+    channel
+        .read_to_string(&mut stdout)
         .map_err(|e| format!("read: {}", e))?;
 
     let mut stderr = String::new();
-    channel.stderr().read_to_string(&mut stderr)
+    channel
+        .stderr()
+        .read_to_string(&mut stderr)
         .map_err(|e| format!("read stderr: {}", e))?;
 
     channel.wait_close().ok();
@@ -91,23 +94,20 @@ pub fn is_docker_installed(session: &Session) -> Result<bool, String> {
 }
 
 pub fn install_docker(session: &Session) -> Result<String, String> {
-    let output = run_command(
-        session,
-        "curl -fsSL https://get.docker.com | sh",
-    )?;
+    let output = run_command(session, "curl -fsSL https://get.docker.com | sh")?;
     Ok(output.trim().to_string())
 }
 
 pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String> {
     let flag = if all { "-a" } else { "" };
     let format = "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.CreatedAt}}";
-    let output = match run_docker_command(
-        session,
-        &format!("ps {} --format '{}'", flag, format),
-    ) {
+    let output = match run_docker_command(session, &format!("ps {} --format '{}'", flag, format)) {
         Ok(out) => out,
         Err(e) => {
-            if e.contains("not found") || e.contains("No such file") || e.contains("command not found") {
+            if e.contains("not found")
+                || e.contains("No such file")
+                || e.contains("command not found")
+            {
                 return Err(DOCKER_NOT_INSTALLED.to_string());
             }
             return Err(e);

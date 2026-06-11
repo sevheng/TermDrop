@@ -1,6 +1,6 @@
-use std::io::Read;
-use ssh2::Session;
 use serde::{Deserialize, Serialize};
+use ssh2::Session;
+use std::io::Read;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SecurityCheck {
@@ -17,17 +17,20 @@ pub struct SecurityReport {
 }
 
 fn run_command(session: &Session, command: &str) -> Result<String, String> {
-    let mut channel = session.channel_session()
+    let mut channel = session
+        .channel_session()
         .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command)
-        .map_err(|e| format!("exec: {}", e))?;
+    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
 
     let mut stdout = String::new();
-    channel.read_to_string(&mut stdout)
+    channel
+        .read_to_string(&mut stdout)
         .map_err(|e| format!("read: {}", e))?;
 
     let mut stderr = String::new();
-    channel.stderr().read_to_string(&mut stderr)
+    channel
+        .stderr()
+        .read_to_string(&mut stderr)
         .map_err(|e| format!("read stderr: {}", e))?;
 
     channel.wait_close().ok();
@@ -49,7 +52,10 @@ fn run_command(session: &Session, command: &str) -> Result<String, String> {
 }
 
 fn check_ssh_password_auth(session: &Session) -> SecurityCheck {
-    let output = run_command(session, "grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'");
+    let output = run_command(
+        session,
+        "grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'",
+    );
     let val = output.unwrap_or_default().trim().to_lowercase();
 
     if val.contains("no") {
@@ -77,7 +83,10 @@ fn check_ssh_password_auth(session: &Session) -> SecurityCheck {
 }
 
 fn check_ssh_root_login(session: &Session) -> SecurityCheck {
-    let output = run_command(session, "grep -E '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'");
+    let output = run_command(
+        session,
+        "grep -E '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'",
+    );
     let val = output.unwrap_or_default().trim().to_lowercase();
 
     if val.contains("no") {
@@ -112,7 +121,10 @@ fn check_ssh_root_login(session: &Session) -> SecurityCheck {
 }
 
 fn check_ssh_port(session: &Session) -> SecurityCheck {
-    let output = run_command(session, "grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null || echo 'Port 22'");
+    let output = run_command(
+        session,
+        "grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null || echo 'Port 22'",
+    );
     let val = output.unwrap_or_default().trim().to_string();
 
     if val.contains("22") && !val.contains("222") && !val.contains("220") {
@@ -160,7 +172,10 @@ fn check_firewall(session: &Session) -> SecurityCheck {
         }
     }
 
-    let ipt = run_command(session, "sudo iptables -L -n 2>/dev/null | grep -v '^Chain' | grep -v '^target' | head -5 | wc -l");
+    let ipt = run_command(
+        session,
+        "sudo iptables -L -n 2>/dev/null | grep -v '^Chain' | grep -v '^target' | head -5 | wc -l",
+    );
     if let Ok(out) = ipt {
         if out.trim().parse::<i32>().unwrap_or(0) > 0 {
             return SecurityCheck {
@@ -182,11 +197,18 @@ fn check_firewall(session: &Session) -> SecurityCheck {
 
 fn check_failed_logins(session: &Session) -> SecurityCheck {
     // Try auth.log first, then journalctl
-    let count = run_command(session, "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -n 20 | wc -l");
+    let count = run_command(
+        session,
+        "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -n 20 | wc -l",
+    );
     let count_val = count.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
 
     let count2 = run_command(session, "journalctl _SYSTEMD_UNIT=sshd.service 2>/dev/null | grep 'Failed password' | tail -n 20 | wc -l");
-    let count_val2 = count2.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+    let count_val2 = count2
+        .unwrap_or_default()
+        .trim()
+        .parse::<i32>()
+        .unwrap_or(0);
 
     let total = count_val.max(count_val2);
 
@@ -240,7 +262,10 @@ fn check_sudo_users(session: &Session) -> SecurityCheck {
 }
 
 fn detect_os_family(session: &Session) -> String {
-    let id = run_command(session, "grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/\"//g'");
+    let id = run_command(
+        session,
+        "grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/\"//g'",
+    );
     id.unwrap_or_default().trim().to_lowercase()
 }
 
@@ -249,7 +274,10 @@ fn check_security_updates(session: &Session) -> SecurityCheck {
 
     let (total, pkg_manager) = match os_family.as_str() {
         "ubuntu" | "debian" | "linuxmint" | "pop" | "elementary" | "zorin" => {
-            let out = run_command(session, "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0");
+            let out = run_command(
+                session,
+                "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0",
+            );
             let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
             (count, "apt")
         }
@@ -260,7 +288,10 @@ fn check_security_updates(session: &Session) -> SecurityCheck {
             (count, "dnf/yum")
         }
         "alpine" => {
-            let out = run_command(session, "apk upgrade --simulate 2>/dev/null | grep -c 'Upgrading' || echo 0");
+            let out = run_command(
+                session,
+                "apk upgrade --simulate 2>/dev/null | grep -c 'Upgrading' || echo 0",
+            );
             let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
             (count, "apk")
         }
@@ -270,13 +301,19 @@ fn check_security_updates(session: &Session) -> SecurityCheck {
             (count, "pacman")
         }
         "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" | "sles" => {
-            let out = run_command(session, "zypper list-updates 2>/dev/null | grep -c 'v' || echo 0");
+            let out = run_command(
+                session,
+                "zypper list-updates 2>/dev/null | grep -c 'v' || echo 0",
+            );
             let count = out.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
             (count, "zypper")
         }
         _ => {
             // Fallback: try apt, then dnf/yum
-            let apt = run_command(session, "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0");
+            let apt = run_command(
+                session,
+                "apt list --upgradable 2>/dev/null | grep -c 'security' || echo 0",
+            );
             let apt_count = apt.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
             if apt_count > 0 {
                 (apt_count, "apt")
@@ -347,7 +384,11 @@ pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
 
     let pass_count = checks.iter().filter(|c| c.status == "pass").count() as u16;
     let total = checks.len() as u16;
-    let score = if total > 0 { ((pass_count * 100) / total) as u8 } else { 0 };
+    let score = if total > 0 {
+        ((pass_count * 100) / total) as u8
+    } else {
+        0
+    };
 
     Ok(SecurityReport { score, checks })
 }

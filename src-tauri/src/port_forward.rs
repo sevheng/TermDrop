@@ -1,11 +1,11 @@
+use ssh2::Session;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, Shutdown};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use ssh2::Session;
 
 #[allow(dead_code)]
 pub struct ActiveForward {
@@ -39,50 +39,50 @@ impl ForwardManager {
         remote_port: u16,
     ) -> Result<(), String> {
         let addr = format!("{}:{}", local_host, local_port);
-        let listener = TcpListener::bind(&addr)
-            .map_err(|e| format!("bind {}: {}", addr, e))?;
+        let listener = TcpListener::bind(&addr).map_err(|e| format!("bind {}: {}", addr, e))?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
 
-        let handle = thread::spawn(move || {
-            loop {
-                if shutdown_clone.load(Ordering::Relaxed) {
-                    break;
+        let handle = thread::spawn(move || loop {
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            match listener.accept() {
+                Ok((client, _)) => {
+                    let h = ssh_host.clone();
+                    let p = ssh_port;
+                    let u = username.clone();
+                    let pw = password.clone();
+                    let k = key_path.clone();
+                    let rh = remote_host.clone();
+                    let rp = remote_port;
+                    thread::spawn(move || {
+                        if let Err(e) = handle_local_connection(h, p, u, pw, k, client, rh, rp) {
+                            eprintln!("[forward {}] connection error: {}", rule_id, e);
+                        }
+                    });
                 }
-                match listener.accept() {
-                    Ok((client, _)) => {
-                        let h = ssh_host.clone();
-                        let p = ssh_port;
-                        let u = username.clone();
-                        let pw = password.clone();
-                        let k = key_path.clone();
-                        let rh = remote_host.clone();
-                        let rp = remote_port;
-                        thread::spawn(move || {
-                            if let Err(e) = handle_local_connection(h, p, u, pw, k, client, rh, rp) {
-                                eprintln!("[forward {}] connection error: {}", rule_id, e);
-                            }
-                        });
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        eprintln!("[forward {}] listener error: {}", rule_id, e);
-                        break;
-                    }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    eprintln!("[forward {}] listener error: {}", rule_id, e);
+                    break;
                 }
             }
         });
 
         let mut active = self.active.lock().map_err(|e| e.to_string())?;
-        active.insert(rule_id, ActiveForward {
+        active.insert(
             rule_id,
-            shutdown,
-            thread_handle: Some(handle),
-        });
+            ActiveForward {
+                rule_id,
+                shutdown,
+                thread_handle: Some(handle),
+            },
+        );
 
         Ok(())
     }
@@ -99,48 +99,48 @@ impl ForwardManager {
         local_port: u16,
     ) -> Result<(), String> {
         let addr = format!("{}:{}", local_host, local_port);
-        let listener = TcpListener::bind(&addr)
-            .map_err(|e| format!("bind {}: {}", addr, e))?;
+        let listener = TcpListener::bind(&addr).map_err(|e| format!("bind {}: {}", addr, e))?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
 
-        let handle = thread::spawn(move || {
-            loop {
-                if shutdown_clone.load(Ordering::Relaxed) {
-                    break;
+        let handle = thread::spawn(move || loop {
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            match listener.accept() {
+                Ok((client, _)) => {
+                    let h = ssh_host.clone();
+                    let p = ssh_port;
+                    let u = username.clone();
+                    let pw = password.clone();
+                    let k = key_path.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = handle_socks_connection(h, p, u, pw, k, client) {
+                            eprintln!("[forward {}] socks error: {}", rule_id, e);
+                        }
+                    });
                 }
-                match listener.accept() {
-                    Ok((client, _)) => {
-                        let h = ssh_host.clone();
-                        let p = ssh_port;
-                        let u = username.clone();
-                        let pw = password.clone();
-                        let k = key_path.clone();
-                        thread::spawn(move || {
-                            if let Err(e) = handle_socks_connection(h, p, u, pw, k, client) {
-                                eprintln!("[forward {}] socks error: {}", rule_id, e);
-                            }
-                        });
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        eprintln!("[forward {}] listener error: {}", rule_id, e);
-                        break;
-                    }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    eprintln!("[forward {}] listener error: {}", rule_id, e);
+                    break;
                 }
             }
         });
 
         let mut active = self.active.lock().map_err(|e| e.to_string())?;
-        active.insert(rule_id, ActiveForward {
+        active.insert(
             rule_id,
-            shutdown,
-            thread_handle: Some(handle),
-        });
+            ActiveForward {
+                rule_id,
+                shutdown,
+                thread_handle: Some(handle),
+            },
+        );
 
         Ok(())
     }
@@ -169,7 +169,9 @@ fn create_ssh_session(
         .map_err(|e| format!("connect: {}", e))?;
     let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| format!("handshake: {}", e))?;
+    session
+        .handshake()
+        .map_err(|e| format!("handshake: {}", e))?;
 
     if let Some(key_path) = key_path {
         let expanded = if key_path.starts_with("~/") {
@@ -179,10 +181,12 @@ fn create_ssh_session(
         } else {
             Path::new(key_path).to_path_buf()
         };
-        session.userauth_pubkey_file(username, None, &expanded, None)
+        session
+            .userauth_pubkey_file(username, None, &expanded, None)
             .map_err(|e| format!("key auth: {}", e))?;
     } else if let Some(password) = password {
-        session.userauth_password(username, password)
+        session
+            .userauth_password(username, password)
             .map_err(|e| format!("auth: {}", e))?;
     } else {
         return Err("no credentials provided".to_string());
@@ -205,7 +209,8 @@ fn handle_local_connection(
     let kp = key_path.as_deref();
     let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
 
-    let channel = session.channel_direct_tcpip(&remote_host, remote_port, Some(("127.0.0.1", ssh_port)))
+    let channel = session
+        .channel_direct_tcpip(&remote_host, remote_port, Some(("127.0.0.1", ssh_port)))
         .map_err(|e| format!("direct_tcpip: {}", e))?;
 
     pipe_bidirectional(client, channel)?;
@@ -222,22 +227,32 @@ fn handle_socks_connection(
 ) -> Result<(), String> {
     // SOCKS5 greeting
     let mut greet = [0u8; 2];
-    client.read_exact(&mut greet).map_err(|e| format!("socks greet: {}", e))?;
+    client
+        .read_exact(&mut greet)
+        .map_err(|e| format!("socks greet: {}", e))?;
     if greet[0] != 0x05 {
         return Err("unsupported SOCKS version".to_string());
     }
     let nmethods = greet[1] as usize;
     let mut methods = vec![0u8; nmethods];
-    client.read_exact(&mut methods).map_err(|e| format!("socks methods: {}", e))?;
+    client
+        .read_exact(&mut methods)
+        .map_err(|e| format!("socks methods: {}", e))?;
 
     // Respond: no auth required
-    client.write_all(&[0x05, 0x00]).map_err(|e| format!("socks auth resp: {}", e))?;
+    client
+        .write_all(&[0x05, 0x00])
+        .map_err(|e| format!("socks auth resp: {}", e))?;
 
     // Request
     let mut req = [0u8; 4];
-    client.read_exact(&mut req).map_err(|e| format!("socks req: {}", e))?;
+    client
+        .read_exact(&mut req)
+        .map_err(|e| format!("socks req: {}", e))?;
     if req[0] != 0x05 || req[1] != 0x01 {
-        client.write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).ok();
+        client
+            .write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .ok();
         return Err("unsupported SOCKS command".to_string());
     }
 
@@ -245,26 +260,42 @@ fn handle_socks_connection(
         0x01 => {
             // IPv4
             let mut addr = [0u8; 4];
-            client.read_exact(&mut addr).map_err(|e| format!("socks ipv4: {}", e))?;
+            client
+                .read_exact(&mut addr)
+                .map_err(|e| format!("socks ipv4: {}", e))?;
             let mut port = [0u8; 2];
-            client.read_exact(&mut port).map_err(|e| format!("socks port: {}", e))?;
+            client
+                .read_exact(&mut port)
+                .map_err(|e| format!("socks port: {}", e))?;
             let port = u16::from_be_bytes(port);
-            (format!("{}.{}", addr[0], addr[1]), format!("{}.{}", addr[2], addr[3]), port)
+            (
+                format!("{}.{}", addr[0], addr[1]),
+                format!("{}.{}", addr[2], addr[3]),
+                port,
+            )
         }
         0x03 => {
             // Domain
             let mut len = [0u8; 1];
-            client.read_exact(&mut len).map_err(|e| format!("socks domain len: {}", e))?;
+            client
+                .read_exact(&mut len)
+                .map_err(|e| format!("socks domain len: {}", e))?;
             let mut domain = vec![0u8; len[0] as usize];
-            client.read_exact(&mut domain).map_err(|e| format!("socks domain: {}", e))?;
+            client
+                .read_exact(&mut domain)
+                .map_err(|e| format!("socks domain: {}", e))?;
             let mut port = [0u8; 2];
-            client.read_exact(&mut port).map_err(|e| format!("socks port: {}", e))?;
+            client
+                .read_exact(&mut port)
+                .map_err(|e| format!("socks port: {}", e))?;
             let port = u16::from_be_bytes(port);
             let host = String::from_utf8_lossy(&domain).to_string();
             (host.clone(), host, port)
         }
         _ => {
-            client.write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).ok();
+            client
+                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .ok();
             return Err("unsupported address type".to_string());
         }
     };
@@ -273,11 +304,13 @@ fn handle_socks_connection(
     let kp = key_path.as_deref();
     let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
 
-    let channel = session.channel_direct_tcpip(&dst.0, dst.2, Some(("127.0.0.1", ssh_port)))
+    let channel = session
+        .channel_direct_tcpip(&dst.0, dst.2, Some(("127.0.0.1", ssh_port)))
         .map_err(|e| format!("direct_tcpip: {}", e))?;
 
     // Respond success
-    client.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+    client
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .map_err(|e| format!("socks success resp: {}", e))?;
 
     pipe_bidirectional(client, channel)?;
@@ -298,7 +331,9 @@ fn pipe_bidirectional(client: TcpStream, channel: ssh2::Channel) -> Result<(), S
                 Ok(0) => break,
                 Ok(n) => {
                     let mut ch = channel.lock().unwrap();
-                    if ch.write_all(&buf[..n]).is_err() { break; }
+                    if ch.write_all(&buf[..n]).is_err() {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
@@ -310,7 +345,11 @@ fn pipe_bidirectional(client: TcpStream, channel: ssh2::Channel) -> Result<(), S
         let mut ch = channel_clone.lock().unwrap();
         match ch.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => { if client_write.write_all(&buf[..n]).is_err() { break; } }
+            Ok(n) => {
+                if client_write.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
             Err(_) => break,
         }
     }

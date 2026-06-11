@@ -58,20 +58,13 @@ pub fn parse_ssh_config() -> Result<Vec<SshConfigHost>, String> {
     Ok(hosts)
 }
 
-fn flush_block(
-    hosts: &mut Vec<SshConfigHost>,
-    patterns: &[String],
-    fields: &[(String, String)],
-) {
+fn flush_block(hosts: &mut Vec<SshConfigHost>, patterns: &[String], fields: &[(String, String)]) {
     if patterns.is_empty() {
         return;
     }
 
     // Skip pure wildcard blocks
-    let concrete_patterns: Vec<&String> = patterns
-        .iter()
-        .filter(|p| !is_wildcard(p))
-        .collect();
+    let concrete_patterns: Vec<&String> = patterns.iter().filter(|p| !is_wildcard(p)).collect();
 
     if concrete_patterns.is_empty() {
         return;
@@ -101,8 +94,14 @@ fn flush_block(
         let name = pattern.clone();
         // If HostName is not set, use the pattern itself as the address
         let host = hostname.clone().unwrap_or_else(|| pattern.clone());
-        let username = user.clone().unwrap_or_else(|| whoami::username().unwrap_or_else(|_| "user".to_string()));
-        let auth_type = if identity_file.is_some() { "key" } else { "password" };
+        let username = user
+            .clone()
+            .unwrap_or_else(|| whoami::username().unwrap_or_else(|_| "user".to_string()));
+        let auth_type = if identity_file.is_some() {
+            "key"
+        } else {
+            "password"
+        };
 
         hosts.push(SshConfigHost {
             name,

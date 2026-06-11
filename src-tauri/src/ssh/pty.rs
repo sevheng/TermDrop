@@ -1,12 +1,8 @@
-use ssh2::{Session, Channel};
+use ssh2::{Channel, Session};
 use std::time::Duration;
 
 /// Open a channel session, request a PTY, and start a shell.
-pub fn create_pty_channel(
-    session: &Session,
-    cols: u32,
-    rows: u32,
-) -> Result<Channel, String> {
+pub fn create_pty_channel(session: &Session, cols: u32, rows: u32) -> Result<Channel, String> {
     let mut channel = loop {
         match session.channel_session() {
             Ok(c) => break c,
@@ -53,10 +49,7 @@ pub fn create_pty_channel(
 }
 
 /// Open a channel session, request a PTY, and execute a command.
-pub fn create_exec_pty_channel(
-    session: &Session,
-    command: &str,
-) -> Result<Channel, String> {
+pub fn create_exec_pty_channel(session: &Session, command: &str) -> Result<Channel, String> {
     let mut channel = loop {
         match session.channel_session() {
             Ok(c) => break c,

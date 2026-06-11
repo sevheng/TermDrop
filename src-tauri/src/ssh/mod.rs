@@ -1,6 +1,6 @@
-pub mod session;
-pub mod pty;
 pub mod io_loop;
+pub mod pty;
+pub mod session;
 
 pub use session::create_exec_session;
 
@@ -25,17 +25,15 @@ pub struct ExecPtyHandle {
 }
 
 /// Run a command on an existing SSH session (reuses connection).
-pub fn exec_with_session(
-    session: &Session,
-    command: &str,
-) -> Result<String, String> {
-    let mut channel = session.channel_session()
+pub fn exec_with_session(session: &Session, command: &str) -> Result<String, String> {
+    let mut channel = session
+        .channel_session()
         .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command)
-        .map_err(|e| format!("exec: {}", e))?;
+    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
 
     let mut output = String::new();
-    channel.read_to_string(&mut output)
+    channel
+        .read_to_string(&mut output)
         .map_err(|e| format!("read: {}", e))?;
 
     channel.wait_close().ok();
@@ -62,7 +60,13 @@ pub fn connect(
     let data_channel_clone = data_channel.clone();
 
     std::thread::spawn(move || {
-        let session = match session::create_session(&host, port, &username, password.as_deref(), key_path.as_deref()) {
+        let session = match session::create_session(
+            &host,
+            port,
+            &username,
+            password.as_deref(),
+            key_path.as_deref(),
+        ) {
             Ok(s) => s,
             Err(e) => {
                 let payload = serde_json::json!({"session_id": &session_id, "error": e});
@@ -101,7 +105,13 @@ pub fn connect(
         );
     });
 
-    Ok(SshSessionHandle { host_id, write_tx, disconnect_tx, resize_tx, data_channel })
+    Ok(SshSessionHandle {
+        host_id,
+        write_tx,
+        disconnect_tx,
+        resize_tx,
+        data_channel,
+    })
 }
 
 /// Connect to an SSH host and execute a command in a PTY.
@@ -121,7 +131,13 @@ pub fn exec_pty_connect(
     let data_channel_clone = data_channel.clone();
 
     std::thread::spawn(move || {
-        let session = match session::create_session(&host, port, &username, password.as_deref(), key_path.as_deref()) {
+        let session = match session::create_session(
+            &host,
+            port,
+            &username,
+            password.as_deref(),
+            key_path.as_deref(),
+        ) {
             Ok(s) => s,
             Err(e) => {
                 let payload = serde_json::json!({"pty_session_id": &pty_session_id, "error": e});
@@ -159,5 +175,9 @@ pub fn exec_pty_connect(
         );
     });
 
-    Ok(ExecPtyHandle { write_tx, disconnect_tx, data_channel })
+    Ok(ExecPtyHandle {
+        write_tx,
+        disconnect_tx,
+        data_channel,
+    })
 }

@@ -1,6 +1,6 @@
-use std::io::Read;
-use ssh2::Session;
 use serde::{Deserialize, Serialize};
+use ssh2::Session;
+use std::io::Read;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Process {
@@ -58,17 +58,20 @@ pub struct DiskInfo {
 }
 
 pub fn run_command(session: &Session, command: &str) -> Result<String, String> {
-    let mut channel = session.channel_session()
+    let mut channel = session
+        .channel_session()
         .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command)
-        .map_err(|e| format!("exec: {}", e))?;
+    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
 
     let mut stdout = String::new();
-    channel.read_to_string(&mut stdout)
+    channel
+        .read_to_string(&mut stdout)
         .map_err(|e| format!("read: {}", e))?;
 
     let mut stderr = String::new();
-    channel.stderr().read_to_string(&mut stderr)
+    channel
+        .stderr()
+        .read_to_string(&mut stderr)
         .map_err(|e| format!("read stderr: {}", e))?;
 
     channel.wait_close().ok();
@@ -125,14 +128,23 @@ pub fn get_network(session: &Session) -> Result<NetworkInfo, String> {
                 let state = parts.get(1).unwrap_or(&"").to_string();
                 let local = parts.get(3).unwrap_or(&"").to_string();
                 let process = parts.get(parts.len() - 1).unwrap_or(&"").to_string();
-                ports.push(NetPort { proto, state, local, process });
+                ports.push(NetPort {
+                    proto,
+                    state,
+                    local,
+                    process,
+                });
             }
         }
     }
 
     // Established connections count
     let established = run_command(session, "ss -tn state established 2>/dev/null | wc -l");
-    let established_count = established.unwrap_or_default().trim().parse::<i32>().unwrap_or(0);
+    let established_count = established
+        .unwrap_or_default()
+        .trim()
+        .parse::<i32>()
+        .unwrap_or(0);
 
     // Interface stats from /proc/net/dev
     let dev_out = run_command(session, "cat /proc/net/dev 2>/dev/null | tail -n +3");
@@ -140,15 +152,16 @@ pub fn get_network(session: &Session) -> Result<NetworkInfo, String> {
     if let Ok(out) = dev_out {
         for line in out.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            let Some((name, rest)) = trimmed.split_once(':') else { continue; };
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some((name, rest)) = trimmed.split_once(':') else {
+                continue;
+            };
             let name = name.trim().to_string();
             let nums: Vec<&str> = rest.split_whitespace().collect();
             if nums.len() >= 9 {
-                if let (Ok(rx), Ok(tx)) = (
-                    nums[0].parse::<u64>(),
-                    nums[8].parse::<u64>(),
-                ) {
+                if let (Ok(rx), Ok(tx)) = (nums[0].parse::<u64>(), nums[8].parse::<u64>()) {
                     interfaces.push(NetInterface {
                         name,
                         rx_bytes: rx,
@@ -161,7 +174,11 @@ pub fn get_network(session: &Session) -> Result<NetworkInfo, String> {
         }
     }
 
-    Ok(NetworkInfo { ports, interfaces, established_count })
+    Ok(NetworkInfo {
+        ports,
+        interfaces,
+        established_count,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -173,7 +190,10 @@ pub struct SystemPanel {
 
 /// Batched system panel: processes + network + disk in a single SSH exec.
 pub fn get_system_panel(session: &Session) -> Result<SystemPanel, String> {
-    let output = run_command(session, r#"bash -c 'echo "---TERMDROP-PROCESSES---"; ps -eo pid,pcpu,pmem,etime,comm --sort=-pcpu | head -21; echo "---TERMDROP-NETWORK---"; ss -tlnp 2>/dev/null | tail -n +2 | head -30; echo "---TERMDROP-ESTABLISHED---"; ss -tn state established 2>/dev/null | wc -l; echo "---TERMDROP-INTERFACES---"; cat /proc/net/dev 2>/dev/null | tail -n +3; echo "---TERMDROP-DISK-MOUNTS---"; df -hP 2>/dev/null | tail -n +2; echo "---TERMDROP-DISK-DIRS---"; du -hd1 / 2>/dev/null | sort -rh | head -15'"#)?;
+    let output = run_command(
+        session,
+        r#"bash -c 'echo "---TERMDROP-PROCESSES---"; ps -eo pid,pcpu,pmem,etime,comm --sort=-pcpu | head -21; echo "---TERMDROP-NETWORK---"; ss -tlnp 2>/dev/null | tail -n +2 | head -30; echo "---TERMDROP-ESTABLISHED---"; ss -tn state established 2>/dev/null | wc -l; echo "---TERMDROP-INTERFACES---"; cat /proc/net/dev 2>/dev/null | tail -n +3; echo "---TERMDROP-DISK-MOUNTS---"; df -hP 2>/dev/null | tail -n +2; echo "---TERMDROP-DISK-DIRS---"; du -hd1 / 2>/dev/null | sort -rh | head -15'"#,
+    )?;
 
     let mut processes = Vec::new();
     let mut network_ports = Vec::new();
@@ -185,7 +205,7 @@ pub fn get_system_panel(session: &Session) -> Result<SystemPanel, String> {
     let mut section = "";
     for line in output.lines() {
         if line.starts_with("---TERMDROP-") && line.ends_with("---") {
-            section = &line[12..line.len()-3];
+            section = &line[12..line.len() - 3];
             continue;
         }
         match section {
@@ -218,8 +238,12 @@ pub fn get_system_panel(session: &Session) -> Result<SystemPanel, String> {
             }
             "INTERFACES" => {
                 let trimmed = line.trim();
-                if trimmed.is_empty() { continue; }
-                let Some((name, rest)) = trimmed.split_once(':') else { continue; };
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let Some((name, rest)) = trimmed.split_once(':') else {
+                    continue;
+                };
                 let name = name.trim().to_string();
                 let nums: Vec<&str> = rest.split_whitespace().collect();
                 if nums.len() >= 9 {
@@ -262,8 +286,15 @@ pub fn get_system_panel(session: &Session) -> Result<SystemPanel, String> {
 
     Ok(SystemPanel {
         processes,
-        network: NetworkInfo { ports: network_ports, interfaces: network_interfaces, established_count },
-        disk: DiskInfo { mounts: disk_mounts, dirs: disk_dirs },
+        network: NetworkInfo {
+            ports: network_ports,
+            interfaces: network_interfaces,
+            established_count,
+        },
+        disk: DiskInfo {
+            mounts: disk_mounts,
+            dirs: disk_dirs,
+        },
     })
 }
 
@@ -308,12 +339,13 @@ pub fn get_disk_usage(session: &Session) -> Result<DiskInfo, String> {
 pub fn get_system_stats(session: &Session) -> Result<serde_json::Value, String> {
     // Single batched command: all 9 stats in one SSH exec, tab-separated.
     // Tab is used as delimiter because none of these values contain tabs in practice.
-    let output = run_command(session, r#"bash -c 'load=$(awk "{print \$1}" /proc/loadavg); ram=$(free -m | awk "NR==2{used=\$3;total=\$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}"); disk=$(df -h / | awk "NR==2{print \$3\"/\"\$2\" (\"\$5\")\"}"); uptime=$(awk "{d=int(\$1/86400);h=int((\$1%86400)/3600);m=int((\$1%3600)/60); printf \"%dd %dh %dm\", d,h,m}" /proc/uptime); os=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | sed "s/PRETTY_NAME=//; s/\"//g"); kernel=$(uname -r); arch=$(uname -m); cores=$(nproc); netdev=$(cat /proc/net/dev | tail -n +3 | awk "{print \$1\" \"\$2\" \"\$10}"); printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$load" "$ram" "$disk" "$uptime" "$os" "$kernel" "$arch" "$cores" "$netdev"'"#)?;
+    let output = run_command(
+        session,
+        r#"bash -c 'load=$(awk "{print \$1}" /proc/loadavg); ram=$(free -m | awk "NR==2{used=\$3;total=\$2;pct=used*100/total; if(total>=1024){printf \"%.1f/%.1fGB (%.0f%%)\", used/1024,total/1024,pct} else {printf \"%.0f/%.0fMB (%.0f%%)\", used,total,pct}}"); disk=$(df -h / | awk "NR==2{print \$3\"/\"\$2\" (\"\$5\")\"}"); uptime=$(awk "{d=int(\$1/86400);h=int((\$1%86400)/3600);m=int((\$1%3600)/60); printf \"%dd %dh %dm\", d,h,m}" /proc/uptime); os=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | sed "s/PRETTY_NAME=//; s/\"//g"); kernel=$(uname -r); arch=$(uname -m); cores=$(nproc); netdev=$(cat /proc/net/dev | tail -n +3 | awk "{print \$1\" \"\$2\" \"\$10}"); printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$load" "$ram" "$disk" "$uptime" "$os" "$kernel" "$arch" "$cores" "$netdev"'"#,
+    )?;
 
     let parts: Vec<&str> = output.trim_end().split('\t').collect();
-    let get = |i: usize| -> String {
-        parts.get(i).unwrap_or(&"").to_string()
-    };
+    let get = |i: usize| -> String { parts.get(i).unwrap_or(&"").to_string() };
 
     Ok(serde_json::json!({
         "load": get(0),
