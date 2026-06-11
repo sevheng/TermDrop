@@ -324,6 +324,22 @@ pub fn get_port_forward_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Po
     }
 }
 
+pub fn update_port_forward(conn: &Connection, id: i64, fw: &NewPortForward) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE port_forwards SET name = ?1, kind = ?2, local_host = ?3, local_port = ?4, remote_host = ?5, remote_port = ?6 WHERE id = ?7",
+        params![
+            &fw.name,
+            &fw.kind,
+            &fw.local_host,
+            fw.local_port,
+            fw.remote_host.as_deref(),
+            fw.remote_port,
+            id,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn delete_port_forward(conn: &Connection, id: i64) -> SqlResult<()> {
     conn.execute("DELETE FROM port_forwards WHERE id = ?1", params![id])?;
     Ok(())

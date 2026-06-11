@@ -370,6 +370,10 @@ export const useConnectionStore = defineStore('connection', () => {
     return await invoke('add_port_forward', { forward })
   }
 
+  async function updatePortForward(id, forward) {
+    await invoke('update_port_forward', { id, forward })
+  }
+
   async function deletePortForward(id) {
     await invoke('delete_port_forward', { id })
   }
@@ -439,6 +443,7 @@ export const useConnectionStore = defineStore('connection', () => {
     sftpRmdir,
     getPortForwards,
     addPortForward,
+    updatePortForward,
     deletePortForward,
     startPortForward,
     stopPortForward,

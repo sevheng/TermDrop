@@ -1033,6 +1033,16 @@ fn add_port_forward(
 }
 
 #[tauri::command]
+fn update_port_forward(
+    state: State<'_, AppState>,
+    id: i64,
+    forward: db::NewPortForward,
+) -> Result<(), String> {
+    let conn = state.db.get().map_err(db_err)?;
+    db::update_port_forward(&conn, id, &forward).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn delete_port_forward(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state.forward_manager.stop(id);
     let conn = state.db.get().map_err(db_err)?;
@@ -1761,6 +1771,7 @@ fn main() {
             set_setting,
             get_port_forwards,
             add_port_forward,
+            update_port_forward,
             delete_port_forward,
             start_port_forward,
             stop_port_forward,

@@ -59,6 +59,13 @@
               Stop
             </button>
             <button
+              @click="editForward(fw)"
+              class="text-[10px] bg-[#3c3c3c] hover:bg-[#4c4c4c] text-[#858585] hover:text-[#cccccc] py-1 px-2 rounded transition-colors"
+              title="Edit"
+            >
+              <Pencil :size="10" />
+            </button>
+            <button
               v-if="activeStatus[fw.id] && fw.kind === 'local'"
               @click="openForward(fw)"
               class="text-[10px] bg-[#0e639c]/10 hover:bg-[#0e639c]/20 text-[#75beff] py-1 px-2 rounded transition-colors"
@@ -82,7 +89,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink } from 'lucide-vue-next'
+import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink, Pencil } from 'lucide-vue-next'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 const props = defineProps({
@@ -119,6 +126,10 @@ function openForward(fw) {
   openUrl(url).catch((err) => {
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open: ' + err, type: 'error' } }))
   })
+}
+
+function editForward(fw) {
+  window.dispatchEvent(new CustomEvent('edit-port-forward', { detail: { hostId: props.hostId, forward: fw } }))
 }
 
 async function stopForward(id) {

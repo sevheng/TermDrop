@@ -5,7 +5,7 @@
     @click.self="onClose"
   >
     <div class="bg-[#252526] rounded-lg p-6 w-[28rem] border border-[#3c3c3c] shadow-xl">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">Add Port Forward</h3>
+      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">{{ isEditing ? 'Edit Port Forward' : 'Add Port Forward' }}</h3>
 
       <div class="space-y-4">
         <!-- Name -->
@@ -103,7 +103,7 @@
           class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
-          {{ loading ? 'Adding...' : 'Add Forward' }}
+          {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Forward') }}
         </button>
       </div>
     </div>
@@ -118,9 +118,12 @@ const props = defineProps({
   show: Boolean,
   hostId: Number,
   prefill: Object,
+  editForward: Object,
 })
 
 const emit = defineEmits(['save', 'close'])
+
+const isEditing = computed(() => !!props.editForward)
 
 const form = ref({
   name: '',
@@ -136,7 +139,16 @@ const loading = ref(false)
 
 watch(() => props.show, (visible) => {
   if (visible) {
-    if (props.prefill) {
+    if (props.editForward) {
+      form.value = {
+        name: props.editForward.name || '',
+        kind: props.editForward.kind || 'local',
+        local_host: props.editForward.local_host || '127.0.0.1',
+        local_port: props.editForward.local_port ?? null,
+        remote_host: props.editForward.remote_host || 'localhost',
+        remote_port: props.editForward.remote_port ?? null,
+      }
+    } else if (props.prefill) {
       form.value = {
         name: props.prefill.name || '',
         kind: props.prefill.kind || 'local',
@@ -215,7 +227,10 @@ async function onSave() {
       remote_host: form.value.kind === 'local' ? form.value.remote_host.trim() : null,
       remote_port: form.value.kind === 'local' ? Number(form.value.remote_port) : null,
     }
-    emit('save', forwardData)
+    emit('save', {
+      id: props.editForward?.id ?? null,
+      forwardData,
+    })
   } finally {
     loading.value = false
   }
