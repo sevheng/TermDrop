@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
+| 0.1.x   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -24,6 +25,7 @@ We aim to respond within 48 hours and will work with you to verify, address, and
 
 - Passwords are stored exclusively in the OS keyring (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux) — never in the local SQLite database or any cloud service.
 - All SSH connections use the `ssh2` crate with standard OpenSSL/libssh2 encryption.
+- MongoDB connection URIs (including credentials) are stored in the local SQLite database. Use connection strings with read-only users where possible.
 - No telemetry, analytics, or cloud sync.
 - All data remains local to the user's machine.
 
