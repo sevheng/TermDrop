@@ -44,6 +44,44 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Prepare MongoDB tools config
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "macos-14" ]]; then
+            cat > src-tauri/tauri.macos.conf.json <<'EOF'
+{
+  "bundle": {
+    "resources": {
+      "binaries/macos-aarch64/mongodump": "mongodump",
+      "binaries/macos-aarch64/mongorestore": "mongorestore"
+    }
+  }
+}
+EOF
+          elif [[ "${{ matrix.platform }}" == "windows-2022" ]]; then
+            cat > src-tauri/tauri.windows.conf.json <<'EOF'
+{
+  "bundle": {
+    "resources": {
+      "binaries/windows-x86_64/mongodump.exe": "mongodump.exe",
+      "binaries/windows-x86_64/mongorestore.exe": "mongorestore.exe"
+    }
+  }
+}
+EOF
+          else
+            cat > src-tauri/tauri.linux.conf.json <<'EOF'
+{
+  "bundle": {
+    "resources": {
+      "binaries/linux-x86_64/mongodump": "mongodump",
+      "binaries/linux-x86_64/mongorestore": "mongorestore"
+    }
+  }
+}
+EOF
+          fi
+
       - name: Debug signing key
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

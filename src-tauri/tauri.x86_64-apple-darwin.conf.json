@@ -1,8 +1,0 @@
-{
-  "bundle": {
-    "resources": {
-      "binaries/macos-x86_64/mongodump": "mongodump",
-      "binaries/macos-x86_64/mongorestore": "mongorestore"
-    }
-  }
-}
