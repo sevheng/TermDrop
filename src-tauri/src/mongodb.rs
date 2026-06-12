@@ -26,6 +26,15 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
                     return Ok(macos_bundle);
                 }
             }
+
+            // Linux .deb/AppImage: usr/bin/ -> usr/lib/TermDrop/
+            #[cfg(target_os = "linux")]
+            {
+                let linux_bundle = exe_dir.join("../lib/TermDrop").join(&name);
+                if linux_bundle.exists() {
+                    return Ok(linux_bundle);
+                }
+            }
         }
     }
 

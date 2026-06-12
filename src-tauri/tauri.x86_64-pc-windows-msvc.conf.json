@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/windows-x86_64/mongodump.exe": "mongodump.exe",
+      "binaries/windows-x86_64/mongorestore.exe": "mongorestore.exe"
+    }
+  }
+}
