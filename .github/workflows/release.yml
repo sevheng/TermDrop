@@ -47,6 +47,7 @@ jobs:
       - name: Debug signing key
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        shell: bash
         run: |
           echo "=== Debug Signing Key ==="
           if [ -z "$SIGNING_KEY" ]; then
