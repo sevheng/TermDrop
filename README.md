@@ -178,6 +178,7 @@ Output:
 
 Issues and pull requests are welcome!
 
+- Read [`CONTRIBUTING.md`](CONTRIBUTING.md) to get started
 - Read [`SECURITY.md`](SECURITY.md) before reporting security issues
 - See [`CHANGELOG.md`](CHANGELOG.md) for release history
 - Licensed under [MIT](LICENSE)
