@@ -229,6 +229,17 @@
       @cancel="confirmDialog.show = false"
     />
 
+    <PromptDialog
+      :show="promptDialog.show"
+      :title="promptDialog.title"
+      :message="promptDialog.message"
+      :placeholder="promptDialog.placeholder"
+      :type="promptDialog.type"
+      confirm-text="Connect"
+      @confirm="onPromptDialogConfirm"
+      @cancel="onPromptDialogCancel"
+    />
+
   </div>
 </template>
 
@@ -237,6 +248,7 @@ import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
@@ -268,6 +280,14 @@ const confirmDialog = ref({
   message: '',
   danger: false,
   onConfirm: () => {},
+})
+
+const promptDialog = ref({
+  show: false,
+  title: 'Prompt',
+  message: '',
+  placeholder: '',
+  type: 'text',
 })
 
 function openConfirm(options) {
@@ -341,6 +361,27 @@ function onEditPortForward(event) {
     editForward.value = forward || null
     showForwardModal.value = true
   }
+}
+
+function onPromptDialogOpen(event) {
+  const detail = event.detail || {}
+  promptDialog.value = {
+    show: true,
+    title: detail.title || 'Prompt',
+    message: detail.message || '',
+    placeholder: detail.placeholder || '',
+    type: detail.type || 'text',
+  }
+}
+
+function onPromptDialogConfirm(value) {
+  promptDialog.value.show = false
+  window.dispatchEvent(new CustomEvent('prompt-dialog-response', { detail: value }))
+}
+
+function onPromptDialogCancel() {
+  promptDialog.value.show = false
+  window.dispatchEvent(new CustomEvent('prompt-dialog-response', { detail: null }))
 }
 
 // Global keyboard shortcuts
@@ -438,11 +479,13 @@ onMounted(() => {
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.addEventListener('edit-port-forward', onEditPortForward)
+  window.addEventListener('prompt-dialog-open', onPromptDialogOpen)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.removeEventListener('edit-port-forward', onEditPortForward)
+  window.removeEventListener('prompt-dialog-open', onPromptDialogOpen)
 })
 </script>

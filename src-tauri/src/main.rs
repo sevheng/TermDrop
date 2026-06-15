@@ -1386,7 +1386,10 @@ async fn run_security_audit(
 
     // Fast path: fresh cache
     if !force {
-        let cache = state.security_report_cache.lock().map_err(|e| e.to_string())?;
+        let cache = state
+            .security_report_cache
+            .lock()
+            .map_err(|e| e.to_string())?;
         if let Some(cached) = cache.get(&host_id) {
             if cached.cached_at.elapsed().as_secs() < CACHE_FRESH_SECS {
                 return Ok(cached.report.clone());
@@ -1410,7 +1413,10 @@ async fn run_security_audit(
 
     // Re-check cache after acquiring lock
     if !force {
-        let cache = state.security_report_cache.lock().map_err(|e| e.to_string())?;
+        let cache = state
+            .security_report_cache
+            .lock()
+            .map_err(|e| e.to_string())?;
         if let Some(cached) = cache.get(&host_id) {
             let elapsed = cached.cached_at.elapsed().as_secs();
             if elapsed < CACHE_FRESH_SECS {

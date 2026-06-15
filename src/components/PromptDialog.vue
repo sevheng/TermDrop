@@ -11,7 +11,7 @@
       <input
         ref="inputRef"
         v-model="inputValue"
-        type="text"
+        :type="type"
         :placeholder="placeholder"
         class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] placeholder-[#6e6e6e] focus:outline-none focus:border-[#007acc] mb-4"
         @keydown.enter="onConfirm"
@@ -50,6 +50,7 @@ const props = defineProps({
   title: { type: String, default: 'Prompt' },
   message: { type: String, default: '' },
   placeholder: { type: String, default: '' },
+  type: { type: String, default: 'text' },
   defaultValue: { type: String, default: '' },
   confirmText: { type: String, default: 'Confirm' },
   cancelText: { type: String, default: 'Cancel' },

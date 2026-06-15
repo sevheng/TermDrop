@@ -643,14 +643,20 @@ async function handleSave({ id, hostData, password }) {
     await store.updateHost(id, hostData)
     if (password) {
       await store.storePassword(id, password).catch((err) => {
-        console.warn('Failed to store password in keyring:', err)
+        console.warn('Failed to store password:', err)
+        window.dispatchEvent(new CustomEvent('app-toast', {
+          detail: { message: 'Password could not be saved: ' + err, type: 'error' },
+        }))
       })
     }
   } else {
     const newId = await store.addHost(hostData)
     if (password) {
       await store.storePassword(newId, password).catch((err) => {
-        console.warn('Failed to store password in keyring:', err)
+        console.warn('Failed to store password:', err)
+        window.dispatchEvent(new CustomEvent('app-toast', {
+          detail: { message: 'Password could not be saved: ' + err, type: 'error' },
+        }))
       })
     }
     if (pendingGroupForNewHost.value !== null) {

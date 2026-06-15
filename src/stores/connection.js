@@ -7,6 +7,22 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 const INVOKE_TIMEOUT_MS = 10000 // 10 seconds
 
 /**
+ * Show the global PromptDialog and return the user's input.
+ */
+function showPromptDialog(title, message, placeholder = '', type = 'text') {
+  return new Promise((resolve) => {
+    const responseHandler = (event) => {
+      window.removeEventListener('prompt-dialog-response', responseHandler)
+      resolve(event.detail)
+    }
+    window.addEventListener('prompt-dialog-response', responseHandler)
+    window.dispatchEvent(new CustomEvent('prompt-dialog-open', {
+      detail: { title, message, placeholder, type },
+    }))
+  })
+}
+
+/**
  * Wrap Tauri invoke() with a freeze-detection timer.
  * If the call takes longer than INVOKE_TIMEOUT_MS, a warning toast is shown.
  */
@@ -228,7 +244,12 @@ export const useConnectionStore = defineStore('connection', () => {
       connectingHostId.value = null
       const errStr = String(err)
       if (!isKeyAuth && (errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')) && !providedPassword) {
-        const password = window.prompt('Password not found in keyring. Enter password for this host:')
+        const password = await showPromptDialog(
+          'Password required',
+          'Password not found in keyring. Enter password for this host:',
+          '',
+          'password',
+        )
         if (password) {
           await storePassword(hostId, password).catch(() => {})
           return connect(hostId, password)

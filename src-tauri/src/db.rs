@@ -426,6 +426,8 @@ mod tests {
             username: "admin".to_string(),
             auth_type: "password".to_string(),
             key_path: None,
+            group: None,
+            favorite: None,
             mongo_uri: None,
             mongo_local_uri: None,
         };
