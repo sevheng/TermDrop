@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-06-15
+
+### Fixed
+- **MongoDB dump/restore on macOS and in test builds** — copy bundled `mongodump`/`mongorestore` next to the compiled executable during the Tauri build and search the Cargo profile parent directory so tools are found from `target/debug` and `target/debug/deps`
+- **MongoDB root-user authentication** — automatically add `authSource=admin` to connection strings that contain credentials but no explicit `authSource`, fixing auth failures during dump, restore, and sync
+
+### Added
+- Unit tests for bundled MongoDB tool resolution and URI normalization
+
 ## [0.2.5] — 2026-06-11
 
 ### Fixed
