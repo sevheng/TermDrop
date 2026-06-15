@@ -12,10 +12,20 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
     // Try bundled binary next to the executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            // Same directory as executable (Windows, Linux AppImage/standalone)
+            // Same directory as executable (Windows, Linux AppImage/standalone,
+            // and cargo's target/debug or target/release directories)
             let bundled = exe_dir.join(&name);
             if bundled.exists() {
                 return Ok(bundled);
+            }
+
+            // Cargo sometimes places test/run binaries in target/<profile>/deps/;
+            // the profile directory (e.g. target/debug) is the parent.
+            if let Some(profile_dir) = exe_dir.parent() {
+                let bundled = profile_dir.join(&name);
+                if bundled.exists() {
+                    return Ok(bundled);
+                }
             }
 
             // macOS app bundle: Contents/MacOS/ -> Contents/Resources/
@@ -42,8 +52,54 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
     Ok(std::path::PathBuf::from(&name))
 }
 
+/// Returns true if the MongoDB URI has a path component after the authority.
+fn mongo_uri_has_path(uri: &str) -> bool {
+    let Some(scheme_end) = uri.find("://") else {
+        return false;
+    };
+    let authority_start = scheme_end + 3;
+    uri[authority_start..]
+        .find(&['/', '?', '#'][..])
+        .map(|idx| uri.as_bytes()[authority_start + idx] == b'/')
+        .unwrap_or(false)
+}
+
+/// Ensure a MongoDB URI authenticates against the `admin` database when
+/// credentials are provided but no authSource is set. Root users created via
+/// `MONGO_INITDB_ROOT_USERNAME` live in `admin`, so tools/drivers fail without
+/// this when the connection string points at another database.
+fn normalize_mongo_uri(uri: &str) -> String {
+    // No credentials -> nothing to fix.
+    if !uri.contains('@') {
+        return uri.to_string();
+    }
+    // Already has an auth source -> leave it alone.
+    if uri.to_ascii_lowercase().contains("authsource=") {
+        return uri.to_string();
+    }
+
+    // Split base and query; make sure there is a '/' before the query string.
+    let (base, query) = match uri.find('?') {
+        Some(idx) => (&uri[..idx], Some(&uri[idx + 1..])),
+        None => (uri, None),
+    };
+    let base = if mongo_uri_has_path(base) || base.ends_with('/') {
+        base.to_string()
+    } else {
+        format!("{}/", base)
+    };
+
+    let new_query = match query {
+        Some(q) if !q.is_empty() => format!("authSource=admin&{}", q),
+        _ => "authSource=admin".to_string(),
+    };
+
+    format!("{}?{}", base, new_query)
+}
+
 pub async fn list_databases(uri: &str) -> Result<Vec<String>, String> {
-    let options = ClientOptions::parse(uri)
+    let uri = normalize_mongo_uri(uri);
+    let options = ClientOptions::parse(&uri)
         .await
         .map_err(|e| format!("parse uri: {}", e))?;
     let client = Client::with_options(options).map_err(|e| format!("create client: {}", e))?;
@@ -55,7 +111,8 @@ pub async fn list_databases(uri: &str) -> Result<Vec<String>, String> {
 }
 
 pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String> {
-    let options = ClientOptions::parse(uri)
+    let uri = normalize_mongo_uri(uri);
+    let options = ClientOptions::parse(&uri)
         .await
         .map_err(|e| format!("parse uri: {}", e))?;
     let client = Client::with_options(options).map_err(|e| format!("create client: {}", e))?;
@@ -77,8 +134,11 @@ pub async fn sync_collections(
     collections: Vec<String>,
     drop_first: bool,
 ) -> Result<(), String> {
+    let remote_uri = normalize_mongo_uri(remote_uri);
+    let local_uri = normalize_mongo_uri(local_uri);
+
     // Try CLI fast path first
-    match try_cli_sync(remote_uri, local_uri, db, &collections, drop_first).await {
+    match try_cli_sync(&remote_uri, &local_uri, db, &collections, drop_first).await {
         Ok(()) => {
             let _ = window.emit("mongodb-sync-done", serde_json::json!({"db": db}));
             return Ok(());
@@ -89,7 +149,7 @@ pub async fn sync_collections(
     }
 
     // Fallback to driver-based streaming
-    driver_sync(window, remote_uri, local_uri, db, collections, drop_first).await
+    driver_sync(window, &remote_uri, &local_uri, db, collections, drop_first).await
 }
 
 async fn try_cli_sync(
@@ -279,7 +339,7 @@ pub async fn dump_collections(
     collections: Vec<String>,
     output_dir: &str,
 ) -> Result<(), String> {
-    let remote_uri = remote_uri.to_string();
+    let remote_uri = normalize_mongo_uri(remote_uri);
     let db = db.to_string();
     let collections = collections.to_vec();
     let output_dir = output_dir.to_string();
@@ -297,7 +357,7 @@ pub async fn dump_collections(
         );
 
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
-        cmd.arg(format!("--uri={}", remote_uri))
+        cmd.arg(format!("--uri={}", &remote_uri))
             .arg(format!("--db={}", db))
             .arg("--gzip")
             .arg(format!("--out={}", output_dir));
@@ -341,7 +401,7 @@ pub async fn restore_collections(
     collections: Vec<String>,
     input_dir: &str,
 ) -> Result<(), String> {
-    let remote_uri = remote_uri.to_string();
+    let remote_uri = normalize_mongo_uri(remote_uri);
     let db = db.to_string();
     let collections = collections.to_vec();
     let input_dir = input_dir.to_string();
@@ -359,7 +419,7 @@ pub async fn restore_collections(
         );
 
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-        cmd.arg(format!("--uri={}", remote_uri))
+        cmd.arg(format!("--uri={}", &remote_uri))
             .arg(format!("--db={}", db))
             .arg("--drop")
             .arg(&input_dir);
@@ -391,4 +451,53 @@ pub async fn restore_collections(
     })
     .await
     .map_err(|e| format!("restore task panicked: {}", e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_mongo_tools_are_resolved() {
+        let dump = resolve_mongo_tool("mongodump").expect("failed to resolve mongodump");
+        assert!(dump.exists(), "mongodump not found at {:?}", dump);
+        let restore = resolve_mongo_tool("mongorestore").expect("failed to resolve mongorestore");
+        assert!(restore.exists(), "mongorestore not found at {:?}", restore);
+    }
+
+    #[test]
+    fn normalize_mongo_uri_adds_auth_source_for_root_user() {
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017"),
+            "mongodb://root:example@localhost:27017/?authSource=admin"
+        );
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017/termdrop_test"),
+            "mongodb://root:example@localhost:27017/termdrop_test?authSource=admin"
+        );
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017/?retryWrites=true"),
+            "mongodb://root:example@localhost:27017/?authSource=admin&retryWrites=true"
+        );
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017/?"),
+            "mongodb://root:example@localhost:27017/?authSource=admin"
+        );
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017?retryWrites=true"),
+            "mongodb://root:example@localhost:27017/?authSource=admin&retryWrites=true"
+        );
+    }
+
+    #[test]
+    fn normalize_mongo_uri_leaves_uris_without_credentials_or_existing_auth_source_alone() {
+        assert_eq!(
+            normalize_mongo_uri("mongodb://localhost:27017"),
+            "mongodb://localhost:27017"
+        );
+        assert_eq!(
+            normalize_mongo_uri("mongodb://root:example@localhost:27017/?authSource=custom"),
+            "mongodb://root:example@localhost:27017/?authSource=custom"
+        );
+    }
 }

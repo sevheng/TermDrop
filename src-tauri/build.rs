@@ -1,4 +1,15 @@
-use std::{env, path::Path};
+use std::{env, fs, path::{Path, PathBuf}};
+
+#[cfg(unix)]
+fn set_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).unwrap();
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) {}
 
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();
@@ -33,6 +44,27 @@ fn main() {
                 target, src
             );
         }
+    }
+
+    // Copy bundled MongoDB tools next to the compiled executable so they can be
+    // discovered by `resolve_mongo_tool` during `cargo run`/dev and bundled builds.
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").map(PathBuf::from).unwrap_or_default();
+    let target_dir = env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join("target"));
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let out_dir = target_dir.join(&profile);
+
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let tools = [("mongodump", dump_src.as_str()), ("mongorestore", restore_src.as_str())];
+    for (name, src) in &tools {
+        let dest = out_dir.join(format!("{}{}", name, ext));
+        if let Err(e) = fs::copy(src, &dest) {
+            panic!("Failed to copy bundled MongoDB tool {}: {}", name, e);
+        }
+        set_executable(&dest);
+        println!("cargo:rerun-if-changed={}", src);
     }
 
     // NOTE: The platform-specific Tauri config overlays (tauri.macos.conf.json,
