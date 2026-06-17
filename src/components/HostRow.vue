@@ -102,9 +102,13 @@ const subtitle = computed(() => {
   if (isMongoOnly.value) {
     // Show truncated MongoDB URI (hide password)
     const uri = props.host.mongo_uri || ''
+    const isSrv = uri.trim().startsWith('mongodb+srv://')
     // Try to extract host:port from URI
     try {
       const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, 'http://'))
+      if (isSrv) {
+        return `mongodb+srv://${url.hostname}`
+      }
       return `mongodb://${url.hostname}${url.port ? ':' + url.port : ''}`
     } catch {
       return uri.length > 35 ? uri.slice(0, 35) + '…' : uri
