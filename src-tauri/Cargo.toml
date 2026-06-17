@@ -1,6 +1,6 @@
 [package]
 name = "termdrop"
-version = "0.2.8"
+version = "0.2.9"
 description = "A lightweight SSH client and SFTP browser"
 authors = ["sevheng"]
 edition = "2021"
