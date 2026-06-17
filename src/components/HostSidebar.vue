@@ -277,7 +277,6 @@
     <div
       v-if="showSshConfigDialog"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      @click.self="showSshConfigDialog = false"
     >
       <div class="bg-[#252526] border border-[#3c3c3c] rounded-lg w-96 max-h-[80vh] flex flex-col shadow-xl">
         <div class="px-4 py-3 border-b border-[#3c3c3c] flex items-center justify-between">

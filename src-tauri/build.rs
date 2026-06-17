@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 #[cfg(unix)]
 fn set_executable(path: &Path) {
@@ -48,7 +51,9 @@ fn main() {
 
     // Copy bundled MongoDB tools next to the compiled executable so they can be
     // discovered by `resolve_mongo_tool` during `cargo run`/dev and bundled builds.
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").map(PathBuf::from).unwrap_or_default();
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let target_dir = env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join("target"));
@@ -57,7 +62,10 @@ fn main() {
 
     fs::create_dir_all(&out_dir).unwrap();
 
-    let tools = [("mongodump", dump_src.as_str()), ("mongorestore", restore_src.as_str())];
+    let tools = [
+        ("mongodump", dump_src.as_str()),
+        ("mongorestore", restore_src.as_str()),
+    ];
     for (name, src) in &tools {
         let dest = out_dir.join(format!("{}{}", name, ext));
         if let Err(e) = fs::copy(src, &dest) {

@@ -2,7 +2,6 @@
   <div
     v-if="show"
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-    @click.self="onCancel"
   >
     <div class="bg-[#252526] rounded-lg p-5 w-80 border border-[#3c3c3c] shadow-xl">
       <h3 class="text-base font-semibold text-[#cccccc] mb-1">{{ title }}</h3>

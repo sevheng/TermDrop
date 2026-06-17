@@ -2,7 +2,6 @@
   <div
     v-if="show"
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-    @click.self="onClose"
   >
     <div class="bg-[#252526] rounded-lg p-5 w-[28rem] max-w-[90vw] border border-[#3c3c3c] shadow-xl max-h-[80vh] flex flex-col">
       <div class="flex items-center justify-between mb-4">

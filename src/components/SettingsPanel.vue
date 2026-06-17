@@ -1,5 +1,5 @@
 <template>
-  <div v-if="show" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="$emit('close')">
+  <div v-if="show" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-[#252526] rounded-lg p-6 w-96 border border-[#3c3c3c] shadow-xl">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-4">Settings</h3>
 
@@ -52,6 +52,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { getVersion } from '@tauri-apps/api/app'
 import { useConnectionStore } from '../stores/connection.js'
 import { checkForUpdates } from '../composables/useUpdater.js'
 
@@ -73,6 +74,11 @@ watch(() => props.show, async (isOpen) => {
     await store.loadSettings()
     fontSize.value = parseInt(store.settings.font_size || '14')
     downloadPath.value = store.settings.download_path || ''
+    try {
+      appVersion.value = await getVersion()
+    } catch {
+      appVersion.value = '0.2.3'
+    }
   }
 })
 

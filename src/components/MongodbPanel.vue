@@ -151,6 +151,15 @@
       </label>
 
       <div v-if="syncing" class="space-y-1">
+        <div class="flex items-center justify-between text-[10px] text-[#6e6e6e]">
+          <span>{{ syncProgress.stage }} {{ syncProgress.collection }}</span>
+          <button
+            @click="cancelOperation"
+            class="text-[#f44336] hover:text-red-300 underline"
+          >
+            Cancel
+          </button>
+        </div>
         <div class="h-1.5 bg-[#3c3c3c] rounded-full overflow-hidden">
           <div
             class="h-full bg-[#007acc] rounded-full transition-all duration-300"
@@ -158,7 +167,6 @@
           />
         </div>
         <div class="flex justify-between text-[10px] text-[#6e6e6e]">
-          <span>{{ syncProgress.stage }} {{ syncProgress.collection }}</span>
           <span>{{ syncProgress.synced }} / {{ syncProgress.total }}</span>
         </div>
       </div>
@@ -260,6 +268,8 @@ const syncing = ref(false)
 const currentAction = ref('') // 'sync' | 'dump' | 'restore'
 const dropFirst = ref(false)
 const isRemoteToLocal = ref(true) // true = Remote→Local, false = Local→Remote
+const currentOpId = ref('')
+const aborting = ref(false)
 
 const syncProgress = ref({
   db: '',
@@ -269,6 +279,14 @@ const syncProgress = ref({
   total: 0,
   percent: 0,
 })
+
+function resetOperationState() {
+  syncing.value = false
+  currentAction.value = ''
+  currentOpId.value = ''
+  aborting.value = false
+  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+}
 
 const remoteUri = computed(() => host.value?.mongo_uri || '')
 const localUri = computed(() => host.value?.mongo_local_uri || '')
@@ -490,9 +508,12 @@ async function startSync() {
 
   syncing.value = true
   currentAction.value = 'sync'
+  currentOpId.value = crypto.randomUUID()
+  aborting.value = false
   syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
 
   for (const entry of entries) {
+    if (aborting.value || !currentOpId.value) break
     try {
       await invoke('mongodb_sync', {
         remoteUri: sourceUri.value,
@@ -500,16 +521,21 @@ async function startSync() {
         db: entry.db,
         collections: entry.collections,
         dropFirst: dropFirst.value,
+        opId: currentOpId.value,
       })
       toast(`Synced ${entry.db}: ${entry.collections.join(', ')}`, 'success')
     } catch (err) {
-      toast(`Sync failed for ${entry.db}: ${err}`, 'error')
+      if (String(err).includes('cancelled')) {
+        resetOperationState()
+        toast(`Cancelled ${entry.db}`, 'info')
+        break
+      } else {
+        toast(`Sync failed for ${entry.db}: ${err}`, 'error')
+      }
     }
   }
 
-  syncing.value = false
-  currentAction.value = ''
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  resetOperationState()
   // Refresh the destination side
   if (isRemoteToLocal.value) {
     await loadLocalDatabases()
@@ -535,25 +561,33 @@ async function startDump() {
 
   syncing.value = true
   currentAction.value = 'dump'
+  currentOpId.value = crypto.randomUUID()
+  aborting.value = false
   syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
 
   for (const entry of entries) {
+    if (aborting.value || !currentOpId.value) break
     try {
       await invoke('mongodb_dump', {
         remoteUri: remoteUri.value,
         db: entry.db,
         collections: entry.collections,
         outputDir,
+        opId: currentOpId.value,
       })
       toast(`Dumped ${entry.db}: ${entry.collections.join(', ')}`, 'success')
     } catch (err) {
-      toast(`Dump failed for ${entry.db}: ${err}`, 'error')
+      if (String(err).includes('cancelled')) {
+        resetOperationState()
+        toast(`Cancelled ${entry.db}`, 'info')
+        break
+      } else {
+        toast(`Dump failed for ${entry.db}: ${err}`, 'error')
+      }
     }
   }
 
-  syncing.value = false
-  currentAction.value = ''
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  resetOperationState()
 }
 
 async function startRestore() {
@@ -573,29 +607,48 @@ async function startRestore() {
 
   syncing.value = true
   currentAction.value = 'restore'
+  currentOpId.value = crypto.randomUUID()
+  aborting.value = false
   syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
 
   for (const entry of entries) {
+    if (aborting.value || !currentOpId.value) break
     try {
       await invoke('mongodb_restore', {
         remoteUri: remoteUri.value,
         db: entry.db,
         collections: entry.collections,
         inputDir,
+        opId: currentOpId.value,
       })
       toast(`Restored ${entry.db}: ${entry.collections.join(', ')}`, 'success')
     } catch (err) {
-      toast(`Restore failed for ${entry.db}: ${err}`, 'error')
+      if (String(err).includes('cancelled')) {
+        resetOperationState()
+        toast(`Cancelled ${entry.db}`, 'info')
+        break
+      } else {
+        toast(`Restore failed for ${entry.db}: ${err}`, 'error')
+      }
     }
   }
 
-  syncing.value = false
-  currentAction.value = ''
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  resetOperationState()
+}
+
+async function cancelOperation() {
+  if (!syncing.value || !currentOpId.value || aborting.value) return
+  aborting.value = true
+  try {
+    await invoke('mongodb_cancel', { opId: currentOpId.value })
+  } catch (err) {
+    toast(`Failed to cancel: ${err}`, 'error')
+    aborting.value = false
+  }
 }
 
 let unlistenProgress = null
-let unlistenDone = null
+let unlistenCancelled = null
 
 onMounted(async () => {
   await loadHost()
@@ -608,24 +661,29 @@ onMounted(async () => {
 
   unlistenProgress = await listen('mongodb-sync-progress', (event) => {
     const p = event.payload
+    if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
     syncProgress.value = {
       db: p.db || '',
       collection: p.collection || '',
       stage: p.stage || '',
       synced: p.synced || 0,
       total: p.total || 0,
-      percent: p.total > 0 ? Math.round((p.synced / p.total) * 100) : 0,
+      percent: p.percent !== undefined
+        ? p.percent
+        : (p.total > 0 ? Math.round((p.synced / p.total) * 100) : 0),
     }
   })
 
-  unlistenDone = await listen('mongodb-sync-done', () => {
-    syncing.value = false
+  unlistenCancelled = await listen('mongodb-sync-cancelled', (event) => {
+    const p = event.payload
+    if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
+    resetOperationState()
   })
 })
 
 onUnmounted(() => {
   if (unlistenProgress) unlistenProgress()
-  if (unlistenDone) unlistenDone()
+  if (unlistenCancelled) unlistenCancelled()
 })
 
 watch(() => props.hostId, async () => {

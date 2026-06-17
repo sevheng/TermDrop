@@ -4,6 +4,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State, Window};
@@ -25,6 +27,11 @@ pub struct CachedSecurityReport {
     cached_at: std::time::Instant,
 }
 
+pub struct MongoOpHandle {
+    pub cancelled: Arc<AtomicBool>,
+    pub child: Option<Child>,
+}
+
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
     sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
@@ -36,6 +43,7 @@ pub struct AppState {
     security_report_cache: Arc<Mutex<HashMap<i64, CachedSecurityReport>>>,
     security_report_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
     forward_manager: port_forward::ForwardManager,
+    pub mongo_ops: Arc<Mutex<HashMap<String, MongoOpHandle>>>,
 }
 
 fn db_err(e: r2d2::Error) -> String {
@@ -51,6 +59,20 @@ where
         .await
         .map_err(|_| format!("Operation timed out after {} seconds", secs))?
         .map_err(|e| e.to_string())?
+}
+
+fn register_mongo_op(state: &State<'_, AppState>, op_id: String) -> Arc<AtomicBool> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let handle = MongoOpHandle {
+        cancelled: cancelled.clone(),
+        child: None,
+    };
+    state.mongo_ops.lock().unwrap().insert(op_id, handle);
+    cancelled
+}
+
+fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
+    state.mongo_ops.lock().unwrap().remove(op_id);
 }
 
 #[tauri::command]
@@ -1635,43 +1657,98 @@ async fn mongodb_list_collections(uri: String, db: String) -> Result<Vec<String>
 #[tauri::command]
 async fn mongodb_sync(
     window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
     remote_uri: String,
     local_uri: String,
     db: String,
     collections: Vec<String>,
     drop_first: bool,
 ) -> Result<(), String> {
-    mongodb::sync_collections(
+    let cancelled = register_mongo_op(&state, op_id.clone());
+    let mongo_ops = state.mongo_ops.clone();
+
+    let result = mongodb::sync_collections(
         window,
+        cancelled,
+        mongo_ops,
+        op_id.clone(),
         &remote_uri,
         &local_uri,
         &db,
         collections,
         drop_first,
     )
-    .await
+    .await;
+
+    unregister_mongo_op(&state, &op_id);
+    result
 }
 
 #[tauri::command]
 async fn mongodb_dump(
     window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
     remote_uri: String,
     db: String,
     collections: Vec<String>,
     output_dir: String,
 ) -> Result<(), String> {
-    mongodb::dump_collections(window, &remote_uri, &db, collections, &output_dir).await
+    let cancelled = register_mongo_op(&state, op_id.clone());
+    let mongo_ops = state.mongo_ops.clone();
+
+    let result = mongodb::dump_collections(
+        window,
+        cancelled,
+        mongo_ops,
+        op_id.clone(),
+        &remote_uri,
+        &db,
+        collections,
+        &output_dir,
+    )
+    .await;
+
+    unregister_mongo_op(&state, &op_id);
+    result
 }
 
 #[tauri::command]
 async fn mongodb_restore(
     window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
     remote_uri: String,
     db: String,
     collections: Vec<String>,
     input_dir: String,
 ) -> Result<(), String> {
-    mongodb::restore_collections(window, &remote_uri, &db, collections, &input_dir).await
+    let cancelled = register_mongo_op(&state, op_id.clone());
+    let mongo_ops = state.mongo_ops.clone();
+
+    let result = mongodb::restore_collections(
+        window,
+        cancelled,
+        mongo_ops,
+        op_id.clone(),
+        &remote_uri,
+        &db,
+        collections,
+        &input_dir,
+    )
+    .await;
+
+    unregister_mongo_op(&state, &op_id);
+    result
+}
+
+#[tauri::command]
+fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
+    let ops = state.mongo_ops.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(handle) = ops.get(&op_id) {
+        handle.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 fn main() {
@@ -1720,6 +1797,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db: pool,
             sessions: Mutex::new(HashMap::new()),
@@ -1731,6 +1809,7 @@ fn main() {
             security_report_cache: Arc::new(Mutex::new(HashMap::new())),
             security_report_fetching: Arc::new(Mutex::new(HashMap::new())),
             forward_manager: port_forward::ForwardManager::new(),
+            mongo_ops: Arc::new(Mutex::new(HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
@@ -1803,6 +1882,7 @@ fn main() {
             mongodb_sync,
             mongodb_dump,
             mongodb_restore,
+            mongodb_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

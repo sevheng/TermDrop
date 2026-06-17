@@ -2,7 +2,6 @@
   <div
     v-if="show"
     class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-    @click.self="onClose"
   >
     <div class="bg-[#252526] rounded-lg p-6 w-80 border border-[#3c3c3c] shadow-xl">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-5">

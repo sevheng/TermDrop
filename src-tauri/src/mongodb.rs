@@ -1,7 +1,31 @@
 use futures_util::stream::TryStreamExt;
 use mongodb::{options::ClientOptions, Client};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
+use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Window};
+
+fn set_mongo_child(
+    mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: &str,
+    child: Child,
+) {
+    let mut ops = mongo_ops.lock().unwrap();
+    if let Some(handle) = ops.get_mut(op_id) {
+        handle.child = Some(child);
+    }
+}
+
+fn take_mongo_child(
+    mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: &str,
+) -> Option<Child> {
+    let mut ops = mongo_ops.lock().unwrap();
+    ops.get_mut(op_id).and_then(|h| h.child.take())
+}
 
 /// Resolve the path to a MongoDB tool binary.
 /// Tries bundled binary first, then falls back to PATH.
@@ -128,6 +152,9 @@ pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String
 /// Tries mongodump+mongorestore first, falls back to driver streaming.
 pub async fn sync_collections(
     window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
     remote_uri: &str,
     local_uri: &str,
     db: &str,
@@ -138,21 +165,51 @@ pub async fn sync_collections(
     let local_uri = normalize_mongo_uri(local_uri);
 
     // Try CLI fast path first
-    match try_cli_sync(&remote_uri, &local_uri, db, &collections, drop_first).await {
+    match try_cli_sync(
+        window.clone(),
+        cancelled.clone(),
+        mongo_ops.clone(),
+        op_id.clone(),
+        &remote_uri,
+        &local_uri,
+        db,
+        &collections,
+        drop_first,
+    )
+    .await
+    {
         Ok(()) => {
-            let _ = window.emit("mongodb-sync-done", serde_json::json!({"db": db}));
+            let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": &op_id, "db": db}));
             return Ok(());
         }
         Err(e) => {
+            if e == "cancelled" {
+                // try_cli_sync already emitted mongodb-sync-cancelled
+                return Err(e);
+            }
             tracing::info!("CLI sync failed ({}), falling back to driver", e);
         }
     }
 
     // Fallback to driver-based streaming
-    driver_sync(window, &remote_uri, &local_uri, db, collections, drop_first).await
+    driver_sync(
+        window,
+        cancelled,
+        &op_id,
+        &remote_uri,
+        &local_uri,
+        db,
+        collections,
+        drop_first,
+    )
+    .await
 }
 
 async fn try_cli_sync(
+    window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
     remote_uri: &str,
     local_uri: &str,
     db: &str,
@@ -169,28 +226,105 @@ async fn try_cli_sync(
             std::env::temp_dir().join(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
         let archive_path_str = archive_path.to_string_lossy().to_string();
 
+        let start = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
+
+        let emit_progress = |percent: u64| {
+            let _ = window.emit(
+                "mongodb-sync-progress",
+                serde_json::json!({
+                    "opId": &op_id,
+                    "db": &db,
+                    "collection": "",
+                    "stage": "sync",
+                    "synced": 0,
+                    "total": 1,
+                    "percent": percent,
+                }),
+            );
+        };
+
+        emit_progress(0);
+
         // Step 1: mongodump from remote (dump whole DB; mongorestore will filter collections)
         let mut dump_cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
         dump_cmd
             .arg(format!("--uri={}", remote_uri))
             .arg(format!("--db={}", db))
             .arg("--gzip")
-            .arg(format!("--archive={}", archive_path_str));
+            .arg(format!("--archive={}", archive_path_str))
+            .stderr(std::process::Stdio::piped());
 
-        let output = dump_cmd
-            .output()
+        let mut dump_child = dump_cmd
+            .spawn()
             .map_err(|e| format!("mongodump failed to start: {} (is it installed?)", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("mongodump failed: {}", err));
+        let dump_stderr = dump_child.stderr.take().unwrap();
+        let dump_stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let dump_stderr_lines_clone = Arc::clone(&dump_stderr_lines);
+        let dump_stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(dump_stderr);
+            for line in reader.lines().flatten() {
+                dump_stderr_lines_clone.lock().unwrap().push(line);
+            }
+        });
+        set_mongo_child(&mongo_ops, &op_id, dump_child);
+
+        loop {
+            let mut child = take_mongo_child(&mongo_ops, &op_id)
+                .ok_or("mongodump child missing from registry")?;
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = dump_stderr_thread.join();
+                let _ = std::fs::remove_file(&archive_path);
+                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": &op_id, "db": &db}));
+                return Err("cancelled".into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        let _ = std::fs::remove_file(&archive_path);
+                        let _ = dump_stderr_thread.join();
+                        let lines = dump_stderr_lines.lock().unwrap();
+                        let err = lines
+                            .iter()
+                            .rev()
+                            .take(30)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(format!("mongodump failed: {}", err));
+                    }
+                    break;
+                }
+                Ok(None) => {
+                    set_mongo_child(&mongo_ops, &op_id, child);
+                    if last_emit.elapsed() >= Duration::from_millis(500) {
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                        let pulse = 10 + ((elapsed_ms / 500) % 80);
+                        emit_progress(pulse);
+                        last_emit = std::time::Instant::now();
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&archive_path);
+                    let _ = dump_stderr_thread.join();
+                    return Err(format!("failed to wait for mongodump: {}", e));
+                }
+            }
         }
+        let _ = dump_stderr_thread.join();
 
         // Step 2: mongorestore to local
         let mut restore_cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
         restore_cmd
             .arg(format!("--uri={}", local_uri))
             .arg("--gzip")
-            .arg(format!("--archive={}", archive_path_str));
+            .arg(format!("--archive={}", archive_path_str))
+            .stderr(std::process::Stdio::piped());
 
         if drop_first {
             restore_cmd.arg("--drop");
@@ -201,15 +335,69 @@ async fn try_cli_sync(
             restore_cmd.arg(format!("--nsInclude={}.{}", db, coll));
         }
 
-        let output = restore_cmd
-            .output()
+        let mut restore_child = restore_cmd
+            .spawn()
             .map_err(|e| format!("mongorestore failed to start: {} (is it installed?)", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("mongorestore failed: {}", err));
-        }
+        let restore_stderr = restore_child.stderr.take().unwrap();
+        let restore_stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let restore_stderr_lines_clone = Arc::clone(&restore_stderr_lines);
+        let restore_stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(restore_stderr);
+            for line in reader.lines().flatten() {
+                restore_stderr_lines_clone.lock().unwrap().push(line);
+            }
+        });
+        set_mongo_child(&mongo_ops, &op_id, restore_child);
+        last_emit = std::time::Instant::now() - Duration::from_millis(500);
 
-        // Cleanup
+        loop {
+            let mut child = take_mongo_child(&mongo_ops, &op_id)
+                .ok_or("mongorestore child missing from registry")?;
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = restore_stderr_thread.join();
+                let _ = std::fs::remove_file(&archive_path);
+                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": &op_id, "db": &db}));
+                return Err("cancelled".into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        let _ = std::fs::remove_file(&archive_path);
+                        let _ = restore_stderr_thread.join();
+                        let lines = restore_stderr_lines.lock().unwrap();
+                        let err = lines
+                            .iter()
+                            .rev()
+                            .take(30)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(format!("mongorestore failed: {}", err));
+                    }
+                    break;
+                }
+                Ok(None) => {
+                    set_mongo_child(&mongo_ops, &op_id, child);
+                    if last_emit.elapsed() >= Duration::from_millis(500) {
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                        let pulse = 10 + ((elapsed_ms / 500) % 80);
+                        emit_progress(pulse);
+                        last_emit = std::time::Instant::now();
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&archive_path);
+                    let _ = restore_stderr_thread.join();
+                    return Err(format!("failed to wait for mongorestore: {}", e));
+                }
+            }
+        }
+        let _ = restore_stderr_thread.join();
         let _ = std::fs::remove_file(&archive_path);
 
         Ok(())
@@ -220,6 +408,8 @@ async fn try_cli_sync(
 
 async fn driver_sync(
     window: Window,
+    cancelled: Arc<AtomicBool>,
+    op_id: &str,
     remote_uri: &str,
     local_uri: &str,
     db: &str,
@@ -242,9 +432,15 @@ async fn driver_sync(
     let local_db = local_client.database(db);
 
     for collection_name in &collections {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+            return Err("cancelled".into());
+        }
+
         let _ = window.emit(
             "mongodb-sync-progress",
             serde_json::json!({
+                "opId": op_id,
                 "db": db,
                 "collection": collection_name,
                 "stage": "count",
@@ -281,6 +477,11 @@ async fn driver_sync(
             .await
             .map_err(|e| format!("cursor {}: {}", collection_name, e))?
         {
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                return Err("cancelled".into());
+            }
+
             batch.push(doc);
             synced += 1;
 
@@ -297,6 +498,7 @@ async fn driver_sync(
                 let _ = window.emit(
                     "mongodb-sync-progress",
                     serde_json::json!({
+                        "opId": op_id,
                         "db": db,
                         "collection": collection_name,
                         "stage": "copy",
@@ -318,6 +520,7 @@ async fn driver_sync(
         let _ = window.emit(
             "mongodb-sync-progress",
             serde_json::json!({
+                "opId": op_id,
                 "db": db,
                 "collection": collection_name,
                 "stage": "done",
@@ -327,13 +530,16 @@ async fn driver_sync(
         );
     }
 
-    let _ = window.emit("mongodb-sync-done", serde_json::json!({"db": db}));
+    let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": op_id, "db": db}));
     Ok(())
 }
 
 /// Dump selected collections from remote to a local directory using mongodump.
 pub async fn dump_collections(
     window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
     remote_uri: &str,
     db: &str,
     collections: Vec<String>,
@@ -341,21 +547,9 @@ pub async fn dump_collections(
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
     let db = db.to_string();
-    let collections = collections.to_vec();
     let output_dir = output_dir.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "db": &db,
-                "collection": "",
-                "stage": "dump",
-                "synced": 0,
-                "total": collections.len(),
-            }),
-        );
-
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
         cmd.arg(format!("--uri={}", &remote_uri))
             .arg(format!("--db={}", db))
@@ -368,24 +562,110 @@ pub async fn dump_collections(
         }
         // For multiple collections, dump the whole DB (mongorestore will filter)
 
-        let output = cmd
-            .output()
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
             .map_err(|e| format!("mongodump failed to start: {} (is it installed?)", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("mongodump failed: {}", err));
-        }
+
+        // Drain stderr in a separate thread so the child process never blocks
+        // on a full stderr buffer while we poll for completion.
+        let stderr = child.stderr.take().unwrap();
+        let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr_lines_clone = Arc::clone(&stderr_lines);
+        let stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                stderr_lines_clone.lock().unwrap().push(line);
+            }
+        });
+
+        set_mongo_child(&mongo_ops, &op_id, child);
+
+        let start = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
 
         let _ = window.emit(
             "mongodb-sync-progress",
             serde_json::json!({
+                "opId": &op_id,
                 "db": &db,
                 "collection": "",
-                "stage": "done",
-                "synced": collections.len(),
-                "total": collections.len(),
+                "stage": "dump",
+                "synced": 0,
+                "total": 1,
+                "percent": 0,
             }),
         );
+
+        loop {
+            let mut child = take_mongo_child(&mongo_ops, &op_id)
+                .ok_or("mongodump child missing from registry")?;
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_thread.join();
+                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": &op_id, "db": &db}));
+                return Err("cancelled".into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = stderr_thread.join();
+                    let _ = window.emit(
+                        "mongodb-sync-progress",
+                        serde_json::json!({
+                            "opId": &op_id,
+                            "db": &db,
+                            "collection": "",
+                            "stage": "done",
+                            "synced": 1,
+                            "total": 1,
+                            "percent": 100,
+                        }),
+                    );
+                    if !status.success() {
+                        let lines = stderr_lines.lock().unwrap();
+                        let err = lines
+                            .iter()
+                            .rev()
+                            .take(30)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(format!("mongodump failed: {}", err));
+                    }
+                    break;
+                }
+                Ok(None) => {
+                    set_mongo_child(&mongo_ops, &op_id, child);
+                    if last_emit.elapsed() >= Duration::from_millis(500) {
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                        let pulse = 10 + ((elapsed_ms / 500) % 80);
+                        let _ = window.emit(
+                            "mongodb-sync-progress",
+                            serde_json::json!({
+                                "opId": &op_id,
+                                "db": &db,
+                                "collection": "",
+                                "stage": "dump",
+                                "synced": 0,
+                                "total": 1,
+                                "percent": pulse,
+                            }),
+                        );
+                        last_emit = std::time::Instant::now();
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stderr_thread.join();
+                    return Err(format!("failed to wait for mongodump: {}", e));
+                }
+            }
+        }
 
         Ok(())
     })
@@ -396,6 +676,9 @@ pub async fn dump_collections(
 /// Restore selected collections from a local directory to remote using mongorestore.
 pub async fn restore_collections(
     window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
     remote_uri: &str,
     db: &str,
     collections: Vec<String>,
@@ -403,21 +686,9 @@ pub async fn restore_collections(
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
     let db = db.to_string();
-    let collections = collections.to_vec();
     let input_dir = input_dir.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "db": &db,
-                "collection": "",
-                "stage": "restore",
-                "synced": 0,
-                "total": collections.len(),
-            }),
-        );
-
         let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
         cmd.arg(format!("--uri={}", &remote_uri))
             .arg(format!("--db={}", db))
@@ -428,24 +699,108 @@ pub async fn restore_collections(
             cmd.arg(format!("--nsInclude={}.{}", db, coll));
         }
 
-        let output = cmd
-            .output()
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
             .map_err(|e| format!("mongorestore failed to start: {} (is it installed?)", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("mongorestore failed: {}", err));
-        }
+
+        let stderr = child.stderr.take().unwrap();
+        let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr_lines_clone = Arc::clone(&stderr_lines);
+        let stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                stderr_lines_clone.lock().unwrap().push(line);
+            }
+        });
+
+        set_mongo_child(&mongo_ops, &op_id, child);
+
+        let start = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
 
         let _ = window.emit(
             "mongodb-sync-progress",
             serde_json::json!({
+                "opId": &op_id,
                 "db": &db,
                 "collection": "",
-                "stage": "done",
-                "synced": collections.len(),
-                "total": collections.len(),
+                "stage": "restore",
+                "synced": 0,
+                "total": 1,
+                "percent": 0,
             }),
         );
+
+        loop {
+            let mut child = take_mongo_child(&mongo_ops, &op_id)
+                .ok_or("mongorestore child missing from registry")?;
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_thread.join();
+                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": &op_id, "db": &db}));
+                return Err("cancelled".into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = stderr_thread.join();
+                    let _ = window.emit(
+                        "mongodb-sync-progress",
+                        serde_json::json!({
+                            "opId": &op_id,
+                            "db": &db,
+                            "collection": "",
+                            "stage": "done",
+                            "synced": 1,
+                            "total": 1,
+                            "percent": 100,
+                        }),
+                    );
+                    if !status.success() {
+                        let lines = stderr_lines.lock().unwrap();
+                        let err = lines
+                            .iter()
+                            .rev()
+                            .take(30)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(format!("mongorestore failed: {}", err));
+                    }
+                    break;
+                }
+                Ok(None) => {
+                    set_mongo_child(&mongo_ops, &op_id, child);
+                    if last_emit.elapsed() >= Duration::from_millis(500) {
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+                        let pulse = 10 + ((elapsed_ms / 500) % 80);
+                        let _ = window.emit(
+                            "mongodb-sync-progress",
+                            serde_json::json!({
+                                "opId": &op_id,
+                                "db": &db,
+                                "collection": "",
+                                "stage": "restore",
+                                "synced": 0,
+                                "total": 1,
+                                "percent": pulse,
+                            }),
+                        );
+                        last_emit = std::time::Instant::now();
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stderr_thread.join();
+                    return Err(format!("failed to wait for mongorestore: {}", e));
+                }
+            }
+        }
 
         Ok(())
     })
