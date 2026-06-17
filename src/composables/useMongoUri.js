@@ -10,6 +10,7 @@ export function parseMongoUri(uri) {
   if (!uri || typeof uri !== 'string') {
     return {
       mode: 'form',
+      scheme: 'mongodb',
       host: '',
       port: DEFAULT_PORT,
       username: '',
@@ -20,9 +21,9 @@ export function parseMongoUri(uri) {
     }
   }
 
-  // Replica-set URIs with multiple hosts cannot be represented by the single-host form.
-  if (/mongodb:\/\/[^/]*,/.test(uri)) {
-    return { mode: 'uri', uri }
+  // SRV seedlist URIs and replica-set URIs with multiple hosts must stay as raw URIs.
+  if (/^mongodb(\+srv)?:\/\/[^/]*,/.test(uri) || uri.startsWith('mongodb+srv://')) {
+    return { mode: 'uri', scheme: uri.startsWith('mongodb+srv://') ? 'mongodb+srv' : 'mongodb', uri }
   }
 
   try {
@@ -38,6 +39,7 @@ export function parseMongoUri(uri) {
 
     return {
       mode: 'form',
+      scheme: 'mongodb',
       host: url.hostname,
       port: url.port ? Number(url.port) : DEFAULT_PORT,
       username: decodeURIComponent(url.username || ''),
@@ -47,7 +49,7 @@ export function parseMongoUri(uri) {
       options,
     }
   } catch {
-    return { mode: 'uri', uri }
+    return { mode: 'uri', scheme: 'mongodb', uri }
   }
 }
 
@@ -55,6 +57,7 @@ export function parseMongoUri(uri) {
  * Build a MongoDB connection URI from structured fields.
  */
 export function buildMongoUri({
+  scheme = 'mongodb',
   host,
   port,
   username,
@@ -63,7 +66,7 @@ export function buildMongoUri({
   authSource,
   options,
 }) {
-  let uri = 'mongodb://'
+  let uri = `${scheme}://`
 
   const user = (username || '').trim()
   const pass = (password || '').trim()
@@ -120,4 +123,40 @@ export function buildMongoUri({
   }
 
   return uri
+}
+
+/**
+ * Parse a MongoDB URI into form fields when switching from URI mode to Standard mode.
+ * Returns null for unsupported URIs (e.g. multi-host replica sets).
+ */
+export function parseUriToForm(uri) {
+  if (!uri || typeof uri !== 'string') return null
+  const trimmed = uri.trim()
+  if (!trimmed.startsWith('mongodb://') && !trimmed.startsWith('mongodb+srv://')) {
+    return null
+  }
+
+  // Multi-host mongodb:// URIs cannot be represented by the single-host form.
+  if (/^mongodb:\/\/[^/]*,/.test(trimmed)) return null
+
+  try {
+    const url = new URL(trimmed)
+
+    const authSource = url.searchParams.get('authSource') || DEFAULT_AUTH_SOURCE
+    url.searchParams.delete('authSource')
+
+    const options = url.searchParams.toString()
+
+    return {
+      host: url.hostname,
+      port: url.port ? Number(url.port) : DEFAULT_PORT,
+      username: decodeURIComponent(url.username || ''),
+      password: decodeURIComponent(url.password || ''),
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      authSource,
+      options,
+    }
+  } catch {
+    return null
+  }
 }
