@@ -121,6 +121,49 @@ fn normalize_mongo_uri(uri: &str) -> String {
     format!("{}?{}", base, new_query)
 }
 
+/// Strip the default database path from a MongoDB URI so it can be used with
+/// `--db` on the mongodump / mongorestore command line. Those tools reject a
+/// URI whose database differs from the one passed via `--db`.
+fn strip_mongo_uri_database(uri: &str) -> String {
+    let Some(scheme_end) = uri.find("://") else {
+        return uri.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_and_rest = &uri[authority_start..];
+
+    let Some(sep_pos) = authority_and_rest.find(&['/', '?', '#'][..]) else {
+        return uri.to_string();
+    };
+
+    match authority_and_rest.as_bytes()[sep_pos] {
+        b'/' => {
+            // Remove everything from the path slash up to the query/fragment.
+            let after_path = &authority_and_rest[sep_pos..];
+            if let Some(qpos) = after_path.find(&['?', '#'][..]) {
+                let query = &after_path[qpos..];
+                format!("{}/{}", &uri[..authority_start], query)
+            } else {
+                format!("{}/", &uri[..authority_start])
+            }
+        }
+        b'?' | b'#' => {
+            // No path, but make sure there is a slash before the query/fragment
+            // so the connection string stays valid for the tools.
+            if sep_pos == 0 || authority_and_rest.as_bytes()[sep_pos - 1] != b'/' {
+                format!(
+                    "{}{}/{}",
+                    &uri[..authority_start],
+                    &authority_and_rest[..sep_pos],
+                    &authority_and_rest[sep_pos..]
+                )
+            } else {
+                uri.to_string()
+            }
+        }
+        _ => uri.to_string(),
+    }
+}
+
 pub async fn list_databases(uri: &str) -> Result<Vec<String>, String> {
     let uri = normalize_mongo_uri(uri);
     let options = ClientOptions::parse(&uri)
@@ -164,14 +207,18 @@ pub async fn sync_collections(
     let remote_uri = normalize_mongo_uri(remote_uri);
     let local_uri = normalize_mongo_uri(local_uri);
 
+    // CLI tools reject a URI whose database path differs from --db, so strip it.
+    let remote_uri_cli = strip_mongo_uri_database(&remote_uri);
+    let local_uri_cli = strip_mongo_uri_database(&local_uri);
+
     // Try CLI fast path first
     match try_cli_sync(
         window.clone(),
         cancelled.clone(),
         mongo_ops.clone(),
         op_id.clone(),
-        &remote_uri,
-        &local_uri,
+        &remote_uri_cli,
+        &local_uri_cli,
         db,
         &collections,
         drop_first,
@@ -546,6 +593,7 @@ pub async fn dump_collections(
     output_dir: &str,
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
+    let remote_uri = strip_mongo_uri_database(&remote_uri);
     let db = db.to_string();
     let output_dir = output_dir.to_string();
 
@@ -685,6 +733,7 @@ pub async fn restore_collections(
     input_dir: &str,
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
+    let remote_uri = strip_mongo_uri_database(&remote_uri);
     let db = db.to_string();
     let input_dir = input_dir.to_string();
 
