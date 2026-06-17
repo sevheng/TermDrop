@@ -131,36 +131,32 @@ fn strip_mongo_uri_database(uri: &str) -> String {
     let authority_start = scheme_end + 3;
     let authority_and_rest = &uri[authority_start..];
 
-    let Some(sep_pos) = authority_and_rest.find(&['/', '?', '#'][..]) else {
-        return uri.to_string();
-    };
+    let sep_pos = authority_and_rest.find(&['/', '?', '#'][..]);
 
-    match authority_and_rest.as_bytes()[sep_pos] {
-        b'/' => {
-            // Remove everything from the path slash up to the query/fragment.
-            let after_path = &authority_and_rest[sep_pos..];
-            if let Some(qpos) = after_path.find(&['?', '#'][..]) {
-                let query = &after_path[qpos..];
-                format!("{}/{}", &uri[..authority_start], query)
+    // Base includes the scheme and authority, stopping right before the separator.
+    let base = sep_pos
+        .map(|pos| &uri[..authority_start + pos])
+        .unwrap_or(uri);
+    let rest = sep_pos.map(|pos| &authority_and_rest[pos..]).unwrap_or("");
+
+    match rest.as_bytes().first() {
+        Some(b'/') => {
+            // Remove the database path, keeping any query/fragment.
+            if let Some(qpos) = rest.find(&['?', '#'][..]) {
+                let query = &rest[qpos..];
+                format!("{}/{}", base, query)
             } else {
-                format!("{}/", &uri[..authority_start])
+                format!("{}/", base)
             }
         }
-        b'?' | b'#' => {
-            // No path, but make sure there is a slash before the query/fragment
-            // so the connection string stays valid for the tools.
-            if sep_pos == 0 || authority_and_rest.as_bytes()[sep_pos - 1] != b'/' {
-                format!(
-                    "{}{}/{}",
-                    &uri[..authority_start],
-                    &authority_and_rest[..sep_pos],
-                    &authority_and_rest[sep_pos..]
-                )
-            } else {
-                uri.to_string()
-            }
+        Some(b'?') | Some(b'#') => {
+            // No database path, but ensure there is a slash before the query/fragment.
+            format!("{}/{}", base, rest)
         }
-        _ => uri.to_string(),
+        _ => {
+            // No path or query at all; add a trailing slash for consistency.
+            format!("{}/", base)
+        }
     }
 }
 
@@ -902,6 +898,26 @@ mod tests {
         assert_eq!(
             normalize_mongo_uri("mongodb://root:example@localhost:27017/?authSource=custom"),
             "mongodb://root:example@localhost:27017/?authSource=custom"
+        );
+    }
+
+    #[test]
+    fn test_strip_mongo_uri_database() {
+        assert_eq!(
+            strip_mongo_uri_database("mongodb://root:example@localhost:27017/admin?retryWrites=true"),
+            "mongodb://root:example@localhost:27017/?retryWrites=true"
+        );
+        assert_eq!(
+            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/admin?retryWrites=true"),
+            "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
+        );
+        assert_eq!(
+            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"),
+            "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
+        );
+        assert_eq!(
+            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com"),
+            "mongodb+srv://user:pass@cluster.example.com/"
         );
     }
 }
