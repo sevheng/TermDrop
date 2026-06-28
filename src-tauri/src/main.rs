@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State, Window};
 use tracing::{info, instrument};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod crypto;
 mod db;
@@ -1694,6 +1696,7 @@ async fn mongodb_dump(
     db: String,
     collections: Vec<String>,
     output_dir: String,
+    is_archive: bool,
 ) -> Result<(), String> {
     let cancelled = register_mongo_op(&state, op_id.clone());
     let mongo_ops = state.mongo_ops.clone();
@@ -1707,6 +1710,7 @@ async fn mongodb_dump(
         &db,
         collections,
         &output_dir,
+        is_archive,
     )
     .await;
 
@@ -1723,6 +1727,7 @@ async fn mongodb_restore(
     db: String,
     collections: Vec<String>,
     input_dir: String,
+    is_archive: bool,
 ) -> Result<(), String> {
     let cancelled = register_mongo_op(&state, op_id.clone());
     let mongo_ops = state.mongo_ops.clone();
@@ -1736,6 +1741,34 @@ async fn mongodb_restore(
         &db,
         collections,
         &input_dir,
+        is_archive,
+    )
+    .await;
+
+    unregister_mongo_op(&state, &op_id);
+    result
+}
+
+#[tauri::command]
+async fn mongodb_restore_archive(
+    window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
+    remote_uri: String,
+    includes: Vec<String>,
+    input_path: String,
+) -> Result<(), String> {
+    let cancelled = register_mongo_op(&state, op_id.clone());
+    let mongo_ops = state.mongo_ops.clone();
+
+    let result = mongodb::restore_archive(
+        window,
+        cancelled,
+        mongo_ops,
+        op_id.clone(),
+        &remote_uri,
+        includes,
+        &input_path,
     )
     .await;
 
@@ -1760,10 +1793,20 @@ fn main() {
     std::fs::create_dir_all(&log_dir).ok();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "termdrop.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt()
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,termdrop::mongodb=debug"));
+
+    let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(non_blocking)
-        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
-        .with_ansi(false)
+        .with_ansi(false);
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_ansi(false);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer)
+        .with(console_layer)
         .init();
     info!("TermDrop starting up");
 
@@ -1882,7 +1925,9 @@ fn main() {
             mongodb_sync,
             mongodb_dump,
             mongodb_restore,
+            mongodb_restore_archive,
             mongodb_cancel,
+            mongodb::scan_restore_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

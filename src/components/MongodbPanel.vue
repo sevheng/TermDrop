@@ -206,30 +206,134 @@
 
       <!-- Dump/Restore buttons (always available, operate on Remote) -->
       <div class="grid grid-cols-2 gap-2">
-        <button
-          @click="startDump"
-          :disabled="!canDumpRestore || syncing"
-          class="py-2 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
-          :class="canDumpRestore && !syncing
-            ? 'bg-[#0e639c] hover:bg-[#1177bb] text-white'
-            : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
-        >
-          <Download v-if="!syncing" :size="12" />
-          <Loader2 v-else :size="12" class="animate-spin" />
-          {{ syncing && currentAction === 'dump' ? 'Dumping...' : 'Dump to folder' }}
-        </button>
-        <button
-          @click="startRestore"
-          :disabled="!canDumpRestore || syncing"
-          class="py-2 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
-          :class="canDumpRestore && !syncing
-            ? 'bg-[#388a34] hover:bg-[#43a047] text-white'
-            : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
-        >
-          <Upload v-if="!syncing" :size="12" />
-          <Loader2 v-else :size="12" class="animate-spin" />
-          {{ syncing && currentAction === 'restore' ? 'Restoring...' : 'Restore from folder' }}
-        </button>
+        <div class="flex flex-col gap-2">
+          <button
+            @click="startDumpFolder"
+            :disabled="!canDumpRestore || syncing"
+            class="flex-1 py-1 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
+            :class="canDumpRestore && !syncing
+              ? 'bg-[#0e639c] hover:bg-[#1177bb] text-white'
+              : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
+          >
+            <Download v-if="!syncing" :size="12" />
+            <Loader2 v-else :size="12" class="animate-spin" />
+            {{ syncing && currentAction === 'dump-folder' ? 'Dumping...' : 'Dump folder' }}
+          </button>
+          <button
+            @click="startDumpArchive"
+            :disabled="!canDumpRestore || syncing"
+            class="flex-1 py-1 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
+            :class="canDumpRestore && !syncing
+              ? 'bg-[#0e639c] hover:bg-[#1177bb] text-white'
+              : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
+          >
+            <Download v-if="!syncing" :size="12" />
+            <Loader2 v-else :size="12" class="animate-spin" />
+            {{ syncing && currentAction === 'dump-archive' ? 'Dumping...' : 'Dump archive' }}
+          </button>
+        </div>
+        <div class="flex flex-col gap-2">
+          <button
+            @click="startRestoreFolder"
+            :disabled="!canRestore || syncing"
+            class="flex-1 py-1 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
+            :class="canRestore && !syncing
+              ? 'bg-[#388a34] hover:bg-[#43a047] text-white'
+              : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
+          >
+            <Upload v-if="!syncing" :size="12" />
+            <Loader2 v-else :size="12" class="animate-spin" />
+            {{ syncing && currentAction === 'restore-folder' ? 'Restoring...' : 'Restore folder' }}
+          </button>
+          <button
+            @click="startRestoreFile"
+            :disabled="!canRestore || syncing"
+            class="flex-1 py-1 text-xs font-medium rounded flex items-center justify-center gap-1.5 transition-colors"
+            :class="canRestore && !syncing
+              ? 'bg-[#388a34] hover:bg-[#43a047] text-white'
+              : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
+          >
+            <Upload v-if="!syncing" :size="12" />
+            <Loader2 v-else :size="12" class="animate-spin" />
+            {{ syncing && currentAction === 'restore-archive' ? 'Restoring...' : 'Restore file' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Restore confirmation modal -->
+    <div
+      v-if="restoreConfirm.show"
+      class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
+    >
+      <div class="bg-[#252526] rounded-lg p-5 w-[28rem] border border-[#3c3c3c] shadow-xl">
+        <h3 class="text-base font-semibold text-[#cccccc] mb-3">Confirm restore</h3>
+        <div class="space-y-2 text-sm text-[#cccccc]">
+          <p>
+            Source {{ restoreConfirm.isArchive ? 'archive' : 'folder' }}:
+            <span class="font-mono text-[#89d185] break-all">{{ restoreConfirm.inputPath }}</span>
+          </p>
+          <div v-if="!restoreConfirm.isArchive && restoreConfirm.sourceDbs.length > 0">
+            <p class="text-[#858585] mb-1">Data found in folder:</p>
+            <ul class="max-h-32 overflow-y-auto bg-[#1e1e1e] rounded p-2 space-y-1 text-xs">
+              <li v-for="db in restoreConfirm.sourceDbs" :key="db.name">
+                <span class="text-[#75beff]">{{ db.name }}</span>:
+                <span class="text-[#cccccc]">{{ db.collections.map(c => c.name).join(', ') }}</span>
+              </li>
+            </ul>
+          </div>
+          <template v-if="restoreConfirm.entries.length > 0">
+            <p>
+              Target filter database{{ restoreConfirm.entries.length > 1 ? 's' : '' }}:
+              <span class="font-mono text-[#75beff]">
+                {{ restoreConfirm.entries.map(e => e.db).join(', ') }}
+              </span>
+            </p>
+            <div>
+              <p class="text-[#858585] mb-1">Collections to restore:</p>
+              <ul class="max-h-32 overflow-y-auto bg-[#1e1e1e] rounded p-2 space-y-0.5 text-xs">
+                <li v-for="entry in restoreConfirm.entries" :key="entry.db">
+                  <span class="text-[#75beff]">{{ entry.db }}</span>:
+                  <span class="text-[#cccccc]">{{ entry.collections.join(', ') }}</span>
+                </li>
+              </ul>
+            </div>
+          </template>
+          <template v-else-if="!restoreConfirm.isArchive && restoreConfirm.sourceDbs.length === 1">
+            <p class="text-[#75beff]">
+              Will restore database <span class="font-mono text-[#75beff]">{{ restoreConfirm.sourceDbs[0].name }}</span>
+              (all collections found in the folder).
+            </p>
+          </template>
+          <template v-else-if="!restoreConfirm.isArchive && restoreConfirm.sourceDbs.length > 1">
+            <p class="text-[#75beff]">
+              Will restore all databases found in the folder:
+              <span class="font-mono text-[#75beff]">
+                {{ restoreConfirm.sourceDbs.map(d => d.name).join(', ') }}
+              </span>
+            </p>
+          </template>
+          <p v-else class="text-[#75beff]">
+            No database selected — everything in the source will be restored.
+          </p>
+          <p class="text-[#f44336]">
+            Existing collections in the target database will be dropped before restoring.
+          </p>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button
+            @click="cancelRestore"
+            class="px-3 py-1.5 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            @click="confirmRestore"
+            class="px-3 py-1.5 text-sm text-white rounded bg-[#f44336] hover:bg-[#d32f2f] transition-colors"
+          >
+            Restore
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -239,7 +343,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import {
   Database,
   Play,
@@ -265,7 +369,7 @@ const selectedCollections = ref(new Map())
 const loadingRemote = ref(false)
 const loadingLocal = ref(false)
 const syncing = ref(false)
-const currentAction = ref('') // 'sync' | 'dump' | 'restore'
+const currentAction = ref('') // 'sync' | 'dump-folder' | 'dump-archive' | 'restore-folder' | 'restore-archive'
 const dropFirst = ref(false)
 const isRemoteToLocal = ref(true) // true = Remote→Local, false = Local→Remote
 const currentOpId = ref('')
@@ -278,6 +382,14 @@ const syncProgress = ref({
   synced: 0,
   total: 0,
   percent: 0,
+})
+
+const restoreConfirm = ref({
+  show: false,
+  inputPath: '',
+  isArchive: false,
+  entries: [],
+  sourceDbs: [],
 })
 
 function resetOperationState() {
@@ -313,8 +425,13 @@ const canSync = computed(() => {
 })
 
 const canDumpRestore = computed(() => {
-  // Dump/Restore always operate on the actual Remote
+  // Dump always operates on the actual Remote and needs selected collections.
   return remoteUri.value && selectedCount.value > 0 && !syncing.value
+})
+
+const canRestore = computed(() => {
+  // Restore operates on the actual Remote; the source folder/archive determines what is restored.
+  return remoteUri.value && !syncing.value
 })
 
 const syncButtonLabel = computed(() => {
@@ -544,7 +661,7 @@ async function startSync() {
   }
 }
 
-async function startDump() {
+async function startDumpFolder() {
   if (!remoteUri.value || selectedCount.value === 0) return
 
   const outputDir = await open({
@@ -554,13 +671,40 @@ async function startDump() {
   })
   if (!outputDir) return
 
+  await runDump(outputDir, false)
+}
+
+async function startDumpArchive() {
+  if (!remoteUri.value || selectedCount.value === 0) return
+
+  const selectedDbs = Array.from(selectedCollections.value.keys())
+  const defaultName =
+    selectedDbs.length === 1 ? `${selectedDbs[0]}.gz` : 'mongodb_dump.gz'
+
+  const outputFile = await save({
+    title: 'Save dump archive',
+    defaultPath: defaultName,
+    filters: [
+      { name: 'Gzip archive', extensions: ['gz'] },
+      { name: 'BSON archive', extensions: ['archive', 'bson'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  if (!outputFile) return
+
+  await runDump(outputFile, true)
+}
+
+async function runDump(outputPath, isArchive) {
+  if (!remoteUri.value || selectedCount.value === 0) return
+
   const entries = []
   for (const [db, set] of selectedCollections.value) {
     entries.push({ db, collections: Array.from(set) })
   }
 
   syncing.value = true
-  currentAction.value = 'dump'
+  currentAction.value = isArchive ? 'dump-archive' : 'dump-folder'
   currentOpId.value = crypto.randomUUID()
   aborting.value = false
   syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
@@ -572,7 +716,8 @@ async function startDump() {
         remoteUri: remoteUri.value,
         db: entry.db,
         collections: entry.collections,
-        outputDir,
+        outputDir: outputPath,
+        isArchive: isArchive,
         opId: currentOpId.value,
       })
       toast(`Dumped ${entry.db}: ${entry.collections.join(', ')}`, 'success')
@@ -590,8 +735,36 @@ async function startDump() {
   resetOperationState()
 }
 
-async function startRestore() {
-  if (!remoteUri.value || selectedCount.value === 0) return
+function buildRestoreEntries() {
+  const entries = []
+  for (const [db, set] of selectedCollections.value) {
+    entries.push({ db, collections: Array.from(set) })
+  }
+  return entries
+}
+
+function openRestoreConfirm(inputPath, isArchive, sourceDbs = []) {
+  restoreConfirm.value = {
+    show: true,
+    inputPath,
+    isArchive,
+    entries: buildRestoreEntries(),
+    sourceDbs,
+  }
+}
+
+function cancelRestore() {
+  restoreConfirm.value.show = false
+}
+
+async function confirmRestore() {
+  const { inputPath, isArchive, sourceDbs } = restoreConfirm.value
+  restoreConfirm.value.show = false
+  await runRestore(inputPath, isArchive, restoreConfirm.value.entries, sourceDbs)
+}
+
+async function startRestoreFolder() {
+  if (!remoteUri.value) return
 
   const inputDir = await open({
     directory: true,
@@ -600,40 +773,138 @@ async function startRestore() {
   })
   if (!inputDir) return
 
-  const entries = []
-  for (const [db, set] of selectedCollections.value) {
-    entries.push({ db, collections: Array.from(set) })
+  try {
+    const sourceDbs = await invoke('scan_restore_folder', { path: inputDir })
+    openRestoreConfirm(inputDir, false, sourceDbs)
+  } catch (err) {
+    toast(`Selected folder is not a valid dump: ${err}`, 'error')
   }
+}
+
+async function startRestoreFile() {
+  if (!remoteUri.value) return
+
+  const inputFile = await open({
+    directory: false,
+    multiple: false,
+    title: 'Select restore archive',
+    filters: [
+      { name: 'MongoDB archives', extensions: ['gz', 'archive', 'bson'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  if (!inputFile) return
+
+  openRestoreConfirm(inputFile, true, [])
+}
+
+async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
+  if (!remoteUri.value) return
 
   syncing.value = true
-  currentAction.value = 'restore'
+  currentAction.value = isArchive ? 'restore-archive' : 'restore-folder'
   currentOpId.value = crypto.randomUUID()
   aborting.value = false
   syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
 
-  for (const entry of entries) {
-    if (aborting.value || !currentOpId.value) break
+  const hasSelection = entries.length > 0
+
+  if (isArchive) {
+    // Archives can contain many DBs; run one mongorestore with all selected namespaces.
+    const includes = []
+    for (const entry of entries) {
+      for (const coll of entry.collections) {
+        includes.push(`${entry.db}.${coll}`)
+      }
+    }
+
     try {
-      await invoke('mongodb_restore', {
+      await invoke('mongodb_restore_archive', {
         remoteUri: remoteUri.value,
-        db: entry.db,
-        collections: entry.collections,
-        inputDir,
+        includes,
+        inputPath,
         opId: currentOpId.value,
       })
-      toast(`Restored ${entry.db}: ${entry.collections.join(', ')}`, 'success')
+      toast(hasSelection ? 'Restored selected collections from archive' : 'Restored archive', 'success')
     } catch (err) {
       if (String(err).includes('cancelled')) {
         resetOperationState()
-        toast(`Cancelled ${entry.db}`, 'info')
-        break
+        toast('Cancelled archive restore', 'info')
       } else {
-        toast(`Restore failed for ${entry.db}: ${err}`, 'error')
+        toast(`Archive restore failed: ${err}`, 'error')
+      }
+    }
+  } else {
+    if (!hasSelection && sourceDbs.length === 1) {
+      // User picked a folder representing a single DB (either direct or parent with one DB).
+      // Tell mongorestore which DB to restore so it doesn't skip the files.
+      try {
+        await invoke('mongodb_restore', {
+          remoteUri: remoteUri.value,
+          db: sourceDbs[0].name,
+          collections: [],
+          inputDir: inputPath,
+          isArchive: false,
+          opId: currentOpId.value,
+        })
+        toast(`Restored ${sourceDbs[0].name}`, 'success')
+      } catch (err) {
+        if (String(err).includes('cancelled')) {
+          resetOperationState()
+          toast('Cancelled folder restore', 'info')
+        } else {
+          toast(`Folder restore failed: ${err}`, 'error')
+        }
+      }
+    } else if (!hasSelection) {
+      // If nothing is selected and there are multiple DBs, restore every DB under the folder.
+      try {
+        await invoke('mongodb_restore', {
+          remoteUri: remoteUri.value,
+          db: '',
+          collections: [],
+          inputDir: inputPath,
+          isArchive: false,
+          opId: currentOpId.value,
+        })
+        toast('Restored folder', 'success')
+      } catch (err) {
+        if (String(err).includes('cancelled')) {
+          resetOperationState()
+          toast('Cancelled folder restore', 'info')
+        } else {
+          toast(`Folder restore failed: ${err}`, 'error')
+        }
+      }
+    } else {
+      for (const entry of entries) {
+        if (aborting.value || !currentOpId.value) break
+        try {
+          await invoke('mongodb_restore', {
+            remoteUri: remoteUri.value,
+            db: entry.db,
+            collections: entry.collections,
+            inputDir: inputPath,
+            isArchive: false,
+            opId: currentOpId.value,
+          })
+          toast(`Restored ${entry.db}: ${entry.collections.join(', ')}`, 'success')
+        } catch (err) {
+          if (String(err).includes('cancelled')) {
+            resetOperationState()
+            toast(`Cancelled ${entry.db}`, 'info')
+            break
+          } else {
+            toast(`Restore failed for ${entry.db}: ${err}`, 'error')
+          }
+        }
       }
     }
   }
 
   resetOperationState()
+  // Refresh the remote DB list so restored databases appear.
+  await loadRemoteDatabases()
 }
 
 async function cancelOperation() {

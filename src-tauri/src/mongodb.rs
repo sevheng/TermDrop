@@ -112,6 +112,15 @@ where
                 Ok(Some(status)) => {
                     let _ = stderr_thread.join();
                     if status.success() {
+                        let lines = stderr_lines.lock().unwrap();
+                        let recent: Vec<_> = lines.iter().rev().take(30).cloned().collect();
+                        tracing::debug!(
+                            label = label,
+                            stage = stage,
+                            exit_code = status.code(),
+                            stderr = ?recent,
+                            "command succeeded"
+                        );
                         return Ok(());
                     }
                     let lines = stderr_lines.lock().unwrap();
@@ -144,7 +153,8 @@ where
                     set_mongo_child(mongo_ops, op_id, child);
                     if last_emit.elapsed() >= Duration::from_millis(500) {
                         let elapsed_ms = start.elapsed().as_millis() as u64;
-                        let pulse = 10 + ((elapsed_ms / 500) % 80);
+                        // Monotonic pulse: grows toward 95% so the bar never loops back.
+                        let pulse = std::cmp::min(95, elapsed_ms / 100);
                         emit_progress(stage, pulse);
                         last_emit = Instant::now();
                     }
@@ -597,7 +607,7 @@ async fn driver_sync(
     Ok(())
 }
 
-/// Dump selected collections from remote to a local directory using mongodump.
+/// Dump selected collections from remote to a local directory or archive using mongodump.
 pub async fn dump_collections(
     window: Window,
     cancelled: Arc<AtomicBool>,
@@ -607,6 +617,7 @@ pub async fn dump_collections(
     db: &str,
     collections: Vec<String>,
     output_dir: &str,
+    is_archive: bool,
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
     let remote_uri = strip_mongo_uri_database(&remote_uri);
@@ -626,9 +637,16 @@ pub async fn dump_collections(
             || {
                 let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
                 cmd.arg(format!("--uri={}", &remote_uri))
-                    .arg(format!("--db={}", db))
-                    .arg("--gzip")
-                    .arg(format!("--out={}", output_dir));
+                    .arg(format!("--db={}", db));
+
+                if is_archive {
+                    cmd.arg(format!("--archive={}", output_dir));
+                    if output_dir.ends_with(".gz") {
+                        cmd.arg("--gzip");
+                    }
+                } else {
+                    cmd.arg("--gzip").arg(format!("--out={}", output_dir));
+                }
 
                 // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
                 if collections.len() == 1 {
@@ -659,7 +677,7 @@ pub async fn dump_collections(
     .map_err(|e| format!("dump task panicked: {}", e))?
 }
 
-/// Restore selected collections from a local directory to remote using mongorestore.
+/// Restore selected collections from a local directory or archive to remote using mongorestore.
 pub async fn restore_collections(
     window: Window,
     cancelled: Arc<AtomicBool>,
@@ -669,11 +687,44 @@ pub async fn restore_collections(
     db: &str,
     collections: Vec<String>,
     input_dir: &str,
+    is_archive: bool,
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
     let remote_uri = strip_mongo_uri_database(&remote_uri);
     let db = db.to_string();
     let input_dir = input_dir.to_string();
+    let has_db = !db.is_empty();
+    let has_collections = !collections.is_empty();
+    let progress_db = if has_db { db.clone() } else { "all".to_string() };
+
+    // A "direct DB folder" contains BSON files directly (e.g. /dump/mydb/*.bson.gz).
+    // A "dump root" contains DB subfolders (e.g. /dump/<db>/*.bson.gz).
+    let is_direct_db = !is_archive && has_db && !collect_bson_collections(std::path::Path::new(&input_dir)).is_empty();
+    let restore_dir = input_dir.clone();
+
+    tracing::debug!(
+        db = %db,
+        is_archive = is_archive,
+        is_direct_db = is_direct_db,
+        has_db = has_db,
+        has_collections = has_collections,
+        input_dir = %input_dir,
+        restore_dir = %restore_dir,
+        collections = ?collections,
+        "restore_collections called"
+    );
+
+    if !is_archive {
+        let contents: Vec<String> = std::fs::read_dir(&restore_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        tracing::debug!(restore_dir = %restore_dir, contents = ?contents, "restore folder contents");
+    }
 
     tokio::task::spawn_blocking(move || {
         run_with_retry(
@@ -684,17 +735,43 @@ pub async fn restore_collections(
             &cancelled,
             &mongo_ops,
             &op_id,
-            &db,
+            &progress_db,
             || {
                 let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-                cmd.arg(format!("--uri={}", &remote_uri))
-                    .arg(format!("--db={}", db))
-                    .arg("--drop")
-                    .arg(&input_dir);
+                cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
 
-                for coll in &collections {
-                    cmd.arg(format!("--nsInclude={}.{}", db, coll));
+                if is_archive {
+                    cmd.arg(format!("--archive={}", &input_dir));
+                    if input_dir.ends_with(".gz") {
+                        cmd.arg("--gzip");
+                    }
+                } else {
+                    // Dump folders produced by this app are gzip-compressed.
+                    cmd.arg("--gzip").arg(&restore_dir);
                 }
+
+                if is_direct_db {
+                    // Path is a single DB dump; --db tells mongorestore the target DB.
+                    cmd.arg(format!("--db={}", db));
+                    for coll in &collections {
+                        cmd.arg(format!("--nsInclude={}.{}", db, coll));
+                    }
+                } else if has_db {
+                    // Path is a dump root; filter with --nsInclude instead of deprecated --db.
+                    if has_collections {
+                        for coll in &collections {
+                            cmd.arg(format!("--nsInclude={}.{}", db, coll));
+                        }
+                    } else {
+                        cmd.arg(format!("--nsInclude={}.*", db));
+                    }
+                }
+
+                tracing::debug!(
+                    program = %cmd.get_program().to_string_lossy(),
+                    args = ?cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "mongorestore command"
+                );
 
                 Ok(cmd)
             },
@@ -704,7 +781,7 @@ pub async fn restore_collections(
             "mongodb-sync-progress",
             serde_json::json!({
                 "opId": &op_id,
-                "db": &db,
+                "db": &progress_db,
                 "collection": "",
                 "stage": "done",
                 "synced": 1,
@@ -717,6 +794,143 @@ pub async fn restore_collections(
     })
     .await
     .map_err(|e| format!("restore task panicked: {}", e))?
+}
+
+/// Restore selected namespaces from a single archive file to remote using mongorestore.
+/// This runs once for the whole archive, filtering with --nsInclude.
+pub async fn restore_archive(
+    window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
+    remote_uri: &str,
+    includes: Vec<String>,
+    input_path: &str,
+) -> Result<(), String> {
+    let remote_uri = normalize_mongo_uri(remote_uri);
+    let remote_uri = strip_mongo_uri_database(&remote_uri);
+    let input_path = input_path.to_string();
+    let includes = includes.clone();
+
+    tokio::task::spawn_blocking(move || {
+        run_with_retry(
+            "mongorestore",
+            "restore",
+            3,
+            &window,
+            &cancelled,
+            &mongo_ops,
+            &op_id,
+            "archive",
+            || {
+                let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
+                cmd.arg(format!("--uri={}", &remote_uri))
+                    .arg("--drop")
+                    .arg(format!("--archive={}", &input_path));
+
+                if input_path.ends_with(".gz") {
+                    cmd.arg("--gzip");
+                }
+
+                for ns in &includes {
+                    cmd.arg(format!("--nsInclude={}", ns));
+                }
+
+                Ok(cmd)
+            },
+        )?;
+
+        let _ = window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "opId": &op_id,
+                "db": "archive",
+                "collection": "",
+                "stage": "done",
+                "synced": 1,
+                "total": 1,
+                "percent": 100,
+            }),
+        );
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("restore archive task panicked: {}", e))?
+}
+
+#[derive(serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RestoreSourceCollection {
+    pub name: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct RestoreSourceDb {
+    pub name: String,
+    pub collections: Vec<RestoreSourceCollection>,
+}
+
+fn collect_bson_collections(dir: &std::path::Path) -> Vec<RestoreSourceCollection> {
+    let mut collections = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if let Some(stem) = name.strip_suffix(".bson.gz") {
+                collections.push(RestoreSourceCollection {
+                    name: stem.to_string(),
+                });
+            } else if let Some(stem) = name.strip_suffix(".bson") {
+                collections.push(RestoreSourceCollection {
+                    name: stem.to_string(),
+                });
+            }
+        }
+    }
+    collections.sort();
+    collections
+}
+
+/// Scan a folder for mongodump-style data and return the databases/collections found.
+#[tauri::command]
+pub fn scan_restore_folder(path: String) -> Result<Vec<RestoreSourceDb>, String> {
+    let root = std::path::Path::new(&path);
+    if !root.is_dir() {
+        return Err("Selected path is not a folder".to_string());
+    }
+
+    // If the chosen folder itself contains BSON files, treat it as a single DB folder.
+    let direct_collections = collect_bson_collections(root);
+    if !direct_collections.is_empty() {
+        let db_name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        return Ok(vec![RestoreSourceDb {
+            name: db_name,
+            collections: direct_collections,
+        }]);
+    }
+
+    // Otherwise look for DB subfolders.
+    let mut dbs = Vec::new();
+    for e in std::fs::read_dir(root).map_err(|e| e.to_string())?.flatten() {
+        if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let collections = collect_bson_collections(&e.path());
+            if !collections.is_empty() {
+                dbs.push(RestoreSourceDb {
+                    name: e.file_name().to_string_lossy().to_string(),
+                    collections,
+                });
+            }
+        }
+    }
+
+    if dbs.is_empty() {
+        return Err("No MongoDB dump data found in the selected folder".to_string());
+    }
+
+    dbs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(dbs)
 }
 
 #[cfg(test)]
