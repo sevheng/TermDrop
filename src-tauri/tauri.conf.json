@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TermDrop",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "identifier": "com.termdrop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,7 +25,13 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["msi", "dmg", "appimage", "deb", "app"],
+    "targets": [
+      "msi",
+      "dmg",
+      "appimage",
+      "deb",
+      "app"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
