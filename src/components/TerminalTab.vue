@@ -352,7 +352,6 @@ let canvasAddon = null
 let webLinksAddon = null
 let resizeObserver = null
 let statusInterval = null
-let lazyDisposeTimer = null
 let hasBeenInitialized = false
 
 const isDisconnected = ref(false)
@@ -1126,10 +1125,6 @@ function stopActiveOperations() {
 }
 
 function disposeTerminal() {
-  if (lazyDisposeTimer) {
-    clearTimeout(lazyDisposeTimer)
-    lazyDisposeTimer = null
-  }
   stopActiveOperations()
   stopSysPolling()
   store.unregisterTerminal(props.sessionId)
@@ -1188,21 +1183,6 @@ watch(() => props.sessionId, (newId, oldId) => {
 // Handle active state changes (tab switching)
 watch(() => props.isActive, (active) => {
   if (active) {
-    // Cancel lazy dispose
-    if (lazyDisposeTimer) {
-      clearTimeout(lazyDisposeTimer)
-      lazyDisposeTimer = null
-    }
-    // Recreate terminal if it was lazily disposed
-    if (!term && hasBeenInitialized) {
-      initTerminal().then(() => {
-        startActiveOperations()
-        if (props.isActive) {
-          startStatusPolling()
-        }
-      })
-      return
-    }
     if (!term) return
     term.focus()
     nextTick(() => {
@@ -1223,13 +1203,6 @@ watch(() => props.isActive, (active) => {
     stopStatusPolling()
     if (resizeObserver) {
       resizeObserver.disconnect()
-    }
-    // Start lazy dispose timer (30s)
-    if (!lazyDisposeTimer && term) {
-      lazyDisposeTimer = setTimeout(() => {
-        lazyDisposeTimer = null
-        disposeTerminal()
-      }, 30000)
     }
   }
 }, { immediate: true })
