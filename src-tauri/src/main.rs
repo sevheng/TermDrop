@@ -77,6 +77,58 @@ fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
     state.mongo_ops.lock().unwrap().remove(op_id);
 }
 
+/// Load a host row or fail with "Host not found".
+fn load_host(state: &State<'_, AppState>, host_id: i64) -> Result<db::Host, String> {
+    let conn = state.db.get().map_err(db_err)?;
+    db::get_host_by_id(&conn, host_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Host not found".to_string())
+}
+
+/// Resolve `(password, key_path)` for a host. Password hosts use
+/// `password_override` when given and the keyring otherwise; key hosts use
+/// the stored key path. Unknown auth types pass the override through.
+fn resolve_auth(
+    host: &db::Host,
+    password_override: Option<String>,
+) -> Result<(Option<String>, Option<String>), String> {
+    match host.auth_type.as_str() {
+        "password" => {
+            let pw = match password_override {
+                Some(p) => Some(p),
+                None => Some(crypto::get_password(host.id)?),
+            };
+            Ok((pw, None))
+        }
+        "key" => Ok((None, host.key_path.clone())),
+        _ => Ok((password_override, host.key_path.clone())),
+    }
+}
+
+/// The shared non-PTY session for a host, used for exec-style commands.
+fn exec_session(
+    state: &State<'_, AppState>,
+    host_id: i64,
+    missing: &'static str,
+) -> Result<Arc<Mutex<ssh2::Session>>, String> {
+    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
+    exec_sessions
+        .get(&host_id)
+        .cloned()
+        .ok_or_else(|| missing.to_string())
+}
+
+fn sftp_handle(
+    state: &State<'_, AppState>,
+    sftp_session_id: &str,
+) -> Result<Arc<sftp::SftpSessionHandle>, String> {
+    let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+    sftp_sessions
+        .get(sftp_session_id)
+        .cloned()
+        .ok_or_else(|| "SFTP session not found".to_string())
+}
+
 #[tauri::command]
 fn get_hosts(state: State<'_, AppState>) -> Result<Vec<db::Host>, String> {
     let conn = state.db.get().map_err(db_err)?;
@@ -124,24 +176,9 @@ async fn ssh_connect(
     cols: u32,
     rows: u32,
 ) -> Result<String, String> {
-    let host = {
-        let conn = state.db.get().map_err(db_err)?;
-        db::get_host_by_id(&conn, host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?
-    };
+    let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = match password {
-                Some(p) => Some(p),
-                None => Some(crypto::get_password(host_id)?),
-            };
-            (pw, None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (password, host.key_path.clone()),
-    };
+    let (password, key_path) = resolve_auth(&host, password)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let handle = ssh::connect(
@@ -310,24 +347,9 @@ async fn ssh_reconnect(
         session.host_id
     };
 
-    let host = {
-        let conn = state.db.get().map_err(db_err)?;
-        db::get_host_by_id(&conn, host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?
-    };
+    let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = match password {
-                Some(p) => Some(p),
-                None => Some(crypto::get_password(host_id)?),
-            };
-            (pw, None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (password, host.key_path.clone()),
-    };
+    let (password, key_path) = resolve_auth(&host, password)?;
 
     // Remove old session
     {
@@ -394,24 +416,9 @@ async fn sftp_connect(
     host_id: i64,
     password: Option<String>,
 ) -> Result<String, String> {
-    let host = {
-        let conn = state.db.get().map_err(db_err)?;
-        db::get_host_by_id(&conn, host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?
-    };
+    let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = match password {
-                Some(p) => Some(p),
-                None => Some(crypto::get_password(host_id)?),
-            };
-            (pw, None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (password, host.key_path.clone()),
-    };
+    let (password, key_path) = resolve_auth(&host, password)?;
 
     let sftp_id = uuid::Uuid::new_v4().to_string();
     let sftp_id_clone = sftp_id.clone();
@@ -440,13 +447,7 @@ async fn sftp_list(
     sftp_session_id: String,
     path: String,
 ) -> Result<Vec<sftp::SftpFile>, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_list(&handle, &path))
         .await
         .map_err(|e| e.to_string())?
@@ -460,13 +461,7 @@ async fn sftp_upload(
     local_path: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || {
         sftp::sftp_upload(window, &handle, &local_path, &remote_path)
     })
@@ -481,13 +476,7 @@ async fn sftp_download(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     let file_name = Path::new(&remote_path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -526,24 +515,11 @@ async fn sftp_download_dir(
     remote_path: String,
 ) -> Result<String, String> {
     // Get SFTP handle and host_id
-    let (handle, host_id) = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        let h = sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?;
-        let id = h.host_id;
-        (h, id)
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
+    let host_id = handle.host_id;
 
     // Get exec session for tar command
-    let exec_session = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No exec session for this host")?
-    };
+    let exec_session = exec_session(&state, host_id, "No exec session for this host")?;
 
     let folder_name = Path::new(&remote_path)
         .file_name()
@@ -659,13 +635,7 @@ async fn sftp_write_file(
     remote_path: String,
     content: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_write_file(&handle, &remote_path, &content))
         .await
         .map_err(|e| e.to_string())?
@@ -677,13 +647,7 @@ async fn sftp_realpath(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_realpath(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -695,13 +659,7 @@ async fn sftp_delete(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_delete(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -714,13 +672,7 @@ async fn sftp_rename(
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_rename(&handle, &old_path, &new_path))
         .await
         .map_err(|e| e.to_string())?
@@ -732,13 +684,7 @@ async fn sftp_mkdir(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_mkdir(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -750,13 +696,7 @@ async fn sftp_rmdir(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_rmdir(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -768,13 +708,7 @@ async fn sftp_read_file(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_read_file(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -786,13 +720,7 @@ async fn sftp_read_file_base64(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
+    let handle = sftp_handle(&state, &sftp_session_id)?;
     tokio::task::spawn_blocking(move || sftp::sftp_read_file_base64(&handle, &remote_path))
         .await
         .map_err(|e| e.to_string())?
@@ -813,21 +741,9 @@ async fn exec_pty_connect(
     pty_session_id: String,
     command: String,
 ) -> Result<String, String> {
-    let host = {
-        let conn = state.db.get().map_err(db_err)?;
-        db::get_host_by_id(&conn, host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?
-    };
+    let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = Some(crypto::get_password(host_id)?);
-            (pw, None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (None, host.key_path.clone()),
-    };
+    let (password, key_path) = resolve_auth(&host, None)?;
 
     let handle = ssh::exec_pty_connect(
         window,
@@ -972,14 +888,7 @@ fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), St
         (host, forward)
     };
 
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = crypto::get_password(host.id)?;
-            (Some(pw), None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (None, host.key_path.clone()),
-    };
+    let (password, key_path) = resolve_auth(&host, None)?;
 
     match forward.kind.as_str() {
         "local" => {
@@ -1073,13 +982,7 @@ async fn docker_ps(
             if elapsed < CACHE_STALE_SECS {
                 // Return stale immediately, refresh in background
                 let cache_clone = state.docker_cache.clone();
-                let session_arc = {
-                    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-                    exec_sessions
-                        .get(&host_id)
-                        .cloned()
-                        .ok_or("No active session for this host")?
-                };
+                let session_arc = exec_session(&state, host_id, "No active session for this host")?;
                 tokio::task::spawn(async move {
                     match with_timeout(
                         move || {
@@ -1109,13 +1012,7 @@ async fn docker_ps(
     }
 
     // Cache is empty or very stale — block and fetch
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
 
     let containers = with_timeout(
         move || {
@@ -1153,13 +1050,7 @@ async fn docker_start(
     container_id: String,
 ) -> Result<(), String> {
     invalidate_docker_cache(&state, host_id)?;
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
     with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
@@ -1177,13 +1068,7 @@ async fn docker_stop(
     container_id: String,
 ) -> Result<(), String> {
     invalidate_docker_cache(&state, host_id)?;
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
     with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
@@ -1201,13 +1086,7 @@ async fn docker_restart(
     container_id: String,
 ) -> Result<(), String> {
     invalidate_docker_cache(&state, host_id)?;
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
     with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
@@ -1224,13 +1103,7 @@ async fn docker_inspect_shell(
     host_id: i64,
     container_id: String,
 ) -> Result<String, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
     with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
@@ -1244,13 +1117,7 @@ async fn docker_inspect_shell(
 #[tauri::command]
 async fn docker_install(state: State<'_, AppState>, host_id: i64) -> Result<String, String> {
     invalidate_docker_cache(&state, host_id)?;
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
     with_timeout(
         move || {
             let session = session_arc.lock().map_err(|e| e.to_string())?;
@@ -1311,13 +1178,7 @@ async fn run_security_audit(
             if elapsed < CACHE_STALE_SECS {
                 // Return stale immediately, refresh in background
                 let cache_clone = state.security_report_cache.clone();
-                let session_arc = {
-                    let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-                    exec_sessions
-                        .get(&host_id)
-                        .cloned()
-                        .ok_or("No active session for this host")?
-                };
+                let session_arc = exec_session(&state, host_id, "No active session for this host")?;
                 tokio::task::spawn(async move {
                     match with_timeout(
                         move || {
@@ -1347,13 +1208,7 @@ async fn run_security_audit(
     }
 
     // Cache is empty or very stale — block and fetch
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
 
     let report = with_timeout(
         move || {
@@ -1386,13 +1241,7 @@ async fn get_system_stats(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
 
     with_timeout(
         move || {
@@ -1409,13 +1258,7 @@ async fn get_system_panel(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<system::SystemPanel, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
+    let session_arc = exec_session(&state, host_id, "No active session for this host")?;
 
     with_timeout(
         move || {
@@ -1716,4 +1559,49 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host(auth_type: &str, key_path: Option<&str>) -> db::Host {
+        db::Host {
+            id: 7,
+            name: "n".into(),
+            host: "h".into(),
+            port: 22,
+            username: "u".into(),
+            auth_type: auth_type.into(),
+            key_path: key_path.map(String::from),
+            group: None,
+            favorite: 0,
+            last_connected_at: None,
+            created_at: String::new(),
+            mongo_uri: None,
+            mongo_local_uri: None,
+        }
+    }
+
+    #[test]
+    fn resolve_auth_password_host_uses_override_without_keyring() {
+        let r = resolve_auth(&host("password", Some("/ignored")), Some("pw".into())).unwrap();
+        assert_eq!(r, (Some("pw".into()), None));
+    }
+
+    #[test]
+    fn resolve_auth_key_host_ignores_override() {
+        let r = resolve_auth(&host("key", Some("/k")), Some("pw".into())).unwrap();
+        assert_eq!(r, (None, Some("/k".into())));
+        let r = resolve_auth(&host("key", None), None).unwrap();
+        assert_eq!(r, (None, None));
+    }
+
+    #[test]
+    fn resolve_auth_unknown_type_passes_override_and_key_through() {
+        let r = resolve_auth(&host("other", Some("/k")), Some("pw".into())).unwrap();
+        assert_eq!(r, (Some("pw".into()), Some("/k".into())));
+        let r = resolve_auth(&host("other", Some("/k")), None).unwrap();
+        assert_eq!(r, (None, Some("/k".into())));
+    }
 }
