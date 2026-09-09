@@ -304,7 +304,7 @@ fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String
 
 #[tauri::command]
 fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host(conn, id, &host))
+    with_db(&state, |conn| db::update_host(conn, id, &host)).map(|_| ())
 }
 
 #[tauri::command]
@@ -437,37 +437,6 @@ fn open_exec_pty_data_channel(
 #[tauri::command]
 fn parse_ssh_config() -> Result<Vec<ssh_config_parser::SshConfigHost>, String> {
     ssh_config_parser::parse_ssh_config()
-}
-
-#[tauri::command]
-fn import_ssh_config_hosts(
-    state: State<'_, AppState>,
-    hosts: Vec<ssh_config_parser::SshConfigHost>,
-) -> Result<usize, String> {
-    let mut conn = state.db.get().map_err(db_err)?;
-    // One transaction instead of one fsync per row. A row that fails to
-    // insert is skipped, as before; SQLite rolls back only that statement.
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let mut count = 0;
-    for h in hosts {
-        let new_host = db::NewHost {
-            name: h.name,
-            host: h.host,
-            port: h.port,
-            username: h.username,
-            auth_type: h.auth_type,
-            key_path: h.key_path,
-            group: None,
-            favorite: None,
-            mongo_uri: None,
-            mongo_local_uri: None,
-        };
-        if db::add_host(&tx, &new_host).is_ok() {
-            count += 1;
-        }
-    }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(count)
 }
 
 #[tauri::command]
@@ -1078,23 +1047,19 @@ fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String> {
-    let hosts: Vec<db::NewHost> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+/// Import hosts from either source. Rows that fail validation or insertion
+/// are reported individually rather than aborting the import, so the caller
+/// can tell the user exactly what landed and what did not.
+fn import_hosts(
+    state: State<'_, AppState>,
+    entries: Vec<db::ImportEntry>,
+) -> Result<db::ImportSummary, String> {
     let mut conn = state.db.get().map_err(db_err)?;
-    // One transaction instead of one fsync per row. On a bad row the rows
-    // before it are kept and the error is returned, matching the previous
-    // autocommit behavior.
+    // One transaction instead of one fsync per row.
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let mut count = 0;
-    for host in hosts {
-        if let Err(e) = db::add_host(&tx, &host) {
-            tx.commit().map_err(|e| e.to_string())?;
-            return Err(e.to_string());
-        }
-        count += 1;
-    }
+    let summary = db::import_entries(&tx, entries);
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(count)
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1558,7 +1523,6 @@ fn main() {
             export_hosts,
             import_hosts,
             parse_ssh_config,
-            import_ssh_config_hosts,
             write_file,
             get_setting,
             set_setting,

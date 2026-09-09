@@ -190,10 +190,17 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  async function importHosts(fileContent) {
-    const count = await invoke('import_hosts', { json: fileContent })
-    await loadHosts()
-    return count
+  /**
+   * Import prepared entries and return the backend's summary. The reload runs
+   * even when the call throws, because a partial import must still show up in
+   * the sidebar rather than looking like nothing happened.
+   */
+  async function importHosts(entries) {
+    try {
+      return await invoke('import_hosts', { entries })
+    } finally {
+      await loadHosts()
+    }
   }
 
   /**

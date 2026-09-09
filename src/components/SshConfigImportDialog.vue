@@ -50,6 +50,7 @@ import { ref } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
+import { normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 
 /**
  * Lists the hosts found in ~/.ssh/config with checkboxes and imports the
@@ -83,10 +84,14 @@ async function confirmSshConfigImport() {
     return
   }
   try {
-    const count = await invoke('import_ssh_config_hosts', { hosts: toImport })
-    await store.loadHosts()
+    const entries = toImport.map((raw) => ({
+      host: normalizeImportHost(raw),
+      replace_id: null,
+    }))
+    const summary = await store.importHosts(entries)
     showSshConfigDialog.value = false
-    toast(`Imported ${count} hosts from SSH config`, 'success')
+    const { message, type } = summarizeImport(summary)
+    toast(message, type)
   } catch (err) {
     toast('Import failed: ' + err, 'error')
   }

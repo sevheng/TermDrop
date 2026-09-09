@@ -293,6 +293,7 @@ import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
 import { toast } from '../utils/toast.js'
+import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 
@@ -682,16 +683,27 @@ function importHosts() {
   importInput.value?.click()
 }
 
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024
+
 async function onImportFileSelected(event) {
   const file = event.target.files[0]
+  event.target.value = ''
   if (!file) return
+  if (file.size > MAX_IMPORT_BYTES) {
+    toast('That file is too large to be a host export', 'error')
+    return
+  }
   try {
     const text = await file.text()
-    const count = await store.importHosts(text)
-    toast(`Imported ${count} hosts`, 'success')
+    const entries = parseHostsFile(text).map((raw) => ({
+      host: normalizeImportHost(raw),
+      replace_id: null,
+    }))
+    const summary = await store.importHosts(entries)
+    const { message, type } = summarizeImport(summary)
+    toast(message, type)
   } catch (err) {
     toast('Import failed: ' + err, 'error')
   }
-  event.target.value = ''
 }
 </script>
