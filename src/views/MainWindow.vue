@@ -104,54 +104,17 @@
           <!-- Panel tabs -->
           <div class="flex border-b border-[#3c3c3c]">
             <button
-              @click="rightPanelTab = 'sftp'"
+              v-for="tab in PANEL_TABS"
+              :key="tab.id"
+              @click="rightPanelTab = tab.id"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'sftp'
+              :class="rightPanelTab === tab.id
                 ? 'text-[#007acc]'
                 : 'text-[#858585] hover:text-[#cccccc]'"
             >
-              SFTP
+              {{ tab.label }}
               <span
-                v-if="rightPanelTab === 'sftp'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'tunnels'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'tunnels'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Tunnels
-              <span
-                v-if="rightPanelTab === 'tunnels'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'docker'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'docker'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Docker
-              <span
-                v-if="rightPanelTab === 'docker'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'security'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'security'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Security
-              <span
-                v-if="rightPanelTab === 'security'"
+                v-if="rightPanelTab === tab.id"
                 class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
@@ -269,6 +232,12 @@ const store = useConnectionStore()
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')
+const PANEL_TABS = [
+  { id: 'sftp', label: 'SFTP' },
+  { id: 'tunnels', label: 'Tunnels' },
+  { id: 'docker', label: 'Docker' },
+  { id: 'security', label: 'Security' },
+]
 const showForwardModal = ref(false)
 const forwardPrefill = ref(null)
 const editForward = ref(null)

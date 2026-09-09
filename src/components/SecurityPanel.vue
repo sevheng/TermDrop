@@ -74,17 +74,17 @@
             class="px-2 py-1.5 flex items-start gap-2"
           >
             <component
-              :is="iconFor(check.status)"
+              :is="statusMeta(check.status).icon"
               :size="14"
               class="shrink-0 mt-0.5"
-              :class="colorFor(check.status)"
+              :class="statusMeta(check.status).color"
             />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
                 <span class="text-[11px] text-[#cccccc]">{{ check.name }}</span>
                 <span
                   class="text-[9px] px-1 py-0 rounded font-medium uppercase"
-                  :class="badgeClassFor(check.status)"
+                  :class="statusMeta(check.status).badge"
                 >
                   {{ check.status }}
                 </span>
@@ -145,31 +145,15 @@ const scoreClass = computed(() => {
   return 'bg-[#f44336]/20 text-[#f44336]'
 })
 
-function iconFor(status) {
-  switch (status) {
-    case 'pass': return ShieldCheck
-    case 'warn': return AlertTriangle
-    case 'fail': return XCircle
-    default: return Shield
-  }
+const STATUS_META = {
+  pass: { icon: ShieldCheck, color: 'text-[#89d185]', badge: 'bg-[#89d185]/20 text-[#89d185]' },
+  warn: { icon: AlertTriangle, color: 'text-[#cca700]', badge: 'bg-[#cca700]/20 text-[#cca700]' },
+  fail: { icon: XCircle, color: 'text-[#f44336]', badge: 'bg-[#f44336]/20 text-[#f44336]' },
 }
+const UNKNOWN_STATUS_META = { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' }
 
-function colorFor(status) {
-  switch (status) {
-    case 'pass': return 'text-[#89d185]'
-    case 'warn': return 'text-[#cca700]'
-    case 'fail': return 'text-[#f44336]'
-    default: return 'text-[#858585]'
-  }
-}
-
-function badgeClassFor(status) {
-  switch (status) {
-    case 'pass': return 'bg-[#89d185]/20 text-[#89d185]'
-    case 'warn': return 'bg-[#cca700]/20 text-[#cca700]'
-    case 'fail': return 'bg-[#f44336]/20 text-[#f44336]'
-    default: return 'bg-[#3c3c3c] text-[#858585]'
-  }
+function statusMeta(status) {
+  return STATUS_META[status] || UNKNOWN_STATUS_META
 }
 
 function readFromCache() {

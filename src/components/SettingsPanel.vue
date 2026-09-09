@@ -1,6 +1,5 @@
 <template>
-  <div v-if="show" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-[#252526] rounded-lg p-6 w-96 border border-[#3c3c3c] shadow-xl">
+  <ModalShell :show="show" dim="bg-black/50" z="z-50" panel-class="p-6 w-96 shadow-xl">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-4">Settings</h3>
 
       <div class="space-y-2">
@@ -46,8 +45,7 @@
         <button @click="$emit('close')" class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]">Cancel</button>
         <button @click="save" class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] text-white rounded">Save</button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -56,6 +54,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { useConnectionStore } from '../stores/connection.js'
 import { checkForUpdates } from '../composables/useUpdater.js'
 import { toast } from '../utils/toast.js'
+import ModalShell from './ModalShell.vue'
 
 const props = defineProps({
   show: Boolean,
