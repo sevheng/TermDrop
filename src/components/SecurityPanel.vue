@@ -118,10 +118,31 @@
                   <p class="text-[10px] text-[#a0a0a0] leading-relaxed">
                     {{ check.remediation.summary }}
                   </p>
-                  <pre
-                    v-if="check.remediation.command"
-                    class="mt-1 px-1.5 py-1 bg-[#252526] border border-[#3c3c3c] rounded text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap break-all"
-                  >{{ check.remediation.command }}</pre>
+                  <template v-if="check.remediation.command">
+                    <pre
+                      class="mt-1 px-1.5 py-1 bg-[#252526] border border-[#3c3c3c] rounded text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap break-all"
+                    >{{ check.remediation.command }}</pre>
+                    <div class="flex items-center gap-2 mt-1">
+                      <button
+                        @click="copyCommand(check.remediation.command)"
+                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                      >
+                        <Copy :size="10" />
+                        Copy
+                      </button>
+                      <button
+                        v-if="canSend"
+                        @click="sendCommand(check.remediation.command)"
+                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                      >
+                        <TerminalSquare :size="10" />
+                        Send to terminal
+                      </button>
+                    </div>
+                    <p v-if="canSend" class="text-[9px] text-[#6e6e6e] mt-0.5">
+                      Typed at the prompt without running. Press Enter yourself.
+                    </p>
+                  </template>
                 </div>
               </template>
             </div>
@@ -135,7 +156,9 @@
 <script setup>
 import { ref, reactive, onMounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight, Copy, TerminalSquare } from 'lucide-vue-next'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 
 const props = defineProps({
   hostId: {
@@ -144,7 +167,31 @@ const props = defineProps({
   },
 })
 
+const emit = defineEmits(['sendToTerminal'])
+
 const store = useConnectionStore()
+
+/** MongoDB tabs have no shell, and a disconnected tab has nothing to write to. */
+const canSend = computed(() => canReceiveCommand(store.activeTab))
+
+async function copyCommand(command) {
+  try {
+    await writeText(command)
+  } catch {
+    // Clipboard access can be refused; the command is on screen either way.
+  }
+}
+
+/**
+ * Hands the command to MainWindow, which knows the active session. It is typed
+ * at the prompt and deliberately not submitted, so the user reads it and
+ * presses Enter. The guard is a second check on top of the backend's, which
+ * only ever emits its own literals.
+ */
+function sendCommand(command) {
+  if (!canSend.value || !isInsertableCommand(command)) return
+  emit('sendToTerminal', command)
+}
 
 const report = ref(null)
 const loading = ref(false)
