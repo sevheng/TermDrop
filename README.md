@@ -32,7 +32,7 @@ Recommended captures:
 - **Multi-tab** terminal powered by [xterm.js](https://xtermjs.org/) with full ANSI color support
 - **In-terminal search** (`Ctrl + F`)
 - **Copy, paste, select-all** shortcuts (`Ctrl + Shift + C / V / A`)
-- **Automatic reconnect** with SSH keep-alive on connection loss
+- **Reconnect** button when a session drops, restoring the terminal and its SFTP session
 
 ### SFTP Browser
 - **Visual file browser** with breadcrumb navigation
