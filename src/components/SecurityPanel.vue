@@ -60,9 +60,13 @@
               class="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold mx-auto mb-1"
               :class="scoreClass"
             >
-              {{ report.score }}
+              {{ hasScore ? report.score : '—' }}
             </div>
             <span class="text-[10px] text-[#858585] uppercase tracking-wide">{{ scoreLabel }}</span>
+            <p class="text-[10px] text-[#858585] mt-1">
+              {{ hasScore ? `${report.passed} of ${report.scored} checks passed` : 'Nothing could be determined' }}
+            </p>
+            <p v-if="breakdown" class="text-[10px] text-[#6e6e6e] mt-0.5">{{ breakdown }}</p>
           </div>
         </div>
 
@@ -90,7 +94,11 @@
                 </span>
               </div>
               <p class="text-[10px] text-[#858585] mt-0.5">{{ check.message }}</p>
-              <p v-if="check.detail" class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono truncate">{{ check.detail }}</p>
+              <p
+                v-if="check.detail"
+                class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono truncate"
+                :title="check.detail"
+              >{{ check.detail }}</p>
             </div>
           </div>
         </div>
@@ -129,8 +137,12 @@ const timeAgo = computed(() => {
   return `${hours}h ago`
 })
 
+/** False when every check came back undetermined, so there is nothing to grade. */
+const hasScore = computed(() => (report.value?.scored ?? 0) > 0)
+
 const scoreLabel = computed(() => {
   if (!report.value) return ''
+  if (!hasScore.value) return 'Unknown'
   const s = report.value.score
   if (s >= 80) return 'Good'
   if (s >= 50) return 'Fair'
@@ -139,18 +151,36 @@ const scoreLabel = computed(() => {
 
 const scoreClass = computed(() => {
   if (!report.value) return ''
+  if (!hasScore.value) return 'bg-[#3c3c3c] text-[#858585]'
   const s = report.value.score
   if (s >= 80) return 'bg-[#89d185]/20 text-[#89d185]'
   if (s >= 50) return 'bg-[#cca700]/20 text-[#cca700]'
   return 'bg-[#f44336]/20 text-[#f44336]'
 })
 
+/** "2 failed · 1 warning · 3 undetermined", omitting whichever counts are zero. */
+const breakdown = computed(() => {
+  const checks = report.value?.checks
+  if (!checks?.length) return ''
+  const count = (status) => checks.filter((c) => c.status === status).length
+  const parts = []
+  const failed = count('fail')
+  const warned = count('warn')
+  const unknown = count('unknown')
+  if (failed) parts.push(`${failed} failed`)
+  if (warned) parts.push(`${warned} warning${warned === 1 ? '' : 's'}`)
+  if (unknown) parts.push(`${unknown} undetermined`)
+  return parts.join(' · ')
+})
+
 const STATUS_META = {
   pass: { icon: ShieldCheck, color: 'text-[#89d185]', badge: 'bg-[#89d185]/20 text-[#89d185]' },
   warn: { icon: AlertTriangle, color: 'text-[#cca700]', badge: 'bg-[#cca700]/20 text-[#cca700]' },
   fail: { icon: XCircle, color: 'text-[#f44336]', badge: 'bg-[#f44336]/20 text-[#f44336]' },
+  // The backend reports this when a probe lacked the privileges to answer.
+  unknown: { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' },
 }
-const UNKNOWN_STATUS_META = { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' }
+const UNKNOWN_STATUS_META = STATUS_META.unknown
 
 function statusMeta(status) {
   return STATUS_META[status] || UNKNOWN_STATUS_META
