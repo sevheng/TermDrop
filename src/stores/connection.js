@@ -100,7 +100,6 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   const securityReports = ref(new Map())
-  const securityReportVersion = ref(0)
 
   function getSecurityReport(hostId) {
     return securityReports.value.get(hostId) || null
@@ -108,17 +107,14 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function setSecurityLoading(hostId) {
     securityReports.value.set(hostId, { report: null, loading: true, error: null })
-    securityReportVersion.value++
   }
 
   function setSecurityReport(hostId, report) {
     securityReports.value.set(hostId, { report, loading: false, error: null })
-    securityReportVersion.value++
   }
 
   function setSecurityError(hostId, error) {
     securityReports.value.set(hostId, { report: null, loading: false, error })
-    securityReportVersion.value++
   }
 
   async function runSecurityAudit(hostId, force = false) {
@@ -200,18 +196,47 @@ export const useConnectionStore = defineStore('connection', () => {
     return count
   }
 
+  /**
+   * Estimate terminal size before creating the PTY so the remote shell
+   * starts with roughly the right dimensions instead of default 80x24.
+   */
+  function estimateTerminalSize() {
+    return {
+      cols: Math.max(80, Math.floor((window.innerWidth - 48) / 8)),
+      rows: Math.max(24, Math.floor((window.innerHeight - 200) / 16)),
+    }
+  }
+
+  /** The backend could not find a stored password for a password host. */
+  function isMissingKeyringPassword(err) {
+    const errStr = String(err)
+    return errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')
+  }
+
+  /** Open the SFTP side channel for a tab; failure only warns, the tab stays. */
+  async function attachSftp(sessionId, hostId, isKeyAuth, providedPassword) {
+    try {
+      const sftpArgs = { hostId }
+      if (!isKeyAuth && providedPassword) {
+        sftpArgs.password = providedPassword
+      }
+      const sftpId = await invoke('sftp_connect', sftpArgs)
+      tabs.value = tabs.value.map(t =>
+        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
+      )
+    } catch (err) {
+      console.warn('SFTP connection failed:', err)
+      toast('SFTP connection failed: ' + err, 'warning')
+    }
+  }
+
   async function connect(hostId, providedPassword = null) {
     const host = hosts.value.find(h => h.id === hostId)
     const isKeyAuth = host?.auth_type === 'key'
     connectingHostId.value = hostId
 
-    // Estimate terminal size before creating PTY so the remote shell
-    // starts with roughly the right dimensions instead of default 80x24.
-    const estCols = Math.max(80, Math.floor((window.innerWidth - 48) / 8))
-    const estRows = Math.max(24, Math.floor((window.innerHeight - 200) / 16))
-
     let sessionId
-    const sshArgs = { hostId, cols: estCols, rows: estRows }
+    const sshArgs = { hostId, ...estimateTerminalSize() }
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
@@ -219,8 +244,7 @@ export const useConnectionStore = defineStore('connection', () => {
       sessionId = await invoke('ssh_connect', sshArgs)
     } catch (err) {
       connectingHostId.value = null
-      const errStr = String(err)
-      if (!isKeyAuth && (errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')) && !providedPassword) {
+      if (!isKeyAuth && isMissingKeyringPassword(err) && !providedPassword) {
         const password = await showPromptDialog(
           'Password required',
           'Password not found in keyring. Enter password for this host:',
@@ -251,19 +275,7 @@ export const useConnectionStore = defineStore('connection', () => {
     activeTabId.value = sessionId
 
     // Try SFTP in background — don't block tab creation
-    try {
-      const sftpArgs = { hostId }
-      if (!isKeyAuth && providedPassword) {
-        sftpArgs.password = providedPassword
-      }
-      const sftpId = await invoke('sftp_connect', sftpArgs)
-      tabs.value = tabs.value.map(t =>
-        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
-      )
-    } catch (err) {
-      console.warn('SFTP connection failed:', err)
-      toast('SFTP connection failed: ' + err, 'warning')
-    }
+    await attachSftp(sessionId, hostId, isKeyAuth, providedPassword)
     // Run security audit in background — don't block tab creation
     runSecurityAudit(hostId).catch(() => {})
 
@@ -450,7 +462,6 @@ export const useConnectionStore = defineStore('connection', () => {
     getNetStats,
     setNetStats,
     securityReports,
-    securityReportVersion,
     getSecurityReport,
     runSecurityAudit,
     registerTerminal,

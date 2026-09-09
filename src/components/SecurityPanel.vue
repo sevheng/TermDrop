@@ -191,6 +191,8 @@ onMounted(readFromCache)
 watch(() => props.hostId, readFromCache)
 
 // Reactive: re-read from cache whenever the store version changes
-watch(() => store.securityReportVersion, readFromCache)
+// securityReports is a reactive Map, so this fires whenever the entry for
+// this host is replaced by setSecurityLoading/Report/Error.
+watch(() => store.getSecurityReport(props.hostId), readFromCache)
 
 </script>

@@ -63,7 +63,7 @@
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
           <TerminalTab
-            v-for="tab in store.tabs.filter(t => t.type !== 'mongodb')"
+            v-for="tab in sshTabs"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :sessionId="tab.id"
@@ -72,7 +72,7 @@
             class="w-full h-full absolute top-0 left-0"
           />
           <MongodbPanel
-            v-for="tab in store.tabs.filter(t => t.type === 'mongodb')"
+            v-for="tab in mongoTabs"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :hostId="tab.hostId"
@@ -207,7 +207,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, onMounted, onUnmounted, defineAsyncComponent, computed } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -229,6 +229,8 @@ const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityP
 const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
 
 const store = useConnectionStore()
+const sshTabs = computed(() => store.tabs.filter(t => t.type !== 'mongodb'))
+const mongoTabs = computed(() => store.tabs.filter(t => t.type === 'mongodb'))
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')

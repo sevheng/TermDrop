@@ -273,57 +273,13 @@
 
     <input ref="importInput" type="file" accept=".json" class="hidden" @change="onImportFileSelected" />
 
-    <!-- SSH Config Import Dialog -->
-    <div
-      v-if="showSshConfigDialog"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-    >
-      <div class="bg-[#252526] border border-[#3c3c3c] rounded-lg w-96 max-h-[80vh] flex flex-col shadow-xl">
-        <div class="px-4 py-3 border-b border-[#3c3c3c] flex items-center justify-between">
-          <h3 class="text-sm font-medium text-[#cccccc]">Import from ~/.ssh/config</h3>
-          <button @click="showSshConfigDialog = false" class="text-[#858585] hover:text-[#cccccc]">×</button>
-        </div>
-        <div class="flex-1 overflow-y-auto p-2">
-          <div
-            v-for="(host, index) in sshConfigHosts"
-            :key="index"
-            class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#2a2d2e]"
-          >
-            <input
-              type="checkbox"
-              :checked="selectedSshHosts.has(index)"
-              @change="(e) => e.target.checked ? selectedSshHosts.add(index) : selectedSshHosts.delete(index)"
-              class="accent-[#007acc]"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="text-xs text-[#cccccc] truncate">{{ host.name }}</div>
-              <div class="text-[10px] text-[#858585] truncate">{{ host.username }}@{{ host.host }}:{{ host.port }} · {{ host.auth_type }}</div>
-            </div>
-          </div>
-        </div>
-        <div class="px-4 py-3 border-t border-[#3c3c3c] flex justify-end gap-2">
-          <button
-            @click="showSshConfigDialog = false"
-            class="px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#3c3c3c] rounded"
-          >
-            Cancel
-          </button>
-          <button
-            @click="confirmSshConfigImport"
-            class="px-3 py-1.5 text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white rounded"
-          >
-            Import {{ selectedSshHosts.size }} host{{ selectedSshHosts.size === 1 ? '' : 's' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <SshConfigImportDialog ref="sshImportRef" />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { invoke } from '../utils/invoke.js'
 import {
   Plus, Server, Database, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,
@@ -335,6 +291,7 @@ import MongoDbModal from './MongoDbModal.vue'
 import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
+import SshConfigImportDialog from './SshConfigImportDialog.vue'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
@@ -366,10 +323,7 @@ const pendingGroupForNewHost = ref(null)
 const showGroupModal = ref(false)
 const groupModalMode = ref('create')
 
-// SSH config import dialog
-const showSshConfigDialog = ref(false)
-const sshConfigHosts = ref([])
-const selectedSshHosts = ref(new Set())
+const sshImportRef = ref(null)
 const showImportMenu = ref(false)
 const importMenuRef = ref(null)
 const showAddMenu = ref(false)
@@ -389,9 +343,11 @@ const filteredHosts = computed(() => {
   )
 })
 
+const nonFavoriteHosts = computed(() => filteredHosts.value.filter(h => !h.favorite))
+
 const displayHosts = computed(() => {
   if (viewMode.value === 'flat') return filteredHosts.value
-  return filteredHosts.value.filter(h => !h.favorite)
+  return nonFavoriteHosts.value
 })
 
 const favoriteHosts = computed(() => {
@@ -415,8 +371,7 @@ const allGroupNames = computed(() => {
 
 const groupedHosts = computed(() => {
   const groups = {}
-  const nonFavorites = filteredHosts.value.filter(h => !h.favorite)
-  for (const host of nonFavorites) {
+  for (const host of nonFavoriteHosts.value) {
     const g = host.group || ''
     if (!groups[g]) groups[g] = []
     groups[g].push(host)
@@ -436,28 +391,28 @@ const groupedHosts = computed(() => {
   return sorted
 })
 
+const GROUP_COLORS = [
+  'hover:bg-blue-50 dark:hover:bg-blue-900/20',
+  'hover:bg-green-50 dark:hover:bg-green-900/20',
+  'hover:bg-purple-50 dark:hover:bg-purple-900/20',
+  'hover:bg-orange-50 dark:hover:bg-orange-900/20',
+  'hover:bg-pink-50 dark:hover:bg-pink-900/20',
+  'hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
+  'hover:bg-yellow-50 dark:hover:bg-yellow-900/20',
+  'hover:bg-red-50 dark:hover:bg-red-900/20',
+]
 const colorClassCache = new Map()
 
 function groupColorClass(name) {
   if (colorClassCache.has(name)) {
     return colorClassCache.get(name)
   }
-  const colors = [
-    'hover:bg-blue-50 dark:hover:bg-blue-900/20',
-    'hover:bg-green-50 dark:hover:bg-green-900/20',
-    'hover:bg-purple-50 dark:hover:bg-purple-900/20',
-    'hover:bg-orange-50 dark:hover:bg-orange-900/20',
-    'hover:bg-pink-50 dark:hover:bg-pink-900/20',
-    'hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
-    'hover:bg-yellow-50 dark:hover:bg-yellow-900/20',
-    'hover:bg-red-50 dark:hover:bg-red-900/20',
-  ]
   let hash = 0
   for (let i = 0; i < name.length; i++) {
     hash = ((hash << 5) - hash) + name.charCodeAt(i)
     hash |= 0
   }
-  const result = colors[Math.abs(hash) % colors.length]
+  const result = GROUP_COLORS[Math.abs(hash) % GROUP_COLORS.length]
   colorClassCache.set(name, result)
   return result
 }
@@ -628,23 +583,22 @@ function editHost(host) {
   showModal.value = true
 }
 
+/** Store a host password, reporting failure as a toast rather than throwing. */
+async function savePassword(hostId, password) {
+  if (!password) return
+  await store.storePassword(hostId, password).catch((err) => {
+    console.warn('Failed to store password:', err)
+    toast('Password could not be saved: ' + err, 'error')
+  })
+}
+
 async function handleSave({ id, hostData, password }) {
   if (id) {
     await store.updateHost(id, hostData)
-    if (password) {
-      await store.storePassword(id, password).catch((err) => {
-        console.warn('Failed to store password:', err)
-        toast('Password could not be saved: ' + err, 'error')
-      })
-    }
+    await savePassword(id, password)
   } else {
     const newId = await store.addHost(hostData)
-    if (password) {
-      await store.storePassword(newId, password).catch((err) => {
-        console.warn('Failed to store password:', err)
-        toast('Password could not be saved: ' + err, 'error')
-      })
-    }
+    await savePassword(newId, password)
     if (pendingGroupForNewHost.value !== null) {
       await store.setHostGroup(newId, pendingGroupForNewHost.value)
       pendingGroupForNewHost.value = null
@@ -720,35 +674,8 @@ function deleteHost(host) {
   })
 }
 
-async function importSshConfig() {
-  try {
-    const hosts = await invoke('parse_ssh_config')
-    if (!hosts || hosts.length === 0) {
-      toast('No hosts found in ~/.ssh/config', 'warning')
-      return
-    }
-    sshConfigHosts.value = hosts
-    selectedSshHosts.value = new Set(hosts.map((_, i) => i))
-    showSshConfigDialog.value = true
-  } catch (err) {
-    toast('Failed to parse SSH config: ' + err, 'error')
-  }
-}
-
-async function confirmSshConfigImport() {
-  const toImport = sshConfigHosts.value.filter((_, i) => selectedSshHosts.value.has(i))
-  if (toImport.length === 0) {
-    showSshConfigDialog.value = false
-    return
-  }
-  try {
-    const count = await invoke('import_ssh_config_hosts', { hosts: toImport })
-    await store.loadHosts()
-    showSshConfigDialog.value = false
-    toast(`Imported ${count} hosts from SSH config`, 'success')
-  } catch (err) {
-    toast('Import failed: ' + err, 'error')
-  }
+function importSshConfig() {
+  sshImportRef.value?.open()
 }
 
 function importHosts() {
