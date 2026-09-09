@@ -1,0 +1,21 @@
+---TERMDROP-PROCESSES---
+    PID %CPU %MEM     ELAPSED COMMAND
+      1  0.0  0.1  10-02:33:10 systemd
+   1234 12.5  3.2    01:02:03 node server.js
+---TERMDROP-NETWORK---
+LISTEN 0      128          0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=800,fd=3))
+LISTEN 0      511                *:80              *:*    users:(("nginx",pid=900,fd=6))
+---TERMDROP-ESTABLISHED---
+7
+---TERMDROP-INTERFACES---
+    lo: 1000 10 0 0 0 0 0 0 1000 10 0 0 0 0 0 0
+  eth0: 123456789 100 0 0 0 0 0 0 98765432 90 0 0 0 0 0 0
+  bad: not numbers here at all
+---TERMDROP-DISK-MOUNTS---
+/dev/sda1        50G   20G   28G  42% /
+tmpfs           2.0G     0  2.0G   0% /dev/shm
+---TERMDROP-DISK-DIRS---
+20G	/
+9.5G	/usr
+---TERMDROP-UNKNOWN---
+this section is ignored

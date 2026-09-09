@@ -114,6 +114,11 @@ pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String>
         }
     };
 
+    Ok(parse_docker_ps(&output))
+}
+
+/// Parse `docker ps --format '{{.ID}}|{{.Names}}|...'` output, one container per line.
+fn parse_docker_ps(output: &str) -> Vec<Container> {
     let mut containers = Vec::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('|').collect();
@@ -133,7 +138,7 @@ pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String>
         }
     }
 
-    Ok(containers)
+    containers
 }
 
 pub fn docker_start(session: &Session, container_id: &str) -> Result<(), String> {
@@ -167,5 +172,43 @@ pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<Str
         Ok("bash".to_string())
     } else {
         Ok("sh".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PS: &str = include_str!("fixtures/docker_ps.txt");
+
+    #[test]
+    fn parses_ps_lines_and_running_flag() {
+        let c = parse_docker_ps(PS);
+        assert_eq!(c.len(), 3);
+
+        assert_eq!(c[0].id, "abc123");
+        assert_eq!(c[0].name, "web");
+        assert_eq!(c[0].image, "nginx:latest");
+        assert_eq!(c[0].status, "Up 3 hours");
+        assert_eq!(c[0].state, "Up 3 hours");
+        assert_eq!(c[0].ports, "0.0.0.0:80->80/tcp");
+        assert_eq!(c[0].created, "2026-06-01 10:00:00 +0000 UTC");
+        assert!(c[0].running);
+
+        assert_eq!(c[1].name, "db");
+        assert_eq!(c[1].ports, "");
+        assert!(!c[1].running);
+
+        // Four fields is enough; missing ports/created become empty, "up" is case-insensitive.
+        assert_eq!(c[2].name, "worker");
+        assert_eq!(c[2].ports, "");
+        assert_eq!(c[2].created, "");
+        assert!(c[2].running);
+    }
+
+    #[test]
+    fn skips_short_lines_and_empty_output() {
+        assert!(parse_docker_ps("").is_empty());
+        assert!(parse_docker_ps("a|b|c\n").is_empty());
     }
 }
