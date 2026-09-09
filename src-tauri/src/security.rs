@@ -1,6 +1,7 @@
 use crate::ssh::exec::run_command;
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SecurityCheck {
@@ -25,14 +26,6 @@ fn parse_count(output: &str) -> i32 {
 // Each check is split into a fetch step (runs remote commands, maps a failed
 // command to empty output) and a pure classify step that is unit tested.
 // ---------------------------------------------------------------------------
-
-fn check_ssh_password_auth(session: &Session) -> SecurityCheck {
-    let output = run_command(
-        session,
-        "grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'",
-    );
-    classify_password_auth(&output.unwrap_or_default())
-}
 
 fn classify_password_auth(output: &str) -> SecurityCheck {
     let val = output.trim().to_lowercase();
@@ -59,14 +52,6 @@ fn classify_password_auth(output: &str) -> SecurityCheck {
             detail: Some(val),
         }
     }
-}
-
-fn check_ssh_root_login(session: &Session) -> SecurityCheck {
-    let output = run_command(
-        session,
-        "grep -E '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'",
-    );
-    classify_root_login(&output.unwrap_or_default())
 }
 
 fn classify_root_login(output: &str) -> SecurityCheck {
@@ -103,14 +88,6 @@ fn classify_root_login(output: &str) -> SecurityCheck {
     }
 }
 
-fn check_ssh_port(session: &Session) -> SecurityCheck {
-    let output = run_command(
-        session,
-        "grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null || echo 'Port 22'",
-    );
-    classify_ssh_port(&output.unwrap_or_default())
-}
-
 fn classify_ssh_port(output: &str) -> SecurityCheck {
     let val = output.trim().to_string();
 
@@ -129,32 +106,6 @@ fn classify_ssh_port(output: &str) -> SecurityCheck {
             detail: Some(val),
         }
     }
-}
-
-fn check_firewall(session: &Session) -> SecurityCheck {
-    // Try ufw first, then firewalld, then iptables
-    if let Ok(out) = run_command(session, "sudo ufw status numbered 2>/dev/null | head -1") {
-        if let Some(check) = firewall_from_ufw(&out) {
-            return check;
-        }
-    }
-
-    if let Ok(out) = run_command(session, "sudo firewall-cmd --state 2>/dev/null") {
-        if let Some(check) = firewall_from_firewalld(&out) {
-            return check;
-        }
-    }
-
-    if let Ok(out) = run_command(
-        session,
-        "sudo iptables -L -n 2>/dev/null | grep -v '^Chain' | grep -v '^target' | head -5 | wc -l",
-    ) {
-        if let Some(check) = firewall_from_iptables(&out) {
-            return check;
-        }
-    }
-
-    firewall_not_detected()
 }
 
 fn firewall_from_ufw(output: &str) -> Option<SecurityCheck> {
@@ -207,16 +158,6 @@ fn firewall_not_detected() -> SecurityCheck {
     }
 }
 
-fn check_failed_logins(session: &Session) -> SecurityCheck {
-    // Try auth.log first, then journalctl
-    let count = run_command(
-        session,
-        "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -n 20 | wc -l",
-    );
-    let count2 = run_command(session, "journalctl _SYSTEMD_UNIT=sshd.service 2>/dev/null | grep 'Failed password' | tail -n 20 | wc -l");
-    classify_failed_logins(&count.unwrap_or_default(), &count2.unwrap_or_default())
-}
-
 fn classify_failed_logins(auth_log: &str, journal: &str) -> SecurityCheck {
     let total = parse_count(auth_log).max(parse_count(journal));
 
@@ -244,15 +185,6 @@ fn classify_failed_logins(auth_log: &str, journal: &str) -> SecurityCheck {
     }
 }
 
-fn check_sudo_users(session: &Session) -> SecurityCheck {
-    let sudo_group = run_command(session, "getent group sudo 2>/dev/null | cut -d: -f4");
-    let wheel_group = run_command(session, "getent group wheel 2>/dev/null | cut -d: -f4");
-    classify_sudo_users(
-        &sudo_group.unwrap_or_default(),
-        &wheel_group.unwrap_or_default(),
-    )
-}
-
 fn classify_sudo_users(sudo_group: &str, wheel_group: &str) -> SecurityCheck {
     let sudo_users = sudo_group.trim().to_string();
     let wheel_users = wheel_group.trim().to_string();
@@ -275,21 +207,13 @@ fn classify_sudo_users(sudo_group: &str, wheel_group: &str) -> SecurityCheck {
     }
 }
 
-fn detect_os_family(session: &Session) -> String {
-    let id = run_command(
-        session,
-        "grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/\"//g'",
-    );
-    os_family_from(&id.unwrap_or_default())
-}
-
 fn os_family_from(output: &str) -> String {
     output.trim().to_lowercase()
 }
 
-fn check_security_updates(session: &Session) -> SecurityCheck {
-    let os_family = detect_os_family(session);
-
+/// Runs 1-2 package-manager commands chosen by the OS family, so it stays
+/// outside the batched script.
+fn check_security_updates(session: &Session, os_family: String) -> SecurityCheck {
     let (total, pkg_manager) = match os_family.as_str() {
         "ubuntu" | "debian" | "linuxmint" | "pop" | "elementary" | "zorin" => {
             let out = run_command(
@@ -358,11 +282,6 @@ fn classify_security_updates(total: i32, pkg_manager: &str) -> SecurityCheck {
     }
 }
 
-fn check_disk_space(session: &Session) -> SecurityCheck {
-    let output = run_command(session, "df -h / | awk 'NR==2{print $5}' | tr -d '%'");
-    classify_disk_space(&output.unwrap_or_default())
-}
-
 fn classify_disk_space(output: &str) -> SecurityCheck {
     let pct = output.trim().parse::<u8>().unwrap_or(0);
 
@@ -403,19 +322,138 @@ fn score_report(checks: Vec<SecurityCheck>) -> SecurityReport {
     SecurityReport { score, checks }
 }
 
-pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
-    let checks = vec![
-        check_ssh_password_auth(session),
-        check_ssh_root_login(session),
-        check_ssh_port(session),
-        check_firewall(session),
-        check_failed_logins(session),
-        check_sudo_users(session),
-        check_security_updates(session),
-        check_disk_space(session),
-    ];
+/// Wrap `s` as a single POSIX shell word.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
 
-    Ok(score_report(checks))
+/// All single-round-trip probes in one POSIX sh script. Each `section`
+/// line carries the command's exit status so the parser can treat a failed
+/// command as empty output, exactly as the per-command `run_command` path
+/// did. The firewall probes keep their short-circuit order: firewalld is
+/// only queried when ufw is not active, iptables only when neither is.
+const AUDIT_SCRIPT: &str = r#"section() { printf '\n---TERMDROP-%s rc=%s---\n' "$1" "$2"; }
+out=$(grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'); rc=$?; section PASSWORD_AUTH $rc; printf '%s' "$out"
+out=$(grep -E '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || echo 'NOTSET'); rc=$?; section ROOT_LOGIN $rc; printf '%s' "$out"
+out=$(grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null || echo 'Port 22'); rc=$?; section SSH_PORT $rc; printf '%s' "$out"
+fw=0
+out=$(sudo ufw status numbered 2>/dev/null | head -1); rc=$?; section UFW $rc; printf '%s' "$out"
+if [ $rc -eq 0 ]; then case $(printf '%s' "$out" | tr 'A-Z' 'a-z') in *active*|*status*) fw=1;; esac; fi
+if [ $fw -eq 0 ]; then
+  out=$(sudo firewall-cmd --state 2>/dev/null); rc=$?; section FIREWALLD $rc; printf '%s' "$out"
+  if [ $rc -eq 0 ]; then case $(printf '%s' "$out" | tr 'A-Z' 'a-z') in *running*) fw=1;; esac; fi
+fi
+if [ $fw -eq 0 ]; then
+  out=$(sudo iptables -L -n 2>/dev/null | grep -v '^Chain' | grep -v '^target' | head -5 | wc -l); rc=$?; section IPTABLES $rc; printf '%s' "$out"
+fi
+out=$(grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -n 20 | wc -l); rc=$?; section FAILED_AUTH_LOG $rc; printf '%s' "$out"
+out=$(journalctl _SYSTEMD_UNIT=sshd.service 2>/dev/null | grep 'Failed password' | tail -n 20 | wc -l); rc=$?; section FAILED_JOURNAL $rc; printf '%s' "$out"
+out=$(getent group sudo 2>/dev/null | cut -d: -f4); rc=$?; section SUDO_GROUP $rc; printf '%s' "$out"
+out=$(getent group wheel 2>/dev/null | cut -d: -f4); rc=$?; section WHEEL_GROUP $rc; printf '%s' "$out"
+out=$(grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/"//g'); rc=$?; section OS_ID $rc; printf '%s' "$out"
+out=$(df -h / | awk 'NR==2{print $5}' | tr -d '%'); rc=$?; section DISK $rc; printf '%s' "$out"
+printf '\n'
+true
+"#;
+
+fn audit_command() -> String {
+    format!("sh -c {}", shell_quote(AUDIT_SCRIPT))
+}
+
+/// Section outputs keyed by name. A section whose command exited non-zero
+/// (or that was skipped by the script) is `None`.
+fn parse_audit_sections(output: &str) -> HashMap<String, Option<String>> {
+    let mut sections = HashMap::new();
+    let mut current: Option<(String, bool)> = None;
+    let mut body: Vec<&str> = Vec::new();
+
+    let flush = |current: &Option<(String, bool)>,
+                 body: &Vec<&str>,
+                 sections: &mut HashMap<String, Option<String>>| {
+        if let Some((key, ok)) = current {
+            let text = if *ok { Some(body.join("\n")) } else { None };
+            sections.insert(key.clone(), text);
+        }
+    };
+
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("---TERMDROP-") {
+            if let Some(rest) = rest.strip_suffix("---") {
+                if let Some((key, rc)) = rest.split_once(" rc=") {
+                    flush(&current, &body, &mut sections);
+                    current = Some((key.to_string(), rc == "0"));
+                    body.clear();
+                    continue;
+                }
+            }
+        }
+        if current.is_some() {
+            body.push(line);
+        }
+    }
+    flush(&current, &body, &mut sections);
+    sections
+}
+
+fn section_text<'a>(sections: &'a HashMap<String, Option<String>>, key: &str) -> &'a str {
+    sections.get(key).and_then(|v| v.as_deref()).unwrap_or("")
+}
+
+/// Same order and predicates as the sequential probes: ufw, then firewalld,
+/// then iptables, each only consulted if present and successful.
+fn firewall_from_sections(sections: &HashMap<String, Option<String>>) -> SecurityCheck {
+    if let Some(Some(out)) = sections.get("UFW") {
+        if let Some(check) = firewall_from_ufw(out) {
+            return check;
+        }
+    }
+    if let Some(Some(out)) = sections.get("FIREWALLD") {
+        if let Some(check) = firewall_from_firewalld(out) {
+            return check;
+        }
+    }
+    if let Some(Some(out)) = sections.get("IPTABLES") {
+        if let Some(check) = firewall_from_iptables(out) {
+            return check;
+        }
+    }
+    firewall_not_detected()
+}
+
+/// Build the report from parsed sections plus the separately fetched
+/// updates check.
+fn audit_from_sections(
+    sections: &HashMap<String, Option<String>>,
+    updates: SecurityCheck,
+) -> SecurityReport {
+    let checks = vec![
+        classify_password_auth(section_text(sections, "PASSWORD_AUTH")),
+        classify_root_login(section_text(sections, "ROOT_LOGIN")),
+        classify_ssh_port(section_text(sections, "SSH_PORT")),
+        firewall_from_sections(sections),
+        classify_failed_logins(
+            section_text(sections, "FAILED_AUTH_LOG"),
+            section_text(sections, "FAILED_JOURNAL"),
+        ),
+        classify_sudo_users(
+            section_text(sections, "SUDO_GROUP"),
+            section_text(sections, "WHEEL_GROUP"),
+        ),
+        updates,
+        classify_disk_space(section_text(sections, "DISK")),
+    ];
+    score_report(checks)
+}
+
+pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
+    // One round trip for every single-command probe. If the batch itself
+    // fails, every section reads as empty, as a failed probe always did.
+    let sections = run_command(session, &audit_command())
+        .map(|out| parse_audit_sections(&out))
+        .unwrap_or_default();
+    let os_family = os_family_from(section_text(&sections, "OS_ID"));
+    let updates = check_security_updates(session, os_family);
+    Ok(audit_from_sections(&sections, updates))
 }
 
 #[cfg(test)]
@@ -424,6 +462,126 @@ mod tests {
 
     fn status(check: &SecurityCheck) -> &str {
         check.status.as_str()
+    }
+
+    fn sections_from(pairs: &[(&str, i32, &str)]) -> String {
+        let mut out = String::new();
+        for (key, rc, body) in pairs {
+            out.push_str(&format!("\n---TERMDROP-{} rc={}---\n{}", key, rc, body));
+        }
+        out.push('\n');
+        out
+    }
+
+    #[test]
+    fn parses_sections_and_treats_failed_commands_as_none() {
+        let raw = sections_from(&[
+            ("PASSWORD_AUTH", 0, "PasswordAuthentication no"),
+            ("SSH_PORT", 0, "Port 22\nPort 2222"),
+            ("FIREWALLD", 252, "not running"),
+            ("DISK", 0, ""),
+        ]);
+        let sections = parse_audit_sections(&raw);
+        assert_eq!(
+            sections["PASSWORD_AUTH"].as_deref(),
+            Some("PasswordAuthentication no")
+        );
+        assert_eq!(sections["SSH_PORT"].as_deref(), Some("Port 22\nPort 2222"));
+        assert_eq!(sections["FIREWALLD"], None, "non-zero exit discards stdout");
+        assert_eq!(sections["DISK"].as_deref(), Some(""));
+        assert!(sections.get("UFW").is_none(), "absent sections stay absent");
+        assert_eq!(section_text(&sections, "FIREWALLD"), "");
+        assert_eq!(section_text(&sections, "MISSING"), "");
+    }
+
+    #[test]
+    fn firewall_sections_follow_probe_order_and_skip_failed_probes() {
+        let mut m: HashMap<String, Option<String>> = HashMap::new();
+        m.insert("UFW".into(), Some("Status: active".into()));
+        m.insert("FIREWALLD".into(), Some("running".into()));
+        assert_eq!(firewall_from_sections(&m).message, "UFW firewall is active");
+
+        let mut m: HashMap<String, Option<String>> = HashMap::new();
+        m.insert("UFW".into(), None);
+        m.insert("FIREWALLD".into(), None); // exited non-zero: "not running" discarded
+        m.insert("IPTABLES".into(), Some("4".into()));
+        assert_eq!(
+            firewall_from_sections(&m).message,
+            "iptables rules are configured"
+        );
+
+        let mut m: HashMap<String, Option<String>> = HashMap::new();
+        m.insert("UFW".into(), Some("".into()));
+        m.insert("FIREWALLD".into(), Some("running".into()));
+        assert_eq!(firewall_from_sections(&m).message, "firewalld is active");
+
+        assert_eq!(firewall_from_sections(&HashMap::new()).status, "fail");
+    }
+
+    #[test]
+    fn batched_report_matches_per_command_classification() {
+        let raw = sections_from(&[
+            ("PASSWORD_AUTH", 0, "PasswordAuthentication no"),
+            ("ROOT_LOGIN", 0, "PermitRootLogin prohibit-password"),
+            ("SSH_PORT", 0, "Port 2222"),
+            ("UFW", 0, "Status: active"),
+            ("FAILED_AUTH_LOG", 0, "3"),
+            ("FAILED_JOURNAL", 1, ""),
+            ("SUDO_GROUP", 0, "alice,bob"),
+            ("WHEEL_GROUP", 2, ""),
+            ("OS_ID", 0, "ubuntu"),
+            ("DISK", 0, "72"),
+        ]);
+        let sections = parse_audit_sections(&raw);
+        assert_eq!(os_family_from(section_text(&sections, "OS_ID")), "ubuntu");
+        let updates = classify_security_updates(0, "apt");
+        let report = audit_from_sections(&sections, updates.clone());
+
+        let expected = score_report(vec![
+            classify_password_auth("PasswordAuthentication no"),
+            classify_root_login("PermitRootLogin prohibit-password"),
+            classify_ssh_port("Port 2222"),
+            firewall_from_ufw("Status: active").unwrap(),
+            classify_failed_logins("3", ""),
+            classify_sudo_users("alice,bob", ""),
+            updates,
+            classify_disk_space("72"),
+        ]);
+        assert_eq!(report.score, expected.score);
+        for (a, b) in report.checks.iter().zip(expected.checks.iter()) {
+            assert_eq!(
+                (&a.name, &a.status, &a.message, &a.detail),
+                (&b.name, &b.status, &b.message, &b.detail)
+            );
+        }
+        assert_eq!(report.checks[3].message, "UFW firewall is active");
+        assert_eq!(report.checks[4].status, "warn");
+        assert_eq!(report.checks[7].status, "warn");
+    }
+
+    #[test]
+    fn audit_command_is_a_single_quoted_sh_invocation() {
+        let cmd = audit_command();
+        assert!(cmd.starts_with("sh -c '"));
+        assert!(cmd.ends_with("'"));
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        // Every probe from the sequential version is still present.
+        for needle in [
+            "PasswordAuthentication",
+            "PermitRootLogin",
+            "^Port",
+            "ufw status numbered",
+            "firewall-cmd --state",
+            "iptables -L -n",
+            "/var/log/auth.log",
+            "journalctl _SYSTEMD_UNIT=sshd.service",
+            "getent group sudo",
+            "getent group wheel",
+            "/etc/os-release",
+            "df -h /",
+        ] {
+            assert!(cmd.contains(needle), "{}", needle);
+        }
     }
 
     #[test]
