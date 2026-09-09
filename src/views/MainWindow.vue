@@ -251,7 +251,6 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
-import { invoke } from '@tauri-apps/api/core'
 
 const emit = defineEmits(['update-available'])
 

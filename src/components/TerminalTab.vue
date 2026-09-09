@@ -354,7 +354,6 @@ let canvasAddon = null
 let webLinksAddon = null
 let resizeObserver = null
 let statusInterval = null
-let hasBeenInitialized = false
 
 const isDisconnected = ref(false)
 
@@ -1138,7 +1137,6 @@ async function reconnect() {
 
 onMounted(async () => {
   await initTerminal()
-  hasBeenInitialized = true
   startActiveOperations()
   // Fix race condition: if tab is already active when terminal finishes init,
   // the isActive watcher already fired early (term was null). Start polling now.

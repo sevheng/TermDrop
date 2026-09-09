@@ -2,7 +2,6 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import './assets/main.css'
-import { invoke } from '@tauri-apps/api/core'
 
 const app = createApp(App)
 

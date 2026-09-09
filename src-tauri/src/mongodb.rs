@@ -374,10 +374,6 @@ pub async fn sync_collections(
     .await
     {
         Ok(()) => {
-            let _ = window.emit(
-                "mongodb-sync-done",
-                serde_json::json!({"opId": &op_id, "db": db}),
-            );
             return Ok(());
         }
         Err(e) => {
@@ -618,10 +614,6 @@ async fn driver_sync(
         );
     }
 
-    let _ = window.emit(
-        "mongodb-sync-done",
-        serde_json::json!({"opId": op_id, "db": db}),
-    );
     Ok(())
 }
 

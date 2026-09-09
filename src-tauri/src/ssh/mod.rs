@@ -4,8 +4,6 @@ pub mod session;
 
 pub use session::create_exec_session;
 
-use ssh2::Session;
-use std::io::Read;
 use std::sync::{Arc, Mutex};
 use tauri::{ipc::Channel, Emitter, Window};
 use tokio::sync::mpsc;
@@ -22,22 +20,6 @@ pub struct ExecPtyHandle {
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
-}
-
-/// Run a command on an existing SSH session (reuses connection).
-pub fn exec_with_session(session: &Session, command: &str) -> Result<String, String> {
-    let mut channel = session
-        .channel_session()
-        .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
-
-    let mut output = String::new();
-    channel
-        .read_to_string(&mut output)
-        .map_err(|e| format!("read: {}", e))?;
-
-    channel.wait_close().ok();
-    Ok(output.trim().to_string())
 }
 
 /// Connect to an SSH host and spawn an interactive shell.

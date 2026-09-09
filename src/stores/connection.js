@@ -336,10 +336,6 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  async function writeData(sessionId, data) {
-    await invoke('ssh_write', { sessionId, data })
-  }
-
   function setActiveTab(sessionId) {
     activeTabId.value = sessionId
   }
@@ -453,7 +449,6 @@ export const useConnectionStore = defineStore('connection', () => {
     disconnect,
     openMongoTab,
     closeMongoTab,
-    writeData,
     setActiveTab,
     sftpList,
     sftpUpload,

@@ -96,15 +96,6 @@
       />
     </div>
 
-    <!-- Edited files toolbar -->
-    <div
-      v-if="editingFiles.size > 0"
-      class="px-2 py-1 border-b border-[#3c3c3c] bg-[#cca700]/20 flex items-center justify-between"
-    >
-      <span class="text-xs text-[#cca700]">{{ editingFiles.size }} file{{ editingFiles.size > 1 ? 's' : '' }} being edited</span>
-      <button @click="uploadAllEdits" class="text-xs bg-[#cca700] hover:bg-[#ffd700] text-black px-2 py-0.5 rounded font-medium">Upload All</button>
-    </div>
-
     <!-- File list -->
     <div class="flex-1 overflow-y-auto relative">
       <div
@@ -469,7 +460,6 @@ function onEditorResizeUp() {
   document.removeEventListener('mouseup', onEditorResizeUp)
 }
 
-const editingFiles = ref(new Map()) // localPath -> { remotePath, lastModified, intervalId }
 
 function openConfirm(options) {
   confirmDialog.value = {
@@ -685,23 +675,6 @@ async function bulkDelete() {
   })
 }
 
-async function uploadAllEdits() {
-  for (const [localPath, edit] of editingFiles.value) {
-    try {
-      await invoke('sftp_upload', {
-        sftpSessionId: props.sftpSessionId,
-        localPath,
-        remotePath: edit.remotePath,
-      })
-      showToast(`Uploaded ${edit.fileName}`, 'success')
-    } catch (e) {
-      console.error('Upload edit failed:', e)
-      showToast(`Upload failed for ${edit.fileName}: ${e}`, 'error')
-    }
-  }
-  editingFiles.value.clear()
-}
-
 async function bulkDownload() {
   const paths = Array.from(selectedFiles.value)
   let completed = 0
@@ -791,8 +764,6 @@ onUnmounted(() => {
   if (unlistenFileDrop) unlistenFileDrop()
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('contextmenu', closeMenu, true)
-  // Stop all edit polling intervals
-  editingFiles.value.clear()
 })
 
 watch(() => props.sftpSessionId, async () => {

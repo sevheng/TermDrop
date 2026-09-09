@@ -157,8 +157,7 @@
                 @edit="editHost(host)"
                 @delete="deleteHost(host)"
                 @toggle-favorite="toggleFavorite(host)"
-                @drag-start="draggingHost = true"
-                @drag-end="draggingHost = false; dragOverGroup = null"
+                @drag-end="dragOverGroup = null"
                 @context-menu="showHostMenu"
               />
             </div>
@@ -356,7 +355,6 @@ watch(searchQuery, (val) => {
 }, { immediate: true })
 const importInput = ref(null)
 const viewMode = ref(localStorage.getItem('host-view-mode') || 'grouped')
-const draggingHost = ref(false)
 const dragOverGroup = ref(null)
 const customGroups = ref(new Set(JSON.parse(localStorage.getItem('host-custom-groups') || '[]')))
 
@@ -562,7 +560,6 @@ async function deleteGroup() {
 
 async function onGroupDrop(event, groupName) {
   dragOverGroup.value = null
-  draggingHost.value = false
   const data = event.dataTransfer.getData('application/json')
   if (!data) return
   try {

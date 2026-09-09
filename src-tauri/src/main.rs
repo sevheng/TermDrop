@@ -506,7 +506,6 @@ async fn sftp_download(
     Ok(local_path_str)
 }
 
-#[tauri::command]
 fn shell_escape(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -651,62 +650,6 @@ async fn sftp_download_dir(
     .await;
 
     Ok(extract_dir_str)
-}
-
-#[tauri::command]
-async fn sftp_edit_file(
-    state: State<'_, AppState>,
-    sftp_session_id: String,
-    remote_path: String,
-) -> Result<String, String> {
-    let handle = {
-        let sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-        sftp_sessions
-            .get(&sftp_session_id)
-            .cloned()
-            .ok_or("SFTP session not found")?
-    };
-
-    let file_name = Path::new(&remote_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "edit".to_string());
-
-    let cache_dir = dirs::cache_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
-        .join("termdrop-edit")
-        .join(&sftp_session_id);
-    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("create dir: {}", e))?;
-
-    let local_path = cache_dir.join(&file_name);
-    let local_path_str = local_path.to_string_lossy().to_string();
-
-    // Download the file
-    let remote_path_clone = remote_path.clone();
-    let local_path_str_clone = local_path_str.clone();
-    tokio::task::spawn_blocking(move || {
-        sftp::sftp_download_simple(&handle, &remote_path_clone, &local_path_str_clone)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    Ok(local_path_str)
-}
-
-#[tauri::command]
-fn check_file_modified(local_path: String, last_modified: u64) -> Result<Option<u64>, String> {
-    let metadata = std::fs::metadata(&local_path).map_err(|e| format!("metadata: {}", e))?;
-    let mtime = metadata
-        .modified()
-        .map_err(|e| format!("modified: {}", e))?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("duration: {}", e))?
-        .as_secs();
-    if mtime > last_modified {
-        Ok(Some(mtime))
-    } else {
-        Ok(None)
-    }
 }
 
 #[tauri::command]
@@ -860,63 +803,6 @@ fn sftp_disconnect(state: State<'_, AppState>, sftp_session_id: String) -> Resul
     let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     sftp_sessions.remove(&sftp_session_id);
     Ok(())
-}
-
-#[tauri::command]
-async fn ssh_exec(
-    state: State<'_, AppState>,
-    host_id: i64,
-    command: String,
-) -> Result<String, String> {
-    // Try to reuse existing exec session
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions.get(&host_id).cloned()
-    };
-
-    if let Some(session_arc) = session_arc {
-        let cmd = command;
-        return tokio::task::spawn_blocking(move || {
-            let session = session_arc.lock().map_err(|e| e.to_string())?;
-            ssh::exec_with_session(&session, &cmd)
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    // Fall back: create a new session for this one-off command
-    let host = {
-        let conn = state.db.get().map_err(db_err)?;
-        db::get_host_by_id(&conn, host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?
-    };
-
-    let (password, key_path) = match host.auth_type.as_str() {
-        "password" => {
-            let pw = Some(crypto::get_password(host_id)?);
-            (pw, None)
-        }
-        "key" => (None, host.key_path.clone()),
-        _ => (None, host.key_path.clone()),
-    };
-
-    let host_host = host.host.clone();
-    let host_port = host.port as u16;
-    let host_username = host.username.clone();
-    let command_clone = command.clone();
-    tokio::task::spawn_blocking(move || {
-        let session = ssh::create_exec_session(
-            &host_host,
-            host_port,
-            &host_username,
-            password.as_deref(),
-            key_path.as_deref(),
-        )?;
-        ssh::exec_with_session(&session, &command_clone)
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1333,30 +1219,6 @@ async fn docker_restart(
 }
 
 #[tauri::command]
-async fn docker_logs(
-    state: State<'_, AppState>,
-    host_id: i64,
-    container_id: String,
-    tail: usize,
-) -> Result<String, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
-    with_timeout(
-        move || {
-            let session = session_arc.lock().map_err(|e| e.to_string())?;
-            docker::docker_logs(&session, &container_id, tail).map_err(|e| e.to_string())
-        },
-        60,
-    )
-    .await
-}
-
-#[tauri::command]
 async fn docker_inspect_shell(
     state: State<'_, AppState>,
     host_id: i64,
@@ -1566,75 +1428,6 @@ async fn get_system_panel(
 }
 
 #[tauri::command]
-async fn get_processes(
-    state: State<'_, AppState>,
-    host_id: i64,
-) -> Result<Vec<system::Process>, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
-
-    with_timeout(
-        move || {
-            let session = session_arc.lock().map_err(|e| e.to_string())?;
-            system::get_processes(&session).map_err(|e| e.to_string())
-        },
-        60,
-    )
-    .await
-}
-
-#[tauri::command]
-async fn get_network(
-    state: State<'_, AppState>,
-    host_id: i64,
-) -> Result<system::NetworkInfo, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
-
-    with_timeout(
-        move || {
-            let session = session_arc.lock().map_err(|e| e.to_string())?;
-            system::get_network(&session).map_err(|e| e.to_string())
-        },
-        60,
-    )
-    .await
-}
-
-#[tauri::command]
-async fn get_disk_usage(
-    state: State<'_, AppState>,
-    host_id: i64,
-) -> Result<system::DiskInfo, String> {
-    let session_arc = {
-        let exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
-        exec_sessions
-            .get(&host_id)
-            .cloned()
-            .ok_or("No active session for this host")?
-    };
-
-    with_timeout(
-        move || {
-            let session = session_arc.lock().map_err(|e| e.to_string())?;
-            system::get_disk_usage(&session).map_err(|e| e.to_string())
-        },
-        60,
-    )
-    .await
-}
-
-#[tauri::command]
 fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     let conn = state.db.get().map_err(db_err)?;
     db::get_setting(&conn, &key).map_err(|e| e.to_string())
@@ -1828,7 +1621,6 @@ fn main() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = app
@@ -1868,7 +1660,6 @@ fn main() {
             open_exec_pty_data_channel,
             ssh_disconnect,
             ssh_reconnect,
-            ssh_exec,
             sftp_connect,
             sftp_list,
             sftp_upload,
@@ -1881,9 +1672,7 @@ fn main() {
             sftp_realpath,
             sftp_read_file,
             sftp_read_file_base64,
-            sftp_edit_file,
             sftp_write_file,
-            check_file_modified,
             sftp_disconnect,
             update_host_group,
             batch_update_host_group,
@@ -1908,7 +1697,6 @@ fn main() {
             docker_start,
             docker_stop,
             docker_restart,
-            docker_logs,
             docker_inspect_shell,
             exec_pty_connect,
             exec_pty_write,
@@ -1917,9 +1705,6 @@ fn main() {
             run_security_audit,
             get_system_stats,
             get_system_panel,
-            get_processes,
-            get_network,
-            get_disk_usage,
             mongodb_list_databases,
             mongodb_list_collections,
             mongodb_sync,

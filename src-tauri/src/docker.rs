@@ -79,20 +79,6 @@ fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
     }
 }
 
-#[allow(dead_code)]
-pub fn is_docker_installed(session: &Session) -> Result<bool, String> {
-    match run_command(session, "command -v docker") {
-        Ok(out) => Ok(!out.trim().is_empty()),
-        Err(e) => {
-            if e.contains("not found") || e.contains("No such file") {
-                Ok(false)
-            } else {
-                Err(e)
-            }
-        }
-    }
-}
-
 pub fn install_docker(session: &Session) -> Result<String, String> {
     let output = run_command(session, "curl -fsSL https://get.docker.com | sh")?;
     Ok(output.trim().to_string())
@@ -154,10 +140,6 @@ pub fn docker_stop(session: &Session, container_id: &str) -> Result<(), String> 
 pub fn docker_restart(session: &Session, container_id: &str) -> Result<(), String> {
     run_docker_command(session, &format!("restart {}", container_id))?;
     Ok(())
-}
-
-pub fn docker_logs(session: &Session, container_id: &str, tail: usize) -> Result<String, String> {
-    run_docker_command(session, &format!("logs --tail {} {}", tail, container_id))
 }
 
 pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<String, String> {
