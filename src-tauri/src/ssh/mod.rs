@@ -19,6 +19,7 @@ pub struct SshSessionHandle {
 }
 
 pub struct ExecPtyHandle {
+    pub host_id: i64,
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
@@ -169,6 +170,7 @@ pub fn connect(
 pub fn exec_pty_connect(
     window: Window,
     pty_session_id: String,
+    host_id: i64,
     host: String,
     port: u16,
     username: String,
@@ -199,6 +201,7 @@ pub fn exec_pty_connect(
     );
 
     Ok(ExecPtyHandle {
+        host_id,
         write_tx,
         disconnect_tx,
         data_channel,

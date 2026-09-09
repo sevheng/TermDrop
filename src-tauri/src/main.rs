@@ -438,7 +438,10 @@ fn import_ssh_config_hosts(
     state: State<'_, AppState>,
     hosts: Vec<ssh_config_parser::SshConfigHost>,
 ) -> Result<usize, String> {
-    let conn = state.db.get().map_err(db_err)?;
+    let mut conn = state.db.get().map_err(db_err)?;
+    // One transaction instead of one fsync per row. A row that fails to
+    // insert is skipped, as before; SQLite rolls back only that statement.
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut count = 0;
     for h in hosts {
         let new_host = db::NewHost {
@@ -453,10 +456,11 @@ fn import_ssh_config_hosts(
             mongo_uri: None,
             mongo_local_uri: None,
         };
-        if let Ok(_) = db::add_host(&conn, &new_host) {
+        if db::add_host(&tx, &new_host).is_ok() {
             count += 1;
         }
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(count)
 }
 
@@ -480,8 +484,49 @@ fn ssh_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), 
     if !still_connected {
         let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.remove(&host_id);
+        drop(exec_sessions);
+        forget_host_state(&state, host_id)?;
     }
 
+    Ok(())
+}
+
+/// Drop everything cached or running for a host once its last tab closes:
+/// docker and security caches, their coalescing locks, and any docker exec
+/// PTY sessions still attached to it.
+fn forget_host_state(state: &State<'_, AppState>, host_id: i64) -> Result<(), String> {
+    state
+        .docker_cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&host_id);
+    state
+        .docker_ps_fetching
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&host_id);
+    state
+        .security_report_cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&host_id);
+    state
+        .security_report_fetching
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&host_id);
+
+    let mut pty_sessions = state.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
+    let ids: Vec<String> = pty_sessions
+        .iter()
+        .filter(|(_, h)| h.host_id == host_id)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in ids {
+        if let Some(session) = pty_sessions.remove(&id) {
+            let _ = session.disconnect_tx.send(());
+        }
+    }
     Ok(())
 }
 
@@ -896,6 +941,7 @@ async fn exec_pty_connect(
     let handle = ssh::exec_pty_connect(
         window,
         pty_session_id.clone(),
+        host_id,
         host.host.clone(),
         host.port as u16,
         host.username.clone(),
@@ -975,12 +1021,20 @@ fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String> {
     let hosts: Vec<db::NewHost> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    let conn = state.db.get().map_err(db_err)?;
+    let mut conn = state.db.get().map_err(db_err)?;
+    // One transaction instead of one fsync per row. On a bad row the rows
+    // before it are kept and the error is returned, matching the previous
+    // autocommit behavior.
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut count = 0;
     for host in hosts {
-        db::add_host(&conn, &host).map_err(|e| e.to_string())?;
+        if let Err(e) = db::add_host(&tx, &host) {
+            tx.commit().map_err(|e| e.to_string())?;
+            return Err(e.to_string());
+        }
         count += 1;
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(count)
 }
 
