@@ -879,6 +879,20 @@ async fn sftp_write_file(
     .await
 }
 
+/// Size and mtime of a remote file, used to detect that it changed while an
+/// editor had it open.
+#[tauri::command]
+async fn sftp_stat_file(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<sftp::SftpStat, String> {
+    sftp_blocking(&state, &sftp_session_id, move |handle| {
+        sftp::sftp_stat_file(handle, &remote_path)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn sftp_realpath(
     state: State<'_, AppState>,
@@ -1531,6 +1545,7 @@ fn main() {
             sftp_mkdir,
             sftp_rmdir,
             sftp_realpath,
+            sftp_stat_file,
             sftp_read_file,
             sftp_read_file_base64,
             sftp_write_file,

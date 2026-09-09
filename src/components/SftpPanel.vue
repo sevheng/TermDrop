@@ -727,8 +727,9 @@ async function copyRemotePath() {
 
 async function onPreviewFile(file) {
   if (!file || file.is_dir) return
-  // Close editor if open to avoid overlapping panels
-  editorRef.value?.hide()
+  // Close the editor to avoid overlapping panels, but let it prompt first
+  // rather than discarding unsaved changes.
+  if (editorRef.value && !(await editorRef.value.hide())) return
   previewModal.value = { show: true, fileName: file.name, filePath: file.path, fileSize: file.size || 0 }
 }
 

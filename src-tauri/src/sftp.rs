@@ -336,6 +336,36 @@ pub fn sftp_rmdir(handle: &SftpSessionHandle, remote_path: &str) -> Result<(), S
     sftp_rmdir_recursive(&sftp, Path::new(remote_path))
 }
 
+/// Size and modification time of a remote file, used to detect that someone
+/// else changed it between an editor loading it and saving it back.
+#[derive(Debug, Serialize, Clone)]
+pub struct SftpStat {
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+pub fn sftp_stat_file(handle: &SftpSessionHandle, remote_path: &str) -> Result<SftpStat, String> {
+    let session = handle.session.lock().map_err(|e| e.to_string())?;
+    let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
+    let stat = sftp
+        .stat(Path::new(remote_path))
+        .map_err(|e| format!("stat: {}", e))?;
+    Ok(SftpStat {
+        size: stat.size.unwrap_or(0),
+        modified: stat.mtime,
+    })
+}
+
+/// The temp file a write is staged in, alongside the target so the rename
+/// stays on one filesystem.
+fn temp_path_for(remote_path: &str) -> String {
+    format!("{}.termdrop-tmp", remote_path)
+}
+
+/// Write `content` by staging it in a sibling temp file and renaming over the
+/// target, so an interrupted transfer cannot leave the original truncated.
+/// The original's permissions are carried over, since the temp file is created
+/// with the server's default mode.
 pub fn sftp_write_file(
     handle: &SftpSessionHandle,
     remote_path: &str,
@@ -343,11 +373,55 @@ pub fn sftp_write_file(
 ) -> Result<(), String> {
     let session = handle.session.lock().map_err(|e| e.to_string())?;
     let sftp = session.sftp().map_err(|e| format!("sftp: {}", e))?;
-    let mut remote_file = sftp
-        .create(Path::new(remote_path))
-        .map_err(|e| format!("create remote: {}", e))?;
-    remote_file
-        .write_all(content.as_bytes())
-        .map_err(|e| format!("write: {}", e))?;
+
+    let target = Path::new(remote_path);
+    let original_mode = sftp.stat(target).ok().and_then(|s| s.perm);
+
+    let temp = temp_path_for(remote_path);
+    let temp_path = Path::new(&temp);
+
+    let write_result = (|| -> Result<(), String> {
+        let mut file = sftp
+            .create(temp_path)
+            .map_err(|e| format!("create remote: {}", e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("write: {}", e))?;
+        // Flush before the rename so a failure surfaces here, not silently.
+        file.close().map_err(|e| format!("close: {}", e))?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        let _ = sftp.unlink(temp_path);
+        return Err(e);
+    }
+
+    if let Some(mode) = original_mode {
+        let mut stat = ssh2::FileStat {
+            size: None,
+            uid: None,
+            gid: None,
+            perm: Some(mode),
+            atime: None,
+            mtime: None,
+        };
+        stat.size = None;
+        let _ = sftp.setstat(temp_path, stat);
+    }
+
+    // Prefer an atomic overwrite; servers that reject the rename flags need
+    // the target removed first, which is still far better than truncating it
+    // before the new contents have been transferred.
+    if sftp
+        .rename(temp_path, target, Some(ssh2::RenameFlags::OVERWRITE))
+        .is_err()
+    {
+        let _ = sftp.unlink(target);
+        if let Err(e) = sftp.rename(temp_path, target, None) {
+            let _ = sftp.unlink(temp_path);
+            return Err(format!("rename: {}", e));
+        }
+    }
+
     Ok(())
 }
