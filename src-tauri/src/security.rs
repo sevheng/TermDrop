@@ -162,6 +162,10 @@ struct Ctx {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SecurityReport {
+    /// Unix seconds at which the audit ran. The report is cached on both
+    /// sides, so "updated N ago" has to come from the run rather than from
+    /// when the panel happened to read it.
+    pub generated_at: u64,
     /// Percentage of *determinable* checks that passed.
     pub score: u8,
     /// Checks that passed, and how many could be determined at all.
@@ -723,11 +727,21 @@ fn score_report(checks: Vec<SecurityCheck>) -> SecurityReport {
     };
 
     SecurityReport {
+        // Stamped by the caller that actually ran the probes, so scoring stays
+        // a pure function of the checks.
+        generated_at: 0,
         score,
         passed,
         scored,
         checks,
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -951,7 +965,9 @@ pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
         .map(|out| parse_audit_sections(&out))
         .unwrap_or_default();
     let updates = check_security_updates(session, ctx_from_sections(&sections).family);
-    Ok(audit_from_sections(&sections, updates))
+    let mut report = audit_from_sections(&sections, updates);
+    report.generated_at = unix_now();
+    Ok(report)
 }
 
 #[cfg(test)]

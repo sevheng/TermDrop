@@ -96,8 +96,7 @@
               <p class="text-[10px] text-[#858585] mt-0.5">{{ check.message }}</p>
               <p
                 v-if="check.detail"
-                class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono truncate"
-                :title="check.detail"
+                class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono whitespace-pre-wrap break-words"
               >{{ check.detail }}</p>
 
               <!-- What to do about it. Collapsed by default so the list stays
@@ -154,7 +153,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onActivated, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight, Copy, TerminalSquare } from 'lucide-vue-next'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -198,9 +197,13 @@ const loading = ref(false)
 const error = ref(null)
 const lastUpdated = ref(null)
 
+// Re-read on a timer so the label ages instead of freezing at "just now".
+const now = ref(Date.now())
+let clock = null
+
 const timeAgo = computed(() => {
   if (!lastUpdated.value) return ''
-  const seconds = Math.floor((Date.now() - lastUpdated.value) / 1000)
+  const seconds = Math.max(0, Math.floor((now.value - lastUpdated.value) / 1000))
   if (seconds < 5) return 'just now'
   if (seconds < 60) return `${seconds}s ago`
   const minutes = Math.floor(seconds / 60)
@@ -285,9 +288,11 @@ function readFromCache() {
     report.value = cached.report
     loading.value = cached.loading
     error.value = cached.error
-    if (cached.report && !lastUpdated.value) {
-      lastUpdated.value = Date.now()
-    }
+    // From the audit's own timestamp, not from when this panel read it. Both
+    // the backend and the store cache the report, so the two differ.
+    lastUpdated.value = cached.report?.generated_at
+      ? cached.report.generated_at * 1000
+      : null
   } else {
     report.value = null
     loading.value = false
@@ -322,10 +327,21 @@ function maybeRun() {
 onMounted(() => {
   readFromCache()
   maybeRun()
+  clock = setInterval(() => { now.value = Date.now() }, 15000)
+})
+
+onUnmounted(() => {
+  clearInterval(clock)
+  clock = null
 })
 
 // Fires on every panel-tab switch, and after KeepAlive evicts and remounts.
-onActivated(maybeRun)
+// KeepAlive can leave this mounted but hidden, so the age label is refreshed
+// here too: it only needs to be right while the panel is on screen.
+onActivated(() => {
+  now.value = Date.now()
+  maybeRun()
+})
 
 watch(() => props.hostId, () => {
   attempted = false
