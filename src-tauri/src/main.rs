@@ -542,6 +542,7 @@ async fn ssh_reconnect(
     window: Window,
     state: State<'_, AppState>,
     session_id: String,
+    sftp_session_id: Option<String>,
     password: Option<String>,
 ) -> Result<(), String> {
     let host_id = {
@@ -606,6 +607,36 @@ async fn ssh_reconnect(
     {
         let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.insert(host_id, Arc::new(Mutex::new(exec_session)));
+    }
+
+    // The tab's SFTP handle died with the connection. Replace it under the
+    // same id so the panel keeps working instead of holding a dead session
+    // until the tab is closed. A failure here is not fatal to the shell.
+    if let Some(sftp_id) = sftp_session_id {
+        let sftp_host = host.host.clone();
+        let sftp_port = host.port as u16;
+        let sftp_user = host.username.clone();
+        let sftp_password = password.clone();
+        let sftp_key = key_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            sftp::sftp_connect(
+                sftp_host,
+                sftp_port,
+                sftp_user,
+                sftp_password,
+                sftp_key,
+                host_id,
+            )
+        })
+        .await
+        {
+            Ok(Ok(handle)) => {
+                let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+                sftp_sessions.insert(sftp_id, Arc::new(handle));
+            }
+            Ok(Err(e)) => tracing::warn!("SFTP reconnect failed: {}", e),
+            Err(e) => tracing::warn!("SFTP reconnect task failed: {}", e),
+        }
     }
 
     let _ = window.emit("ssh-reconnected", session_id);

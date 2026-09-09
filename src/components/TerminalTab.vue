@@ -889,7 +889,13 @@ function disposeTerminal() {
 async function reconnect() {
   isReconnecting.value = true
   try {
-    await invoke('ssh_reconnect', { sessionId: props.sessionId })
+    // Hand over the tab's SFTP id so the backend can replace that dead
+    // handle too, instead of leaving the SFTP panel broken.
+    const tab = store.tabs.find(t => t.id === props.sessionId)
+    await invoke('ssh_reconnect', {
+      sessionId: props.sessionId,
+      sftpSessionId: tab?.sftpSessionId ?? null,
+    })
   } catch (err) {
     console.error('Reconnect failed:', err)
     isReconnecting.value = false

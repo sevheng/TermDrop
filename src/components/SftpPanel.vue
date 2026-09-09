@@ -104,6 +104,16 @@
       >
         Loading...
       </div>
+      <div v-else-if="listError" class="flex flex-col items-center justify-center gap-2 py-6 px-3 text-center">
+        <p class="text-xs text-[#f44336]">Could not list this directory</p>
+        <p class="text-[10px] text-[#858585] break-words" :title="listError">{{ listError }}</p>
+        <button
+          @click="loadFiles"
+          class="mt-1 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
+        >
+          Retry
+        </button>
+      </div>
       <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
         {{ sortedFiles.length === 0 ? 'Empty directory' : 'No matching files' }}
       </div>
@@ -269,6 +279,7 @@ const store = useConnectionStore()
 const currentPath = ref('/')
 const files = shallowRef([]) // replaced wholesale by loadFiles; rows are never edited in place
 const loading = ref(false)
+const listError = ref('')
 const contextMenuEl = ref(null)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: null })
 const sortKey = ref('name')
@@ -586,33 +597,45 @@ watch(showColumns, (val) => {
   localStorage.setItem('sftp-columns', JSON.stringify(val))
 }, { deep: true })
 
+/** Loads the current directory. Returns false if the listing failed. */
 async function loadFiles() {
-  if (!props.sftpSessionId) return
+  if (!props.sftpSessionId) return false
   loading.value = true
   try {
     const result = await store.sftpList(props.sftpSessionId, currentPath.value)
     files.value = result || []
+    listError.value = ''
+    return true
   } catch (e) {
+    // Previously swallowed, so a dead session or an unreadable directory
+    // looked like a panel that had simply stopped responding.
     console.error('sftp_list failed:', e)
+    listError.value = String(e)
+    return false
+  } finally {
+    loading.value = false
   }
-  loading.value = false
 }
 
-function navigateTo(path) {
+/**
+ * Move to `path`, reverting if the listing fails so the breadcrumb never
+ * describes a directory other than the one whose rows are on screen.
+ */
+async function navigateTo(path) {
+  const previous = currentPath.value
   clearSelection()
   filterQuery.value = ''
   currentPath.value = path
-  loadFiles()
+  if (!(await loadFiles())) {
+    currentPath.value = previous
+  }
 }
 
 function goUp() {
   if (currentPath.value === '/') return
-  clearSelection()
-  filterQuery.value = ''
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()
-  currentPath.value = parts.length === 0 ? '/' : '/' + parts.join('/')
-  loadFiles()
+  navigateTo(parts.length === 0 ? '/' : '/' + parts.join('/'))
 }
 
 async function onUpload() {
