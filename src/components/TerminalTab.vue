@@ -311,24 +311,17 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { SearchAddon } from '@xterm/addon-search'
-import { CanvasAddon } from '@xterm/addon-canvas'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Channel } from '@tauri-apps/api/core'
 import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { formatBytes, formatRate } from '../utils/format.js'
 import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
-import { toast } from '../utils/toast.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
+import { createTerminalInstance, loadTerminalFontSize } from '../composables/useXtermInstance.js'
 
 const props = defineProps({
   sessionId: {
@@ -350,12 +343,10 @@ const store = useConnectionStore()
 const terminalContainer = ref(null)
 const contextMenuEl = ref(null)
 const searchInput = ref(null)
+let terminal = null // createTerminalInstance() result
 let term = null
 let fitAddon = null
 let searchAddon = null
-let canvasAddon = null
-let webLinksAddon = null
-let resizeObserver = null
 let statusInterval = null
 
 const isDisconnected = ref(false)
@@ -370,11 +361,9 @@ const dockerPane = ref({
   following: false,
 })
 const dockerPaneContainer = ref(null)
+let dockerTerminal = null // createTerminalInstance() result
 let dockerTerm = null
 let dockerFitAddon = null
-let dockerCanvasAddon = null
-let dockerWebLinksAddon = null
-let dockerPaneResizeObserver = null
 const ptyListeners = useListenerGroup()
 let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
@@ -574,30 +563,10 @@ async function openDockerPane({ type, containerId, containerName, command }) {
 
   await nextTick()
 
-  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
-  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
-
-  dockerTerm = new Terminal({
-    cursorBlink: true,
-    fontSize,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: TERMINAL_THEME,
-  })
-
-  dockerFitAddon = new FitAddon()
-  dockerCanvasAddon = new CanvasAddon()
-  dockerWebLinksAddon = new WebLinksAddon((event, uri) => {
-    event.preventDefault()
-    openUrl(uri).catch((err) => {
-      toast('Failed to open link: ' + err, 'error')
-    })
-  })
-  dockerTerm.loadAddon(dockerFitAddon)
-  dockerTerm.loadAddon(dockerCanvasAddon)
-  dockerTerm.loadAddon(dockerWebLinksAddon)
-
-  dockerTerm.open(dockerPaneContainer.value)
-  dockerFitAddon.fit()
+  const fontSize = await loadTerminalFontSize()
+  dockerTerminal = createTerminalInstance(dockerPaneContainer.value, { fontSize })
+  dockerTerm = dockerTerminal.term
+  dockerFitAddon = dockerTerminal.fitAddon
 
   // Batch keystrokes
   let dockerKeyBuffer = ''
@@ -659,29 +628,10 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   // Observe resize
-  if (!dockerPaneResizeObserver) {
-    dockerPaneResizeObserver = new ResizeObserver(() => {
-      if (dockerFitAddon) {
-        dockerFitAddon.fit()
-      }
-    })
-  }
-  if (dockerPaneContainer.value) {
-    dockerPaneResizeObserver.observe(dockerPaneContainer.value)
-  }
+  dockerTerminal.observeResize(dockerPaneContainer.value)
 
   // Binary data channel for Docker exec PTY
-  const dockerDataChannel = new Channel()
-  dockerDataChannel.onmessage = (message) => {
-    if (message instanceof Uint8Array) {
-      dockerTerm.write(message)
-    } else if (Array.isArray(message)) {
-      dockerTerm.write(new Uint8Array(message))
-    } else if (typeof message === 'string') {
-      dockerTerm.write(message)
-    }
-  }
-  invoke('open_exec_pty_data_channel', { ptySessionId, channel: dockerDataChannel }).catch(() => {})
+  dockerTerminal.openDataChannel('open_exec_pty_data_channel', { ptySessionId })
 
   // Start the PTY session
   try {
@@ -702,19 +652,14 @@ async function closeDockerPane() {
     await invoke('exec_pty_disconnect', { ptySessionId: dockerPane.value.ptySessionId }).catch(() => {})
   }
 
-  if (dockerPaneResizeObserver) {
-    dockerPaneResizeObserver.disconnect()
-    dockerPaneResizeObserver = null
-  }
-
   ptyListeners.dispose()
 
-  if (dockerTerm) {
-    dockerTerm.dispose()
-    dockerTerm = null
+  if (dockerTerminal) {
+    dockerTerminal.dispose()
+    dockerTerminal = null
   }
+  dockerTerm = null
   dockerFitAddon = null
-  dockerCanvasAddon = null
 
   dockerPane.value.show = false
   dockerPane.value.ptySessionId = null
@@ -888,34 +833,13 @@ function stopSysPolling() {
 }
 
 async function initTerminal() {
-  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
-  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
-  const themeSetting = await invoke('get_setting', { key: 'theme' })
+  const fontSize = await loadTerminalFontSize()
   terminalBgClass.value = 'bg-[#1e1e1e]'
 
-  term = new Terminal({
-    cursorBlink: true,
-    fontSize,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: TERMINAL_THEME,
-  })
-
-  fitAddon = new FitAddon()
-  searchAddon = new SearchAddon()
-  canvasAddon = new CanvasAddon()
-  webLinksAddon = new WebLinksAddon((event, uri) => {
-    event.preventDefault()
-    openUrl(uri).catch((err) => {
-      toast('Failed to open link: ' + err, 'error')
-    })
-  })
-  term.loadAddon(fitAddon)
-  term.loadAddon(searchAddon)
-  term.loadAddon(canvasAddon)
-  term.loadAddon(webLinksAddon)
-
-  term.open(terminalContainer.value)
-  fitAddon.fit()
+  terminal = createTerminalInstance(terminalContainer.value, { fontSize, search: true })
+  term = terminal.term
+  fitAddon = terminal.fitAddon
+  searchAddon = terminal.searchAddon
 
   // Fit after flex layout settles
   requestAnimationFrame(() => {
@@ -989,18 +913,7 @@ async function initTerminal() {
   })
 
   // Binary data channel for raw SSH output (bypasses JSON events)
-  const dataChannel = new Channel()
-  dataChannel.onmessage = (message) => {
-    // Handle various possible data formats from Tauri Channel
-    if (message instanceof Uint8Array) {
-      term.write(message)
-    } else if (Array.isArray(message)) {
-      term.write(new Uint8Array(message))
-    } else if (typeof message === 'string') {
-      term.write(message)
-    }
-  }
-  invoke('open_data_channel', { sessionId: props.sessionId, channel: dataChannel }).catch(() => {})
+  terminal.openDataChannel('open_data_channel', { sessionId: props.sessionId })
 
   // Smart input buffer: immediate for typing, chunked for paste
   let inputBuffer = ''
@@ -1061,39 +974,27 @@ async function initTerminal() {
 }
 
 function startActiveOperations() {
-  if (!term) return
+  if (!terminal) return
   // Handle resize
-  if (!resizeObserver) {
-    resizeObserver = new ResizeObserver(() => {
-      if (fitAddon) {
-        fitAddon.fit()
-      }
-    })
-  }
-  if (terminalContainer.value) {
-    resizeObserver.observe(terminalContainer.value)
-  }
+  terminal.observeResize(terminalContainer.value)
 }
 
 function stopActiveOperations() {
   stopStatusPolling()
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
+  if (terminal) terminal.unobserveResize()
 }
 
 function disposeTerminal() {
   stopActiveOperations()
   stopSysPolling()
   store.unregisterTerminal(props.sessionId)
-  if (term) {
-    term.dispose()
-    term = null
+  if (terminal) {
+    terminal.dispose()
+    terminal = null
   }
+  term = null
   fitAddon = null
   searchAddon = null
-  canvasAddon = null
   window.removeEventListener('terminal-settings-changed', onSettingsChanged)
   window.removeEventListener('click', onWindowClick)
   window.removeEventListener('contextmenu', onWindowContextMenu, true)
@@ -1152,16 +1053,12 @@ watch(() => props.isActive, (active) => {
         if (dockerTerm) dockerTerm.refresh(0, dockerTerm.rows - 1)
       })
     })
-    if (terminalContainer.value && resizeObserver) {
-      resizeObserver.observe(terminalContainer.value)
-    }
+    if (terminal) terminal.observeResize(terminalContainer.value)
     startStatusPolling()
   } else {
     if (term) term.blur()
     stopStatusPolling()
-    if (resizeObserver) {
-      resizeObserver.disconnect()
-    }
+    if (terminal) terminal.unobserveResize()
   }
 }, { immediate: true })
 
