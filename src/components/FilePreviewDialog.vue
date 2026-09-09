@@ -126,7 +126,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import { Loader2, Search, FileArchive } from 'lucide-vue-next'
 
 const props = defineProps({

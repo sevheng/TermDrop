@@ -317,7 +317,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'

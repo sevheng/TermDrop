@@ -323,7 +323,7 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import {
   Plus, Server, Database, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,

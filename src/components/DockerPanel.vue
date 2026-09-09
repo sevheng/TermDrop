@@ -142,7 +142,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import {
   RefreshCw, Loader2, Container,
   Play, Square, RotateCcw, FileText, Terminal,

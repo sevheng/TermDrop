@@ -1,11 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, reactive } from 'vue'
-import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import { invokeWithSlowWarning as invoke } from '../utils/invoke.js'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
 
-const INVOKE_TIMEOUT_MS = 10000 // 10 seconds
 
 /**
  * Show the global PromptDialog and return the user's input.
@@ -20,27 +19,6 @@ function showPromptDialog(title, message, placeholder = '', type = 'text') {
     window.dispatchEvent(new CustomEvent('prompt-dialog-open', {
       detail: { title, message, placeholder, type },
     }))
-  })
-}
-
-/**
- * Wrap Tauri invoke() with a freeze-detection timer.
- * If the call takes longer than INVOKE_TIMEOUT_MS, a warning toast is shown.
- */
-function invoke(cmd, args = {}) {
-  const start = performance.now()
-  let warned = false
-  const timer = setTimeout(() => {
-    warned = true
-    toast(`${cmd} is taking longer than expected...`, 'warning')
-  }, INVOKE_TIMEOUT_MS)
-
-  return tauriInvoke(cmd, args).finally(() => {
-    clearTimeout(timer)
-    const elapsed = performance.now() - start
-    if (elapsed > INVOKE_TIMEOUT_MS) {
-      console.warn(`[SLOW] ${cmd} took ${elapsed.toFixed(0)}ms`, args)
-    }
   })
 }
 
