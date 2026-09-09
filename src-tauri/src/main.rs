@@ -78,6 +78,21 @@ fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
     state.mongo_ops.lock().unwrap().remove(op_id);
 }
 
+/// Register `op_id` so mongodb_cancel can reach it, run `f`, then unregister.
+async fn with_mongo_op<Fut>(
+    state: &State<'_, AppState>,
+    op_id: &str,
+    f: impl FnOnce(Arc<AtomicBool>, Arc<Mutex<HashMap<String, MongoOpHandle>>>) -> Fut,
+) -> Result<(), String>
+where
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let cancelled = register_mongo_op(state, op_id.to_string());
+    let result = f(cancelled, state.mongo_ops.clone()).await;
+    unregister_mongo_op(state, op_id);
+    result
+}
+
 /// Load a host row or fail with "Host not found".
 fn load_host(state: &State<'_, AppState>, host_id: i64) -> Result<db::Host, String> {
     with_db(state, |conn| db::get_host_by_id(conn, host_id))?
@@ -1223,24 +1238,20 @@ async fn mongodb_sync(
     collections: Vec<String>,
     drop_first: bool,
 ) -> Result<(), String> {
-    let cancelled = register_mongo_op(&state, op_id.clone());
-    let mongo_ops = state.mongo_ops.clone();
-
-    let result = mongodb::sync_collections(
-        window,
-        cancelled,
-        mongo_ops,
-        op_id.clone(),
-        &remote_uri,
-        &local_uri,
-        &db,
-        collections,
-        drop_first,
-    )
-    .await;
-
-    unregister_mongo_op(&state, &op_id);
-    result
+    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
+        mongodb::sync_collections(
+            window,
+            cancelled,
+            mongo_ops,
+            op_id.clone(),
+            &remote_uri,
+            &local_uri,
+            &db,
+            collections,
+            drop_first,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1254,24 +1265,20 @@ async fn mongodb_dump(
     output_dir: String,
     is_archive: bool,
 ) -> Result<(), String> {
-    let cancelled = register_mongo_op(&state, op_id.clone());
-    let mongo_ops = state.mongo_ops.clone();
-
-    let result = mongodb::dump_collections(
-        window,
-        cancelled,
-        mongo_ops,
-        op_id.clone(),
-        &remote_uri,
-        &db,
-        collections,
-        &output_dir,
-        is_archive,
-    )
-    .await;
-
-    unregister_mongo_op(&state, &op_id);
-    result
+    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
+        mongodb::dump_collections(
+            window,
+            cancelled,
+            mongo_ops,
+            op_id.clone(),
+            &remote_uri,
+            &db,
+            collections,
+            &output_dir,
+            is_archive,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1285,24 +1292,20 @@ async fn mongodb_restore(
     input_dir: String,
     is_archive: bool,
 ) -> Result<(), String> {
-    let cancelled = register_mongo_op(&state, op_id.clone());
-    let mongo_ops = state.mongo_ops.clone();
-
-    let result = mongodb::restore_collections(
-        window,
-        cancelled,
-        mongo_ops,
-        op_id.clone(),
-        &remote_uri,
-        &db,
-        collections,
-        &input_dir,
-        is_archive,
-    )
-    .await;
-
-    unregister_mongo_op(&state, &op_id);
-    result
+    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
+        mongodb::restore_collections(
+            window,
+            cancelled,
+            mongo_ops,
+            op_id.clone(),
+            &remote_uri,
+            &db,
+            collections,
+            &input_dir,
+            is_archive,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1314,22 +1317,18 @@ async fn mongodb_restore_archive(
     includes: Vec<String>,
     input_path: String,
 ) -> Result<(), String> {
-    let cancelled = register_mongo_op(&state, op_id.clone());
-    let mongo_ops = state.mongo_ops.clone();
-
-    let result = mongodb::restore_archive(
-        window,
-        cancelled,
-        mongo_ops,
-        op_id.clone(),
-        &remote_uri,
-        includes,
-        &input_path,
-    )
-    .await;
-
-    unregister_mongo_op(&state, &op_id);
-    result
+    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
+        mongodb::restore_archive(
+            window,
+            cancelled,
+            mongo_ops,
+            op_id.clone(),
+            &remote_uri,
+            includes,
+            &input_path,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
