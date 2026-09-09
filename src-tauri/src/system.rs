@@ -105,10 +105,10 @@ fn parse_system_panel(output: &str) -> SystemPanel {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 5 {
                     network_ports.push(NetPort {
-                        proto: parts.get(0).unwrap_or(&"tcp").to_string(),
+                        proto: parts.first().unwrap_or(&"tcp").to_string(),
                         state: parts.get(1).unwrap_or(&"").to_string(),
                         local: parts.get(3).unwrap_or(&"").to_string(),
-                        process: parts.get(parts.len() - 1).unwrap_or(&"").to_string(),
+                        process: parts.last().unwrap_or(&"").to_string(),
                     });
                 }
             }

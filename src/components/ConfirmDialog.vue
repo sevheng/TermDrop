@@ -36,7 +36,7 @@
 import { AlertTriangle } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
 
-const props = defineProps({
+defineProps({
   show: Boolean,
   title: { type: String, default: 'Confirm' },
   message: { type: String, required: true },

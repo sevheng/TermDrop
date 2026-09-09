@@ -70,7 +70,7 @@ pub fn sftp_list(handle: &SftpSessionHandle, path: &str) -> Result<Vec<SftpFile>
             name,
             size: stat.size.unwrap_or(0),
             is_dir: stat.file_type().is_dir(),
-            modified: stat.mtime.map(|t| t as u64),
+            modified: stat.mtime,
             permissions: stat.perm,
             uid: stat.uid,
             gid: stat.gid,

@@ -13,8 +13,7 @@ export default [
       globals: { ...globals.browser, ...globals.node },
     },
     rules: {
-      // Advisory for now; tightened to 'error' once existing warnings are cleared.
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'error',
       'vue/multi-word-component-names': 'off',
       'vue/use-v-on-exact': 'warn',
     },

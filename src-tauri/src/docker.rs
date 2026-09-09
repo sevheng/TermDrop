@@ -70,7 +70,7 @@ fn parse_docker_ps(output: &str) -> Vec<Container> {
             let status = parts[3].to_string();
             let running = status.to_lowercase().starts_with("up");
             containers.push(Container {
-                id: parts.get(0).unwrap_or(&"").to_string(),
+                id: parts.first().unwrap_or(&"").to_string(),
                 name: parts.get(1).unwrap_or(&"").to_string(),
                 image: parts.get(2).unwrap_or(&"").to_string(),
                 status: status.clone(),

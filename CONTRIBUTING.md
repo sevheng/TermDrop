@@ -172,7 +172,7 @@ Use descriptive branch names:
 
 Before opening a pull request, please:
 
-- [ ] Run `npm run lint && npm test` and `cargo test` (in `src-tauri/`)
+- [ ] Run `npm run lint && npm test`, and in `src-tauri/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
 - [ ] Build the project successfully with `npm run tauri build`
 - [ ] Verify the dev app runs with `npm run tauri dev`
 - [ ] Update relevant documentation if your change affects behavior

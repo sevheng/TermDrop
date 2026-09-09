@@ -50,7 +50,7 @@
 
 <script setup>
 import ModalShell from './ModalShell.vue'
-const props = defineProps({
+defineProps({
   show: Boolean,
 })
 

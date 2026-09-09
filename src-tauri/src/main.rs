@@ -1,4 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Tauri command signatures mirror the frontend payloads one argument per
+// field; grouping them into structs would change the IPC contract.
+#![allow(clippy::too_many_arguments)]
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -24,6 +27,9 @@ mod ssh;
 mod ssh_config_parser;
 mod system;
 
+/// Per-host coalescing locks so concurrent requests share one fetch.
+type FetchLocks = Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>;
+
 /// A per-host cached value with its fetch time.
 pub struct Cached<T> {
     value: T,
@@ -42,9 +48,9 @@ pub struct AppState {
     sftp_sessions: Mutex<HashMap<String, Arc<sftp::SftpSessionHandle>>>,
     exec_pty_sessions: Mutex<HashMap<String, ssh::ExecPtyHandle>>,
     docker_cache: Arc<Mutex<HashMap<i64, Cached<Vec<docker::Container>>>>>,
-    docker_ps_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    docker_ps_fetching: FetchLocks,
     security_report_cache: Arc<Mutex<HashMap<i64, Cached<security::SecurityReport>>>>,
-    security_report_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    security_report_fetching: FetchLocks,
     forward_manager: port_forward::ForwardManager,
     pub mongo_ops: Arc<Mutex<HashMap<String, MongoOpHandle>>>,
 }
@@ -199,7 +205,7 @@ where
 async fn cached_per_host<T, F>(
     state: &State<'_, AppState>,
     cache: &Arc<Mutex<HashMap<i64, Cached<T>>>>,
-    fetching: &Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    fetching: &FetchLocks,
     host_id: i64,
     fresh_secs: u64,
     stale_secs: u64,
@@ -288,7 +294,7 @@ where
 
 #[tauri::command]
 fn get_hosts(state: State<'_, AppState>) -> Result<Vec<db::Host>, String> {
-    with_db(&state, |conn| db::get_hosts(conn))
+    with_db(&state, db::get_hosts)
 }
 
 #[tauri::command]
@@ -677,7 +683,7 @@ async fn sftp_download(
         .unwrap_or_else(|| "download".to_string());
     let download_dir = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .unwrap_or_else(|| std::env::temp_dir());
+        .unwrap_or_else(std::env::temp_dir);
     let local_path = download_dir.join(&file_name);
     let local_path_str = local_path.to_string_lossy().to_string();
     let local_path_str_for_dl = local_path_str.clone();
@@ -766,7 +772,7 @@ async fn sftp_download_dir(
     // Download the archive (blocking I/O off the async thread)
     let download_dir = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .unwrap_or_else(|| std::env::temp_dir());
+        .unwrap_or_else(std::env::temp_dir);
     let archive_name = format!("{}.tar.gz", folder_name);
     let local_archive = download_dir.join(&archive_name);
     let local_archive_str = local_archive.to_string_lossy().to_string();
@@ -1014,7 +1020,7 @@ fn update_host_last_connected(state: State<'_, AppState>, id: i64) -> Result<(),
 
 #[tauri::command]
 fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
-    let hosts = with_db(&state, |conn| db::export_hosts(conn))?;
+    let hosts = with_db(&state, db::export_hosts)?;
     serde_json::to_string(&hosts).map_err(|e| e.to_string())
 }
 
@@ -1234,7 +1240,7 @@ async fn run_security_audit(
         30,
         300,
         force,
-        |session| security::run_security_audit(session),
+        security::run_security_audit,
     )
     .await
 }
@@ -1396,7 +1402,7 @@ fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
 fn main() {
     // Initialize structured logging to file
     let log_dir = dirs::data_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("termdrop")
         .join("logs");
     std::fs::create_dir_all(&log_dir).ok();
@@ -1420,7 +1426,7 @@ fn main() {
     info!("TermDrop starting up");
 
     let db_path = dirs::data_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("termdrop.db");
     let manager = SqliteConnectionManager::file(&db_path);
     let pool = Pool::builder()

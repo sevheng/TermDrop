@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(sections["SSH_PORT"].as_deref(), Some("Port 22\nPort 2222"));
         assert_eq!(sections["FIREWALLD"], None, "non-zero exit discards stdout");
         assert_eq!(sections["DISK"].as_deref(), Some(""));
-        assert!(sections.get("UFW").is_none(), "absent sections stay absent");
+        assert!(!sections.contains_key("UFW"), "absent sections stay absent");
         assert_eq!(section_text(&sections, "FIREWALLD"), "");
         assert_eq!(section_text(&sections, "MISSING"), "");
     }

@@ -97,7 +97,7 @@ const props = defineProps({
   hostId: Number,
 })
 
-const emit = defineEmits(['add'])
+defineEmits(['add'])
 
 const store = useConnectionStore()
 const forwards = ref([])

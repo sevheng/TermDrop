@@ -100,7 +100,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle } from 'lucide-vue-next'
 

@@ -202,7 +202,9 @@ where
         let stderr_lines_clone = Arc::clone(&stderr_lines);
         let stderr_thread = std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
+            // Stop at the first read error; `flatten()` would spin forever on a
+            // persistently failing pipe.
+            for line in reader.lines().map_while(Result::ok) {
                 stderr_lines_clone.lock().unwrap().push(line);
             }
         });
@@ -297,7 +299,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
         if let Some(exe_dir) = exe_path.parent() {
             // Same directory as executable (Windows, Linux AppImage/standalone,
             // and cargo's target/debug or target/release directories)
-            let bundled = exe_dir.join(&name);
+            let bundled = exe_dir.join(name);
             if bundled.exists() {
                 return Ok(bundled);
             }
@@ -305,7 +307,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Cargo sometimes places test/run binaries in target/<profile>/deps/;
             // the profile directory (e.g. target/debug) is the parent.
             if let Some(profile_dir) = exe_dir.parent() {
-                let bundled = profile_dir.join(&name);
+                let bundled = profile_dir.join(name);
                 if bundled.exists() {
                     return Ok(bundled);
                 }
@@ -323,7 +325,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Linux .deb/AppImage: usr/bin/ -> usr/lib/TermDrop/
             #[cfg(target_os = "linux")]
             {
-                let linux_bundle = exe_dir.join("../lib/TermDrop").join(&name);
+                let linux_bundle = exe_dir.join("../lib/TermDrop").join(name);
                 if linux_bundle.exists() {
                     return Ok(linux_bundle);
                 }

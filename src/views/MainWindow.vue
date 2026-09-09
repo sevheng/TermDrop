@@ -217,7 +217,7 @@ import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } fr
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
-const emit = defineEmits(['update-available'])
+defineEmits(['update-available'])
 
 const SftpPanel = defineAsyncComponent(() => import('../components/SftpPanel.vue'))
 const PortForwardPanel = defineAsyncComponent(() => import('../components/PortForwardPanel.vue'))

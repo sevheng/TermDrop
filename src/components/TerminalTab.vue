@@ -553,7 +553,7 @@ function startResizeDockerPane(e) {
   document.addEventListener('mouseup', onUp)
 }
 
-async function openDockerPane({ type, containerId, containerName, command }) {
+async function openDockerPane({ type, containerName, command }) {
   // Close any existing pane first
   await closeDockerPane()
 

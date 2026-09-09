@@ -16,9 +16,7 @@ export { tauriInvoke as invoke }
  */
 export function invokeWithSlowWarning(cmd, args = {}) {
   const start = performance.now()
-  let warned = false
   const timer = setTimeout(() => {
-    warned = true
     toast(`${cmd} is taking longer than expected...`, 'warning')
   }, SLOW_INVOKE_MS)
 

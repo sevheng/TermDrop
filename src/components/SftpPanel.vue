@@ -707,7 +707,6 @@ async function previewEdit() {
 
 async function previewDownload() {
   const filePath = previewModal.value.filePath
-  const fileName = previewModal.value.fileName
   if (!filePath) return
   previewModal.value.show = false
   await withErrorToast('Download', 'Download failed: ', async () => {
