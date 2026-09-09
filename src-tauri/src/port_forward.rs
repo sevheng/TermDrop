@@ -1,7 +1,6 @@
 use ssh2::Session;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -174,13 +173,7 @@ fn create_ssh_session(
         .map_err(|e| format!("handshake: {}", e))?;
 
     if let Some(key_path) = key_path {
-        let expanded = if key_path.starts_with("~/") {
-            dirs::home_dir()
-                .map(|h| h.join(&key_path[2..]))
-                .unwrap_or_else(|| Path::new(key_path).to_path_buf())
-        } else {
-            Path::new(key_path).to_path_buf()
-        };
+        let expanded = crate::ssh::session::expand_key_path(key_path);
         session
             .userauth_pubkey_file(username, None, &expanded, None)
             .map_err(|e| format!("key auth: {}", e))?;

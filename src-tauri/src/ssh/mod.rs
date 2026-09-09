@@ -1,3 +1,4 @@
+pub mod exec;
 pub mod io_loop;
 pub mod pty;
 pub mod session;
