@@ -41,8 +41,8 @@
       <!-- Empty -->
       <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
         <Shield :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">No audit data</p>
-        <p class="text-[10px] mt-1">Connect to a host to run audit</p>
+        <p class="text-xs">No audit has run for this host</p>
+        <p class="text-[10px] mt-1">The audit runs privileged probes on the server</p>
         <button
           @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
@@ -108,7 +108,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle } from 'lucide-vue-next'
 
@@ -216,13 +216,44 @@ function runAudit(force = false) {
   readFromCache()
 }
 
-onMounted(readFromCache)
+/**
+ * The audit runs privileged probes on the server, so it starts when the panel
+ * is actually opened rather than on every connect. Once per host is enough,
+ * because the store keeps the report across panel switches.
+ */
+let attempted = false
 
-watch(() => props.hostId, readFromCache)
+function maybeRun() {
+  if (attempted || !props.hostId) return
+  // Anything already present — a report, a run in flight, or an error — is
+  // left alone. Not retrying an error matters: the panel is inside KeepAlive,
+  // so a host that always fails would otherwise re-audit on every tab switch.
+  if (store.getSecurityReport(props.hostId)) return
+  attempted = true
+  runAudit(false)
+}
 
-// Reactive: re-read from cache whenever the store version changes
-// securityReports is a reactive Map, so this fires whenever the entry for
-// this host is replaced by setSecurityLoading/Report/Error.
-watch(() => store.getSecurityReport(props.hostId), readFromCache)
+onMounted(() => {
+  readFromCache()
+  maybeRun()
+})
+
+// Fires on every panel-tab switch, and after KeepAlive evicts and remounts.
+onActivated(maybeRun)
+
+watch(() => props.hostId, () => {
+  attempted = false
+  readFromCache()
+  maybeRun()
+})
+
+// securityReports is a reactive Map, so this fires whenever the entry for this
+// host is replaced by setSecurityLoading/Report/Error, or removed on disconnect.
+watch(() => store.getSecurityReport(props.hostId), (entry) => {
+  // A disconnect drops the report; allow a fresh audit next time this panel
+  // is opened for the host.
+  if (!entry) attempted = false
+  readFromCache()
+})
 
 </script>
