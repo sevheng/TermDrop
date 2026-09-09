@@ -314,7 +314,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '../utils/invoke.js'
@@ -326,6 +326,8 @@ import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
+import { useContextMenu } from '../composables/useContextMenu.js'
 
 const props = defineProps({
   sftpSessionId: {
@@ -338,8 +340,8 @@ const store = useConnectionStore()
 const currentPath = ref('/')
 const files = ref([])
 const loading = ref(false)
-const contextMenu = ref({ show: false, x: 0, y: 0, file: null })
 const contextMenuEl = ref(null)
+const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: null })
 const transfers = ref([])
 const sortKey = ref('name')
 const sortOrder = ref('asc')
@@ -356,13 +358,7 @@ const lastSelectedIndex = ref(-1)
 let unlistenProgress = null
 let unlistenFileDrop = null
 
-const confirmDialog = ref({
-  show: false,
-  title: '',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 const promptDialog = ref({
   show: false,
@@ -461,19 +457,6 @@ function onEditorResizeUp() {
   document.removeEventListener('mouseup', onEditorResizeUp)
 }
 
-
-function openConfirm(options) {
-  confirmDialog.value = {
-    show: true,
-    title: options.title || 'Confirm',
-    message: options.message || '',
-    danger: options.danger || false,
-    onConfirm: () => {
-      confirmDialog.value.show = false
-      options.onConfirm()
-    },
-  }
-}
 
 function openPrompt(options) {
   promptDialog.value = {
@@ -1082,29 +1065,7 @@ async function showContextMenu(event, file) {
     selectedFiles.value.add(file.path)
   }
 
-  contextMenu.value = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-    file,
-    multi: isMulti,
-  }
-  // Wait for DOM render, then adjust position if off-screen
-  await nextTick()
-  const el = contextMenuEl.value
-  if (el) {
-    const rect = el.getBoundingClientRect()
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    let x = contextMenu.value.x
-    let y = contextMenu.value.y
-    if (x + rect.width > vw) x = vw - rect.width - 8
-    if (y + rect.height > vh) y = vh - rect.height - 8
-    if (x < 8) x = 8
-    if (y < 8) y = 8
-    contextMenu.value.x = x
-    contextMenu.value.y = y
-  }
+  await openContextMenu(event, { file, multi: isMulti })
 }
 
 function onBulkDownloadFromMenu() {

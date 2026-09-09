@@ -252,6 +252,7 @@ import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
 import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
 const emit = defineEmits(['update-available'])
 
@@ -274,13 +275,7 @@ const editForward = ref(null)
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
 
-const confirmDialog = ref({
-  show: false,
-  title: '',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 const promptDialog = ref({
   show: false,
@@ -289,19 +284,6 @@ const promptDialog = ref({
   placeholder: '',
   type: 'text',
 })
-
-function openConfirm(options) {
-  confirmDialog.value = {
-    show: true,
-    title: options.title || 'Confirm',
-    message: options.message || '',
-    danger: options.danger || false,
-    onConfirm: () => {
-      confirmDialog.value.show = false
-      options.onConfirm()
-    },
-  }
-}
 
 function confirmDisconnect(sessionId, name) {
   const tab = store.tabs.find(t => t.id === sessionId)

@@ -321,7 +321,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import {
@@ -336,6 +336,8 @@ import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
+import { useContextMenu } from '../composables/useContextMenu.js'
 
 const store = useConnectionStore()
 
@@ -359,7 +361,6 @@ const viewMode = ref(localStorage.getItem('host-view-mode') || 'grouped')
 const dragOverGroup = ref(null)
 const customGroups = ref(new Set(JSON.parse(localStorage.getItem('host-custom-groups') || '[]')))
 
-const contextMenu = ref({ show: false, x: 0, y: 0, type: '', data: null })
 const pendingGroupForNewHost = ref(null)
 
 const showGroupModal = ref(false)
@@ -375,13 +376,7 @@ const showAddMenu = ref(false)
 const addMenuRef = ref(null)
 const groupModalCurrentName = ref('')
 
-const confirmDialog = ref({
-  show: false,
-  title: '',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 const filteredHosts = computed(() => {
   const q = debouncedQuery.value.trim().toLowerCase()
@@ -488,21 +483,16 @@ async function toggleFavorite(host) {
 }
 
 const contextMenuEl = ref(null)
-const MENU_VIEWPORT_MARGIN = 8
+const {
+  contextMenu,
+  openContextMenu: openMenuAt,
+  closeContextMenu: hideContextMenu,
+} = useContextMenu(contextMenuEl, { type: '', data: null })
 
-// Open the menu at the cursor, then shift it back inside the window once
+// Open the menu at the cursor; it is shifted back inside the window once
 // rendered so tall menus near the bottom/right edge are not clipped.
 function openContextMenu(event, type, data) {
-  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type, data }
-  nextTick(() => {
-    const el = contextMenuEl.value
-    if (!el) return
-    const { width, height } = el.getBoundingClientRect()
-    const maxX = window.innerWidth - width - MENU_VIEWPORT_MARGIN
-    const maxY = window.innerHeight - height - MENU_VIEWPORT_MARGIN
-    contextMenu.value.x = Math.max(MENU_VIEWPORT_MARGIN, Math.min(contextMenu.value.x, maxX))
-    contextMenu.value.y = Math.max(MENU_VIEWPORT_MARGIN, Math.min(contextMenu.value.y, maxY))
-  })
+  openMenuAt(event, { type, data })
 }
 
 function showGroupMenu(event, groupName) {
@@ -518,10 +508,6 @@ function showEmptyMenu(event) {
 function showHostMenu(event, host) {
   event.stopPropagation()
   openContextMenu(event, 'host', host)
-}
-
-function hideContextMenu() {
-  contextMenu.value.show = false
 }
 
 function menuAction(fn) {
@@ -599,19 +585,6 @@ async function handleGroupModalSave(name) {
         collapsedGroups.value = newCollapsed
       }
     }
-  }
-}
-
-function openConfirm(options) {
-  confirmDialog.value = {
-    show: true,
-    title: options.title || 'Confirm',
-    message: options.message || '',
-    danger: options.danger || false,
-    onConfirm: () => {
-      confirmDialog.value.show = false
-      options.onConfirm()
-    },
   }
 }
 

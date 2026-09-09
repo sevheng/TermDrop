@@ -151,6 +151,7 @@ import VirtualList from './VirtualList.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { shellEscape } from '../utils/shell.js'
 import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
 const props = defineProps({
   hostId: {
@@ -170,13 +171,7 @@ const installing = ref(false)
 let refreshInterval = null
 
 // Confirm dialog state
-const confirmDialog = ref({
-  show: false,
-  title: 'Confirm',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 async function loadContainers(silent = false) {
   if (!props.hostId) return
@@ -238,13 +233,11 @@ async function startContainer(id) {
 async function stopContainer(id) {
   const c = containers.value.find(x => x.id === id)
   if (!c) return
-  confirmDialog.value = {
-    show: true,
+  openConfirm({
     title: 'Stop Container',
     message: `Stop "${c.name}"?`,
     danger: true,
     onConfirm: async () => {
-      confirmDialog.value.show = false
       c.running = false
       c.status = 'Stopping...'
       try {
@@ -255,19 +248,17 @@ async function stopContainer(id) {
         loadContainers(true)
       }
     },
-  }
+  })
 }
 
 async function restartContainer(id) {
   const c = containers.value.find(x => x.id === id)
   if (!c) return
-  confirmDialog.value = {
-    show: true,
+  openConfirm({
     title: 'Restart Container',
     message: `Restart "${c.name}"?`,
     danger: true,
     onConfirm: async () => {
-      confirmDialog.value.show = false
       c.status = 'Restarting...'
       try {
         await invoke('docker_restart', { hostId: props.hostId, containerId: id })
@@ -277,7 +268,7 @@ async function restartContainer(id) {
         loadContainers(true)
       }
     },
-  }
+  })
 }
 
 async function viewLogs(id, name, running) {

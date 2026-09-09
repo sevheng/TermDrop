@@ -328,6 +328,7 @@ import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 import { toast } from '../utils/toast.js'
+import { useContextMenu } from '../composables/useContextMenu.js'
 
 const props = defineProps({
   sessionId: {
@@ -380,7 +381,7 @@ let unlistenPtyConnected = null
 let unlistenPtyDisconnected = null
 let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
-const contextMenu = ref({ show: false, x: 0, y: 0 })
+const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl)
 const contextMenuForward = ref(null) // { port, label } or null
 const terminalBgClass = ref('bg-gray-900')
 
@@ -510,26 +511,7 @@ async function showContextMenu(event) {
   event.preventDefault()
   const selection = term ? term.getSelection() : ''
   contextMenuForward.value = detectForwardInfo(selection)
-  contextMenu.value = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-  }
-  await nextTick()
-  const el = contextMenuEl.value
-  if (el) {
-    const rect = el.getBoundingClientRect()
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    let x = contextMenu.value.x
-    let y = contextMenu.value.y
-    if (x + rect.width > vw) x = vw - rect.width - 8
-    if (y + rect.height > vh) y = vh - rect.height - 8
-    if (x < 8) x = 8
-    if (y < 8) y = 8
-    contextMenu.value.x = x
-    contextMenu.value.y = y
-  }
+  await openContextMenu(event)
 }
 
 function createForwardFromSelection() {
