@@ -104,7 +104,10 @@ where
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stderr_thread.join();
-                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                let _ = window.emit(
+                    "mongodb-sync-cancelled",
+                    serde_json::json!({"opId": op_id, "db": db}),
+                );
                 return Err("cancelled".into());
             }
 
@@ -142,7 +145,10 @@ where
                             std::thread::sleep(Duration::from_millis(100));
                         }
                         if cancelled_during_sleep {
-                            let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                            let _ = window.emit(
+                                "mongodb-sync-cancelled",
+                                serde_json::json!({"opId": op_id, "db": db}),
+                            );
                             return Err("cancelled".into());
                         }
                         continue 'attempt;
@@ -368,7 +374,10 @@ pub async fn sync_collections(
     .await
     {
         Ok(()) => {
-            let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": &op_id, "db": db}));
+            let _ = window.emit(
+                "mongodb-sync-done",
+                serde_json::json!({"opId": &op_id, "db": db}),
+            );
             return Ok(());
         }
         Err(e) => {
@@ -506,7 +515,10 @@ async fn driver_sync(
 
     for collection_name in &collections {
         if cancelled.load(Ordering::Relaxed) {
-            let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+            let _ = window.emit(
+                "mongodb-sync-cancelled",
+                serde_json::json!({"opId": op_id, "db": db}),
+            );
             return Err("cancelled".into());
         }
 
@@ -551,7 +563,10 @@ async fn driver_sync(
             .map_err(|e| format!("cursor {}: {}", collection_name, e))?
         {
             if cancelled.load(Ordering::Relaxed) {
-                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                let _ = window.emit(
+                    "mongodb-sync-cancelled",
+                    serde_json::json!({"opId": op_id, "db": db}),
+                );
                 return Err("cancelled".into());
             }
 
@@ -603,7 +618,10 @@ async fn driver_sync(
         );
     }
 
-    let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": op_id, "db": db}));
+    let _ = window.emit(
+        "mongodb-sync-done",
+        serde_json::json!({"opId": op_id, "db": db}),
+    );
     Ok(())
 }
 
@@ -695,11 +713,17 @@ pub async fn restore_collections(
     let input_dir = input_dir.to_string();
     let has_db = !db.is_empty();
     let has_collections = !collections.is_empty();
-    let progress_db = if has_db { db.clone() } else { "all".to_string() };
+    let progress_db = if has_db {
+        db.clone()
+    } else {
+        "all".to_string()
+    };
 
     // A "direct DB folder" contains BSON files directly (e.g. /dump/mydb/*.bson.gz).
     // A "dump root" contains DB subfolders (e.g. /dump/<db>/*.bson.gz).
-    let is_direct_db = !is_archive && has_db && !collect_bson_collections(std::path::Path::new(&input_dir)).is_empty();
+    let is_direct_db = !is_archive
+        && has_db
+        && !collect_bson_collections(std::path::Path::new(&input_dir)).is_empty();
     let restore_dir = input_dir.clone();
 
     tracing::debug!(
@@ -913,7 +937,10 @@ pub fn scan_restore_folder(path: String) -> Result<Vec<RestoreSourceDb>, String>
 
     // Otherwise look for DB subfolders.
     let mut dbs = Vec::new();
-    for e in std::fs::read_dir(root).map_err(|e| e.to_string())?.flatten() {
+    for e in std::fs::read_dir(root)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             let collections = collect_bson_collections(&e.path());
             if !collections.is_empty() {
@@ -984,15 +1011,21 @@ mod tests {
     #[test]
     fn test_strip_mongo_uri_database() {
         assert_eq!(
-            strip_mongo_uri_database("mongodb://root:example@localhost:27017/admin?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb://root:example@localhost:27017/admin?retryWrites=true"
+            ),
             "mongodb://root:example@localhost:27017/?retryWrites=true"
         );
         assert_eq!(
-            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/admin?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb+srv://user:pass@cluster.example.com/admin?retryWrites=true"
+            ),
             "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
         );
         assert_eq!(
-            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
+            ),
             "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
         );
         assert_eq!(
