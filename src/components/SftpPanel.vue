@@ -242,7 +242,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, shallowRef } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -284,6 +284,14 @@ const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
 
 const listeners = useListenerGroup()
+
+// Panels live inside <KeepAlive>, so a hidden panel is deactivated rather than
+// unmounted and its listeners stay registered. Without this flag a file
+// dropped on the visible panel would also upload to every other host whose
+// panel had ever been opened.
+const isPanelActive = ref(true)
+onActivated(() => { isPanelActive.value = true })
+onDeactivated(() => { isPanelActive.value = false })
 const { transfers, handleProgress, beginFolderTransfer, finishFolderTransfer } = useSftpTransfers()
 
 /** Run `fn`, logging and toasting any error with the given labels. */
@@ -548,8 +556,12 @@ onMounted(async () => {
   }
   await resolveHomeDir()
   await loadFiles()
-  await listeners.listen('sftp-progress', (event) => handleProgress(event.payload))
+  await listeners.listen('sftp-progress', (event) => {
+    if (event.payload?.sftp_session_id !== props.sftpSessionId) return
+    handleProgress(event.payload)
+  })
   await listeners.listen('tauri://drag-drop', (event) => {
+    if (!isPanelActive.value) return
     const payload = event.payload
     const paths = payload?.paths
     if (paths && paths.length > 0) {

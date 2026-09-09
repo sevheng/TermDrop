@@ -150,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { invoke } from '../utils/invoke.js'
 import {
   RefreshCw, Loader2, Container,
@@ -338,6 +338,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopAutoRefresh()
+})
+
+// Under <KeepAlive> a hidden panel is deactivated, not unmounted, so without
+// these the 5s docker ps poll kept running for every panel ever opened, each
+// one holding that host's exec session while the user looked elsewhere.
+onDeactivated(stopAutoRefresh)
+onActivated(() => {
+  loadContainers(true)
+  startAutoRefresh()
 })
 
 watch(() => props.hostId, () => {

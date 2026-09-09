@@ -664,8 +664,9 @@ async fn sftp_upload(
     local_path: String,
     remote_path: String,
 ) -> Result<(), String> {
+    let session_id = sftp_session_id.clone();
     sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_upload(window, handle, &local_path, &remote_path)
+        sftp::sftp_upload(window, &session_id, handle, &local_path, &remote_path)
     })
     .await
 }
@@ -687,8 +688,15 @@ async fn sftp_download(
     let local_path = download_dir.join(&file_name);
     let local_path_str = local_path.to_string_lossy().to_string();
     let local_path_str_for_dl = local_path_str.clone();
+    let session_id = sftp_session_id.clone();
     sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_download(window, handle, &remote_path, &local_path_str_for_dl)
+        sftp::sftp_download(
+            window,
+            &session_id,
+            handle,
+            &remote_path,
+            &local_path_str_for_dl,
+        )
     })
     .await?;
     Ok(local_path_str)

@@ -91,13 +91,13 @@ pub fn sftp_list(handle: &SftpSessionHandle, path: &str) -> Result<Vec<SftpFile>
 }
 
 /// Copy `reader` to `writer` in SFTP_BUF_SIZE chunks. With `progress`
-/// set to `(window, file)`, emits throttled `sftp-progress` events plus a
-/// final one when the copy completes.
+/// set to `(window, session_id, file)`, emits throttled `sftp-progress`
+/// events plus a final one when the copy completes.
 fn copy_with_progress(
     reader: &mut impl Read,
     writer: &mut impl Write,
     total: u64,
-    progress: Option<(&Window, &str)>,
+    progress: Option<(&Window, &str, &str)>,
 ) -> Result<(), String> {
     let mut buf = vec![0u8; SFTP_BUF_SIZE];
     let mut transferred = 0u64;
@@ -112,7 +112,7 @@ fn copy_with_progress(
         writer.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 
-        let Some((window, file)) = progress else {
+        let Some((window, session_id, file)) = progress else {
             continue;
         };
         let percent = if total > 0 {
@@ -127,22 +127,23 @@ fn copy_with_progress(
             || percent_delta >= PROGRESS_MIN_PERCENT_DELTA
             || transferred >= total
         {
-            emit_progress(window, file, transferred, total);
+            emit_progress(window, session_id, file, transferred, total);
             last_emit = Instant::now();
             last_percent = percent;
         }
     }
 
     // Final progress event
-    if let Some((window, file)) = progress {
-        emit_progress(window, file, transferred, total);
+    if let Some((window, session_id, file)) = progress {
+        emit_progress(window, session_id, file, transferred, total);
     }
 
     Ok(())
 }
 
-fn emit_progress(window: &Window, file: &str, transferred: u64, total: u64) {
+fn emit_progress(window: &Window, session_id: &str, file: &str, transferred: u64, total: u64) {
     let payload = serde_json::json!({
+        "sftp_session_id": session_id,
         "file": file,
         "bytes_transferred": transferred,
         "total_bytes": total,
@@ -152,6 +153,7 @@ fn emit_progress(window: &Window, file: &str, transferred: u64, total: u64) {
 
 pub fn sftp_upload(
     window: Window,
+    session_id: &str,
     handle: &SftpSessionHandle,
     local_path: &str,
     remote_path: &str,
@@ -173,12 +175,13 @@ pub fn sftp_upload(
         &mut reader,
         &mut remote_file,
         total,
-        Some((&window, remote_path)),
+        Some((&window, session_id, remote_path)),
     )
 }
 
 pub fn sftp_download(
     window: Window,
+    session_id: &str,
     handle: &SftpSessionHandle,
     remote_path: &str,
     local_path: &str,
@@ -200,7 +203,7 @@ pub fn sftp_download(
         &mut remote_file,
         &mut local_file,
         total,
-        Some((&window, remote_path)),
+        Some((&window, session_id, remote_path)),
     )
 }
 
