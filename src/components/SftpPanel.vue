@@ -194,79 +194,7 @@
       @download="previewDownload"
     />
 
-    <!-- Editor floating panel -->
-    <div
-      v-if="editorModal.show"
-      ref="editorModalRef"
-      class="fixed z-50 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl flex flex-col"
-      :style="{ left: editorModal.x + 'px', top: editorModal.y + 'px', width: editorModal.width + 'px', height: editorModal.height + 'px', minWidth: '400px', minHeight: '250px' }"
-    >
-      <!-- Draggable title bar -->
-      <div
-        class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c] shrink-0 select-none cursor-move bg-[#2d2d30]"
-        @mousedown="startEditorDrag"
-      >
-        <span class="text-xs text-[#cccccc] truncate flex-1 mr-2">
-          {{ editorModal.fileName }}
-          <span v-if="editorModal.dirty" class="text-[#cca700] ml-1">●</span>
-        </span>
-        <div class="flex items-center gap-1.5 shrink-0">
-          <button
-            @click.stop="editorModal.wordWrap = !editorModal.wordWrap"
-            class="text-[10px] px-1.5 py-0.5 rounded"
-            :class="editorModal.wordWrap ? 'bg-[#007acc] text-white' : 'bg-[#3c3c3c] text-[#858585] hover:text-[#cccccc]'"
-            title="Toggle word wrap"
-          >↵ Wrap</button>
-          <button
-            @click.stop="onEditorSave"
-            :disabled="editorModal.saving || !editorModal.dirty"
-            class="text-[11px] px-2.5 py-1 rounded font-medium"
-            :class="editorModal.dirty ? 'bg-[#89d185] hover:bg-[#73c16e] text-black' : 'bg-[#3c3c3c] text-[#858585] cursor-not-allowed'"
-          >
-            {{ editorModal.saving ? 'Saving...' : 'Save' }}
-          </button>
-          <button @click.stop="onEditorClose" class="text-[#858585] hover:text-[#cccccc] leading-none">×</button>
-        </div>
-      </div>
-      <div class="flex-1 overflow-hidden flex">
-        <div v-if="editorModal.loading" class="flex items-center justify-center h-full w-full text-[#858585] text-sm">
-          Loading...
-        </div>
-        <template v-else>
-          <!-- Line numbers -->
-          <div
-            ref="editorLineNumbersRef"
-            class="shrink-0 bg-[#1e1e1e] text-[#6e6e6e] text-right select-none px-2 py-3 border-r border-[#3c3c3c] overflow-hidden"
-            style="min-width: 2.5rem;"
-          >
-            <div v-for="n in editorLineCount" :key="n" class="text-[12px] leading-5 font-mono px-1">{{ n }}</div>
-          </div>
-          <!-- Textarea -->
-          <textarea
-            ref="editorTextareaRef"
-            v-model="editorModal.content"
-            @input="onEditorInput"
-            @keydown="onEditorKeydown"
-            @scroll="syncEditorScroll"
-            class="flex-1 bg-[#1e1e1e] text-[#cccccc] text-[12px] font-mono p-3 resize-none focus:outline-none leading-5"
-            :class="editorModal.wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'"
-            spellcheck="false"
-          ></textarea>
-        </template>
-      </div>
-      <div class="px-3 py-1.5 border-t border-[#3c3c3c] text-[10px] text-[#6e6e6e] flex justify-between shrink-0">
-        <span>{{ editorModal.content.length }} chars</span>
-        <span v-if="editorModal.dirty" class="text-[#cca700]">Unsaved changes</span>
-        <span v-else>Saved</span>
-      </div>
-      <!-- Resize handle -->
-      <div
-        class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-        style="background: linear-gradient(135deg, transparent 50%, #6e6e6e 50%);"
-        @mousedown="startEditorResize"
-        title="Resize"
-      ></div>
-    </div>
+    <FloatingEditor ref="editorRef" :sftp-session-id="props.sftpSessionId" />
 
     <!-- Transfer progress -->
     <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] bg-[#1e1e1e]">
@@ -317,17 +245,18 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
-import { openPath } from '@tauri-apps/plugin-opener'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
+import FloatingEditor from './FloatingEditor.vue'
 import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
+import { useSftpTransfers } from '../composables/useSftpTransfers.js'
 
 const props = defineProps({
   sftpSessionId: {
@@ -342,7 +271,6 @@ const files = ref([])
 const loading = ref(false)
 const contextMenuEl = ref(null)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: null })
-const transfers = ref([])
 const sortKey = ref('name')
 const sortOrder = ref('asc')
 const showColumnMenu = ref(false)
@@ -356,15 +284,16 @@ const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
 
 const listeners = useListenerGroup()
+const { transfers, handleProgress, beginFolderTransfer, finishFolderTransfer } = useSftpTransfers()
 
-// Transfer rows linger 3s after they finish; timers are cleared on unmount.
-const transferTimers = new Set()
-function removeTransferLater(file) {
-  const timer = setTimeout(() => {
-    transferTimers.delete(timer)
-    transfers.value = transfers.value.filter(t => t.file !== file)
-  }, 3000)
-  transferTimers.add(timer)
+/** Run `fn`, logging and toasting any error with the given labels. */
+async function withErrorToast(logLabel, toastPrefix, fn) {
+  try {
+    await fn()
+  } catch (e) {
+    console.error(logLabel + ' failed:', e)
+    toast(toastPrefix + e, 'error')
+  }
 }
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
@@ -378,94 +307,14 @@ const promptDialog = ref({
   onConfirm: () => {},
 })
 
+const editorRef = ref(null)
+
 const previewModal = ref({
   show: false,
   fileName: '',
   filePath: '',
   fileSize: 0,
 })
-
-const editorModal = ref({
-  show: false,
-  fileName: '',
-  filePath: '',
-  content: '',
-  originalContent: '',
-  loading: false,
-  saving: false,
-  dirty: false,
-  wordWrap: false,
-  width: 560,
-  height: 400,
-  x: typeof window !== 'undefined' ? window.innerWidth - 580 : 100,
-  y: typeof window !== 'undefined' ? window.innerHeight - 420 : 100,
-})
-
-const editorModalRef = ref(null)
-const editorLineNumbersRef = ref(null)
-const editorTextareaRef = ref(null)
-let editorResizeStart = null
-let editorDragStart = null
-
-const editorLineCount = computed(() => {
-  if (!editorModal.value.content) return 1
-  return editorModal.value.content.split('\n').length
-})
-
-function onEditorInput() {
-  editorModal.value.dirty = true
-}
-
-function syncEditorScroll() {
-  if (editorLineNumbersRef.value && editorTextareaRef.value) {
-    editorLineNumbersRef.value.scrollTop = editorTextareaRef.value.scrollTop
-  }
-}
-
-function startEditorDrag(e) {
-  // Only drag on left mouse button, and not on buttons
-  if (e.button !== 0 || e.target.closest('button')) return
-  e.preventDefault()
-  editorDragStart = { x: e.clientX, y: e.clientY, px: editorModal.value.x, py: editorModal.value.y }
-  document.addEventListener('mousemove', onEditorDragMove)
-  document.addEventListener('mouseup', onEditorDragUp)
-}
-
-function onEditorDragMove(e) {
-  if (!editorDragStart) return
-  const dx = e.clientX - editorDragStart.x
-  const dy = e.clientY - editorDragStart.y
-  editorModal.value.x = Math.max(0, editorDragStart.px + dx)
-  editorModal.value.y = Math.max(0, editorDragStart.py + dy)
-}
-
-function onEditorDragUp() {
-  editorDragStart = null
-  document.removeEventListener('mousemove', onEditorDragMove)
-  document.removeEventListener('mouseup', onEditorDragUp)
-}
-
-function startEditorResize(e) {
-  e.preventDefault()
-  editorResizeStart = { x: e.clientX, y: e.clientY, w: editorModal.value.width, h: editorModal.value.height }
-  document.addEventListener('mousemove', onEditorResizeMove)
-  document.addEventListener('mouseup', onEditorResizeUp)
-}
-
-function onEditorResizeMove(e) {
-  if (!editorResizeStart) return
-  const dx = e.clientX - editorResizeStart.x
-  const dy = e.clientY - editorResizeStart.y
-  editorModal.value.width = Math.max(400, editorResizeStart.w + dx)
-  editorModal.value.height = Math.max(250, editorResizeStart.h + dy)
-}
-
-function onEditorResizeUp() {
-  editorResizeStart = null
-  document.removeEventListener('mousemove', onEditorResizeMove)
-  document.removeEventListener('mouseup', onEditorResizeUp)
-}
-
 
 function openPrompt(options) {
   promptDialog.value = {
@@ -699,40 +548,7 @@ onMounted(async () => {
   }
   await resolveHomeDir()
   await loadFiles()
-  await listeners.listen('sftp-progress', (event) => {
-    const p = event.payload
-    const now = Date.now()
-    const fileName = p.file.split('/').pop() || p.file
-    const existing = transfers.value.find(t => t.file === p.file)
-    if (existing) {
-      const dt = (now - existing.lastUpdate) / 1000
-      if (dt > 0) {
-        const db = p.bytes_transferred - existing.bytes
-        existing.speed = db / dt
-      }
-      existing.bytes = p.bytes_transferred
-      existing.total = p.total_bytes
-      existing.lastUpdate = now
-      if (existing.bytes >= existing.total && !existing.done) {
-        existing.done = true
-        removeTransferLater(p.file)
-      }
-    } else {
-      const isDone = p.total_bytes === 0 || p.bytes_transferred >= p.total_bytes
-      transfers.value.push({
-        file: p.file,
-        fileName,
-        bytes: p.bytes_transferred,
-        total: p.total_bytes,
-        speed: 0,
-        lastUpdate: now,
-        done: isDone,
-      })
-      if (isDone) {
-        removeTransferLater(p.file)
-      }
-    }
-  })
+  await listeners.listen('sftp-progress', (event) => handleProgress(event.payload))
   await listeners.listen('tauri://drag-drop', (event) => {
     const payload = event.payload
     const paths = payload?.paths
@@ -745,8 +561,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  transferTimers.forEach(clearTimeout)
-  transferTimers.clear()
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('contextmenu', closeMenu, true)
 })
@@ -801,46 +615,24 @@ async function onDownload() {
   const file = contextMenu.value.file
   if (!file || file.is_dir) return
   contextMenu.value.show = false
-  try {
+  await withErrorToast('Download', 'Download failed: ', async () => {
     const savedPath = await store.sftpDownload(props.sftpSessionId, file.path)
     toast(`Downloaded to ${savedPath}`, 'success')
-  } catch (e) {
-    console.error('Download failed:', e)
-    toast('Download failed: ' + e, 'error')
-  }
+  })
 }
 
 async function onDownloadDir() {
   const file = contextMenu.value.file
   if (!file || !file.is_dir) return
   contextMenu.value.show = false
-  const transferKey = `folder:${file.path}`
-  transfers.value.push({
-    file: transferKey,
-    fileName: `📁 ${file.name}`,
-    bytes: 0,
-    total: 0,
-    speed: 0,
-    lastUpdate: Date.now(),
-    done: false,
-  })
+  const transferKey = beginFolderTransfer(file)
   try {
     const savedPath = await invoke('sftp_download_dir', { sftpSessionId: props.sftpSessionId, remotePath: file.path })
-    const t = transfers.value.find(x => x.file === transferKey)
-    if (t) {
-      t.done = true
-      t.fileName = `📁 ${file.name} (saved)`
-      removeTransferLater(transferKey)
-    }
+    finishFolderTransfer(transferKey, file, '(saved)')
     toast(`Downloaded folder to ${savedPath}`, 'success')
   } catch (e) {
     console.error('Download folder failed:', e)
-    const t = transfers.value.find(x => x.file === transferKey)
-    if (t) {
-      t.done = true
-      t.fileName = `📁 ${file.name} (failed)`
-      removeTransferLater(transferKey)
-    }
+    finishFolderTransfer(transferKey, file, '(failed)')
     toast('Download folder failed: ' + e, 'error')
   }
 }
@@ -856,20 +648,15 @@ function onDelete() {
       ? `Delete "${file.name}" and all its contents? This cannot be undone.`
       : `Delete "${file.name}"? This cannot be undone.`,
     danger: true,
-    onConfirm: async () => {
-      try {
-        if (isDir) {
-          await store.sftpRmdir(props.sftpSessionId, file.path)
-        } else {
-          await store.sftpDelete(props.sftpSessionId, file.path)
-        }
-        await loadFiles()
-        toast(isDir ? `Deleted folder "${file.name}"` : `Deleted "${file.name}"`, 'success')
-      } catch (e) {
-        console.error('Delete failed:', e)
-        toast('Delete failed: ' + e, 'error')
+    onConfirm: () => withErrorToast('Delete', 'Delete failed: ', async () => {
+      if (isDir) {
+        await store.sftpRmdir(props.sftpSessionId, file.path)
+      } else {
+        await store.sftpDelete(props.sftpSessionId, file.path)
       }
-    },
+      await loadFiles()
+      toast(isDir ? `Deleted folder "${file.name}"` : `Deleted "${file.name}"`, 'success')
+    }),
   })
 }
 
@@ -881,14 +668,11 @@ async function onMkdir() {
     onConfirm: async (name) => {
       const dirPath = currentPath.value === '/' ? '' : currentPath.value
       const fullPath = dirPath ? `${dirPath}/${name}` : name
-      try {
+      await withErrorToast('mkdir', 'Failed to create folder: ', async () => {
         await store.sftpMkdir(props.sftpSessionId, fullPath)
         await loadFiles()
         toast(`Created folder "${name}"`, 'success')
-      } catch (e) {
-        console.error('mkdir failed:', e)
-        toast('Failed to create folder: ' + e, 'error')
-      }
+      })
     },
   })
 }
@@ -909,9 +693,7 @@ async function copyRemotePath() {
 async function onPreviewFile(file) {
   if (!file || file.is_dir) return
   // Close editor if open to avoid overlapping panels
-  if (editorModal.value.show) {
-    editorModal.value.show = false
-  }
+  editorRef.value?.hide()
   previewModal.value = { show: true, fileName: file.name, filePath: file.path, fileSize: file.size || 0 }
 }
 
@@ -928,13 +710,10 @@ async function previewDownload() {
   const fileName = previewModal.value.fileName
   if (!filePath) return
   previewModal.value.show = false
-  try {
+  await withErrorToast('Download', 'Download failed: ', async () => {
     const savedPath = await store.sftpDownload(props.sftpSessionId, filePath)
     toast(`Downloaded to ${savedPath}`, 'success')
-  } catch (e) {
-    console.error('Download failed:', e)
-    toast('Download failed: ' + e, 'error')
-  }
+  })
 }
 
 async function onEditorOpen(file) {
@@ -943,79 +722,7 @@ async function onEditorOpen(file) {
   if (previewModal.value.show) {
     previewModal.value.show = false
   }
-  editorModal.value = {
-    show: true,
-    fileName: file.name,
-    filePath: file.path,
-    content: '',
-    originalContent: '',
-    loading: true,
-    saving: false,
-    dirty: false,
-    wordWrap: false,
-    width: editorModal.value.width,
-    height: editorModal.value.height,
-    x: editorModal.value.x,
-    y: editorModal.value.y,
-  }
-  try {
-    const content = await invoke('sftp_read_file', {
-      sftpSessionId: props.sftpSessionId,
-      remotePath: file.path,
-    })
-    editorModal.value.content = content
-    editorModal.value.originalContent = content
-  } catch (e) {
-    console.error('Editor load failed:', e)
-    toast('Failed to load file: ' + e, 'error')
-    editorModal.value.show = false
-  } finally {
-    editorModal.value.loading = false
-  }
-}
-
-async function onEditorSave() {
-  if (!editorModal.value.dirty || editorModal.value.saving) return
-  editorModal.value.saving = true
-  try {
-    await invoke('sftp_write_file', {
-      sftpSessionId: props.sftpSessionId,
-      remotePath: editorModal.value.filePath,
-      content: editorModal.value.content,
-    })
-    editorModal.value.originalContent = editorModal.value.content
-    editorModal.value.dirty = false
-    toast(`Saved ${editorModal.value.fileName}`, 'success')
-  } catch (e) {
-    console.error('Save failed:', e)
-    toast('Save failed: ' + e, 'error')
-  } finally {
-    editorModal.value.saving = false
-  }
-}
-
-function onEditorClose() {
-  if (editorModal.value.dirty) {
-    openConfirm({
-      title: 'Unsaved Changes',
-      message: `You have unsaved changes in "${editorModal.value.fileName}". Discard them?`,
-      onConfirm: () => {
-        editorModal.value.show = false
-      },
-    })
-  } else {
-    editorModal.value.show = false
-  }
-}
-
-function onEditorKeydown(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault()
-    onEditorSave()
-  }
-  if (e.key === 'Escape') {
-    onEditorClose()
-  }
+  await editorRef.value?.open(file)
 }
 
 async function onPreview() {
@@ -1045,14 +752,11 @@ async function onRename() {
       if (!newName || newName === file.name) return
       const parent = file.path.substring(0, file.path.lastIndexOf('/')) || '/'
       const newPath = parent === '/' ? '/' + newName : parent + '/' + newName
-      try {
+      await withErrorToast('Rename', 'Rename failed: ', async () => {
         await store.sftpRename(props.sftpSessionId, file.path, newPath)
         await loadFiles()
         toast(`Renamed to "${newName}"`, 'success')
-      } catch (e) {
-        console.error('Rename failed:', e)
-        toast('Rename failed: ' + e, 'error')
-      }
+      })
     },
   })
 }
