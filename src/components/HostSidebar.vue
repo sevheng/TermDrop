@@ -170,7 +170,8 @@
     <!-- Unified Context Menu -->
     <div
       v-if="contextMenu.show"
-      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[10rem]"
+      ref="contextMenuEl"
+      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[10rem] max-h-[calc(100vh-16px)] overflow-y-auto"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Host menu -->
@@ -487,19 +488,37 @@ async function toggleFavorite(host) {
   await store.setHostFavorite(host.id, !host.favorite)
 }
 
+const contextMenuEl = ref(null)
+const MENU_VIEWPORT_MARGIN = 8
+
+// Open the menu at the cursor, then shift it back inside the window once
+// rendered so tall menus near the bottom/right edge are not clipped.
+function openContextMenu(event, type, data) {
+  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type, data }
+  nextTick(() => {
+    const el = contextMenuEl.value
+    if (!el) return
+    const { width, height } = el.getBoundingClientRect()
+    const maxX = window.innerWidth - width - MENU_VIEWPORT_MARGIN
+    const maxY = window.innerHeight - height - MENU_VIEWPORT_MARGIN
+    contextMenu.value.x = Math.max(MENU_VIEWPORT_MARGIN, Math.min(contextMenu.value.x, maxX))
+    contextMenu.value.y = Math.max(MENU_VIEWPORT_MARGIN, Math.min(contextMenu.value.y, maxY))
+  })
+}
+
 function showGroupMenu(event, groupName) {
   event.preventDefault()
   event.stopPropagation()
-  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'group', data: groupName }
+  openContextMenu(event, 'group', groupName)
 }
 
 function showEmptyMenu(event) {
-  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'empty', data: null }
+  openContextMenu(event, 'empty', null)
 }
 
 function showHostMenu(event, host) {
   event.stopPropagation()
-  contextMenu.value = { show: true, x: event.clientX, y: event.clientY, type: 'host', data: host }
+  openContextMenu(event, 'host', host)
 }
 
 function hideContextMenu() {
