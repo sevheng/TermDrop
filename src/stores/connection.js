@@ -3,6 +3,7 @@ import { ref, shallowRef, computed, reactive } from 'vue'
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { toast } from '../utils/toast.js'
 
 const INVOKE_TIMEOUT_MS = 10000 // 10 seconds
 
@@ -31,9 +32,7 @@ function invoke(cmd, args = {}) {
   let warned = false
   const timer = setTimeout(() => {
     warned = true
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: `${cmd} is taking longer than expected...`, type: 'warning' }
-    }))
+    toast(`${cmd} is taking longer than expected...`, 'warning')
   }, INVOKE_TIMEOUT_MS)
 
   return tauriInvoke(cmd, args).finally(() => {
@@ -255,7 +254,7 @@ export const useConnectionStore = defineStore('connection', () => {
           return connect(hostId, password)
         }
       }
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SSH connection failed: ' + err, type: 'error' } }))
+      toast('SSH connection failed: ' + err, 'error')
       throw err
     }
 
@@ -285,7 +284,7 @@ export const useConnectionStore = defineStore('connection', () => {
       )
     } catch (err) {
       console.warn('SFTP connection failed:', err)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
+      toast('SFTP connection failed: ' + err, 'warning')
     }
     // Run security audit in background — don't block tab creation
     runSecurityAudit(hostId).catch(() => {})

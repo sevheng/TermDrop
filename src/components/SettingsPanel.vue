@@ -55,6 +55,7 @@ import { ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { useConnectionStore } from '../stores/connection.js'
 import { checkForUpdates } from '../composables/useUpdater.js'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   show: Boolean,
@@ -102,14 +103,10 @@ async function manualCheck() {
     if (result.available) {
       emit('update-available', result)
     } else {
-      window.dispatchEvent(new CustomEvent('app-toast', {
-        detail: { message: 'You are on the latest version!', type: 'success' }
-      }))
+      toast('You are on the latest version!', 'success')
     }
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: 'Update check failed: ' + err, type: 'error' }
-    }))
+    toast('Update check failed: ' + err, 'error')
   } finally {
     checking.value = false
   }

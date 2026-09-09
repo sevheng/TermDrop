@@ -150,6 +150,7 @@ import {
 import VirtualList from './VirtualList.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { shellEscape } from '../utils/shell.js'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   hostId: {
@@ -203,12 +204,12 @@ async function installDocker() {
   installing.value = true
   try {
     await invoke('docker_install', { hostId: props.hostId })
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker installed successfully', type: 'success' } }))
+    toast('Docker installed successfully', 'success')
     dockerNotInstalled.value = false
     await loadContainers()
   } catch (err) {
     console.error('docker_install failed:', err)
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker install failed: ' + err, type: 'error' } }))
+    toast('Docker install failed: ' + err, 'error')
   }
   installing.value = false
 }
@@ -216,9 +217,9 @@ async function installDocker() {
 function handleDockerError(err, action) {
   const errStr = String(err)
   if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', type: 'error' } }))
+    toast('Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', 'error')
   } else {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `${action} failed: ${errStr}`, type: 'error' } }))
+    toast(`${action} failed: ${errStr}`, 'error')
   }
 }
 

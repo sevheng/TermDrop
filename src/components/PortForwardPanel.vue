@@ -91,6 +91,7 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink, Pencil } from 'lucide-vue-next'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   hostId: Number,
@@ -115,16 +116,16 @@ async function startForward(id) {
   try {
     await store.startPortForward(id)
     activeStatus.value[id] = true
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward started', type: 'success' } }))
+    toast('Port forward started', 'success')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to start: ' + err, type: 'error' } }))
+    toast('Failed to start: ' + err, 'error')
   }
 }
 
 function openForward(fw) {
   const url = `http://${fw.local_host}:${fw.local_port}`
   openUrl(url).catch((err) => {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open: ' + err, type: 'error' } }))
+    toast('Failed to open: ' + err, 'error')
   })
 }
 
@@ -136,9 +137,9 @@ async function stopForward(id) {
   try {
     await store.stopPortForward(id)
     activeStatus.value[id] = false
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward stopped', type: 'success' } }))
+    toast('Port forward stopped', 'success')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to stop: ' + err, type: 'error' } }))
+    toast('Failed to stop: ' + err, 'error')
   }
 }
 
@@ -146,9 +147,9 @@ async function deleteForward(id) {
   try {
     await store.deletePortForward(id)
     await loadForwards()
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward deleted', type: 'success' } }))
+    toast('Port forward deleted', 'success')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to delete: ' + err, type: 'error' } }))
+    toast('Failed to delete: ' + err, 'error')
   }
 }
 

@@ -326,6 +326,7 @@ import { formatBytes, formatRate } from '../utils/format.js'
 import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   sessionId: {
@@ -608,7 +609,7 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   dockerWebLinksAddon = new WebLinksAddon((event, uri) => {
     event.preventDefault()
     openUrl(uri).catch((err) => {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
+      toast('Failed to open link: ' + err, 'error')
     })
   })
   dockerTerm.loadAddon(dockerFitAddon)
@@ -928,7 +929,7 @@ async function initTerminal() {
   webLinksAddon = new WebLinksAddon((event, uri) => {
     event.preventDefault()
     openUrl(uri).catch((err) => {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
+      toast('Failed to open link: ' + err, 'error')
     })
   })
   term.loadAddon(fitAddon)

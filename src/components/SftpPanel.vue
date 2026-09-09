@@ -325,6 +325,7 @@ import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   sftpSessionId: {
@@ -488,10 +489,6 @@ function openPrompt(options) {
   }
 }
 
-function showToast(message, type = 'success') {
-  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type } }))
-}
-
 const breadcrumbs = computed(() => {
   const normalized = currentPath.value.replace(/\\/g, '/').replace(/\/+/g, '/')
   const parts = normalized.split('/').filter(Boolean)
@@ -596,10 +593,10 @@ async function uploadDroppedFiles(paths) {
         localPath,
         remotePath: fullRemotePath,
       })
-      showToast(`Uploaded ${fileName}`, 'success')
+      toast(`Uploaded ${fileName}`, 'success')
     } catch (e) {
       console.error('Upload failed:', e)
-      showToast(`Upload failed for ${fileName}: ${e}`, 'error')
+      toast(`Upload failed for ${fileName}: ${e}`, 'error')
     }
   }
   await loadFiles()
@@ -667,9 +664,9 @@ async function bulkDelete() {
       clearSelection()
       await loadFiles()
       if (failed > 0) {
-        showToast(`Deleted ${deleted}, failed ${failed}`, 'warning')
+        toast(`Deleted ${deleted}, failed ${failed}`, 'warning')
       } else {
-        showToast(`Deleted ${deleted} item${deleted > 1 ? 's' : ''}`, 'success')
+        toast(`Deleted ${deleted} item${deleted > 1 ? 's' : ''}`, 'success')
       }
     },
   })
@@ -692,9 +689,9 @@ async function bulkDownload() {
   }
   clearSelection()
   if (failed > 0) {
-    showToast(`Downloaded ${completed}, failed ${failed}`, 'warning')
+    toast(`Downloaded ${completed}, failed ${failed}`, 'warning')
   } else {
-    showToast(`Downloaded ${completed} file${completed > 1 ? 's' : ''}`, 'success')
+    toast(`Downloaded ${completed} file${completed > 1 ? 's' : ''}`, 'success')
   }
 }
 
@@ -818,10 +815,10 @@ async function onDownload() {
   contextMenu.value.show = false
   try {
     const savedPath = await store.sftpDownload(props.sftpSessionId, file.path)
-    showToast(`Downloaded to ${savedPath}`, 'success')
+    toast(`Downloaded to ${savedPath}`, 'success')
   } catch (e) {
     console.error('Download failed:', e)
-    showToast('Download failed: ' + e, 'error')
+    toast('Download failed: ' + e, 'error')
   }
 }
 
@@ -849,7 +846,7 @@ async function onDownloadDir() {
         transfers.value = transfers.value.filter(x => x.file !== transferKey)
       }, 3000)
     }
-    showToast(`Downloaded folder to ${savedPath}`, 'success')
+    toast(`Downloaded folder to ${savedPath}`, 'success')
   } catch (e) {
     console.error('Download folder failed:', e)
     const t = transfers.value.find(x => x.file === transferKey)
@@ -860,7 +857,7 @@ async function onDownloadDir() {
         transfers.value = transfers.value.filter(x => x.file !== transferKey)
       }, 3000)
     }
-    showToast('Download folder failed: ' + e, 'error')
+    toast('Download folder failed: ' + e, 'error')
   }
 }
 
@@ -883,10 +880,10 @@ function onDelete() {
           await store.sftpDelete(props.sftpSessionId, file.path)
         }
         await loadFiles()
-        showToast(isDir ? `Deleted folder "${file.name}"` : `Deleted "${file.name}"`, 'success')
+        toast(isDir ? `Deleted folder "${file.name}"` : `Deleted "${file.name}"`, 'success')
       } catch (e) {
         console.error('Delete failed:', e)
-        showToast('Delete failed: ' + e, 'error')
+        toast('Delete failed: ' + e, 'error')
       }
     },
   })
@@ -903,10 +900,10 @@ async function onMkdir() {
       try {
         await store.sftpMkdir(props.sftpSessionId, fullPath)
         await loadFiles()
-        showToast(`Created folder "${name}"`, 'success')
+        toast(`Created folder "${name}"`, 'success')
       } catch (e) {
         console.error('mkdir failed:', e)
-        showToast('Failed to create folder: ' + e, 'error')
+        toast('Failed to create folder: ' + e, 'error')
       }
     },
   })
@@ -918,10 +915,10 @@ async function copyRemotePath() {
   contextMenu.value.show = false
   try {
     await writeText(file.path)
-    showToast('Path copied to clipboard', 'success')
+    toast('Path copied to clipboard', 'success')
   } catch (e) {
     console.warn('Copy path failed:', e)
-    showToast('Failed to copy path', 'error')
+    toast('Failed to copy path', 'error')
   }
 }
 
@@ -949,10 +946,10 @@ async function previewDownload() {
   previewModal.value.show = false
   try {
     const savedPath = await store.sftpDownload(props.sftpSessionId, filePath)
-    showToast(`Downloaded to ${savedPath}`, 'success')
+    toast(`Downloaded to ${savedPath}`, 'success')
   } catch (e) {
     console.error('Download failed:', e)
-    showToast('Download failed: ' + e, 'error')
+    toast('Download failed: ' + e, 'error')
   }
 }
 
@@ -986,7 +983,7 @@ async function onEditorOpen(file) {
     editorModal.value.originalContent = content
   } catch (e) {
     console.error('Editor load failed:', e)
-    showToast('Failed to load file: ' + e, 'error')
+    toast('Failed to load file: ' + e, 'error')
     editorModal.value.show = false
   } finally {
     editorModal.value.loading = false
@@ -1004,10 +1001,10 @@ async function onEditorSave() {
     })
     editorModal.value.originalContent = editorModal.value.content
     editorModal.value.dirty = false
-    showToast(`Saved ${editorModal.value.fileName}`, 'success')
+    toast(`Saved ${editorModal.value.fileName}`, 'success')
   } catch (e) {
     console.error('Save failed:', e)
-    showToast('Save failed: ' + e, 'error')
+    toast('Save failed: ' + e, 'error')
   } finally {
     editorModal.value.saving = false
   }
@@ -1067,10 +1064,10 @@ async function onRename() {
       try {
         await store.sftpRename(props.sftpSessionId, file.path, newPath)
         await loadFiles()
-        showToast(`Renamed to "${newName}"`, 'success')
+        toast(`Renamed to "${newName}"`, 'success')
       } catch (e) {
         console.error('Rename failed:', e)
-        showToast('Rename failed: ' + e, 'error')
+        toast('Rename failed: ' + e, 'error')
       }
     },
   })

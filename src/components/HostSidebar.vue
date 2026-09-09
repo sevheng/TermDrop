@@ -335,6 +335,7 @@ import MongoDbModal from './MongoDbModal.vue'
 import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
+import { toast } from '../utils/toast.js'
 
 const store = useConnectionStore()
 
@@ -659,9 +660,7 @@ async function handleSave({ id, hostData, password }) {
     if (password) {
       await store.storePassword(id, password).catch((err) => {
         console.warn('Failed to store password:', err)
-        window.dispatchEvent(new CustomEvent('app-toast', {
-          detail: { message: 'Password could not be saved: ' + err, type: 'error' },
-        }))
+        toast('Password could not be saved: ' + err, 'error')
       })
     }
   } else {
@@ -669,9 +668,7 @@ async function handleSave({ id, hostData, password }) {
     if (password) {
       await store.storePassword(newId, password).catch((err) => {
         console.warn('Failed to store password:', err)
-        window.dispatchEvent(new CustomEvent('app-toast', {
-          detail: { message: 'Password could not be saved: ' + err, type: 'error' },
-        }))
+        toast('Password could not be saved: ' + err, 'error')
       })
     }
     if (pendingGroupForNewHost.value !== null) {
@@ -753,14 +750,14 @@ async function importSshConfig() {
   try {
     const hosts = await invoke('parse_ssh_config')
     if (!hosts || hosts.length === 0) {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'No hosts found in ~/.ssh/config', type: 'warning' } }))
+      toast('No hosts found in ~/.ssh/config', 'warning')
       return
     }
     sshConfigHosts.value = hosts
     selectedSshHosts.value = new Set(hosts.map((_, i) => i))
     showSshConfigDialog.value = true
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to parse SSH config: ' + err, type: 'error' } }))
+    toast('Failed to parse SSH config: ' + err, 'error')
   }
 }
 
@@ -774,9 +771,9 @@ async function confirmSshConfigImport() {
     const count = await invoke('import_ssh_config_hosts', { hosts: toImport })
     await store.loadHosts()
     showSshConfigDialog.value = false
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Imported ${count} hosts from SSH config`, type: 'success' } }))
+    toast(`Imported ${count} hosts from SSH config`, 'success')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Import failed: ' + err, type: 'error' } }))
+    toast('Import failed: ' + err, 'error')
   }
 }
 
@@ -790,9 +787,9 @@ async function onImportFileSelected(event) {
   try {
     const text = await file.text()
     const count = await store.importHosts(text)
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Imported ${count} hosts`, type: 'success' } }))
+    toast(`Imported ${count} hosts`, 'success')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Import failed: ' + err, type: 'error' } }))
+    toast('Import failed: ' + err, 'error')
   }
   event.target.value = ''
 }

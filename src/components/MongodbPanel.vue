@@ -355,6 +355,7 @@ import {
   ArrowRightLeft,
 } from 'lucide-vue-next'
 import DbTree from './DbTree.vue'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   hostId: { type: Number, required: true },
@@ -973,7 +974,4 @@ watch(() => props.hostId, async () => {
   }
 })
 
-function toast(message, type = 'info') {
-  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type } }))
-}
 </script>

@@ -251,6 +251,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
+import { toast } from '../utils/toast.js'
 
 const emit = defineEmits(['update-available'])
 
@@ -330,17 +331,17 @@ async function onForwardSaved({ id, forwardData }) {
   try {
     if (id) {
       await store.updatePortForward(id, forwardData)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward updated', type: 'success' } }))
+      toast('Port forward updated', 'success')
     } else {
       await store.addPortForward(forwardData)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
+      toast('Port forward added', 'success')
     }
     showForwardModal.value = false
     forwardPrefill.value = null
     editForward.value = null
     window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: forwardData.host_id } }))
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to save: ' + err, type: 'error' } }))
+    toast('Failed to save: ' + err, 'error')
   }
 }
 

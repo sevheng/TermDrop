@@ -42,6 +42,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { toast } from '../utils/toast.js'
 
 const props = defineProps({
   show: Boolean,
@@ -63,9 +64,7 @@ async function install() {
     await props.downloadAndInstall((p) => { progress.value = p })
     emit('installed')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: 'Update failed: ' + err, type: 'error' }
-    }))
+    toast('Update failed: ' + err, 'error')
     downloading.value = false
   }
 }
