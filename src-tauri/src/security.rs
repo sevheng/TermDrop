@@ -11,12 +11,153 @@ const WARN: &str = "warn";
 const FAIL: &str = "fail";
 const UNKNOWN: &str = "unknown";
 
+/// What to do about a finding.
+///
+/// `command` is present only when a single-line, non-destructive command
+/// exists, and is safe to insert into a live shell for the user to review.
+/// Config edits and service restarts belong in `summary`, never here: the
+/// panel can put `command` straight into a root-capable terminal.
+///
+/// Every command is a `&'static str` or is chosen from a closed set of
+/// distributions. **Remote output must never reach a command string**, or a
+/// value read off the audited host would end up as text in that terminal.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Remediation {
+    pub summary: String,
+    pub command: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SecurityCheck {
     pub name: String,
     pub status: String,
     pub message: String,
     pub detail: Option<String>,
+    pub remediation: Option<Remediation>,
+}
+
+impl SecurityCheck {
+    fn with_fix(mut self, summary: &str, command: Option<&'static str>) -> Self {
+        self.remediation = Some(Remediation {
+            summary: summary.to_string(),
+            command: command.map(String::from),
+        });
+        self
+    }
+}
+
+/// The distributions whose command names differ. Everything that varies by
+/// distribution is resolved through this, so remediation text is picked from a
+/// closed set rather than built from whatever the host reported.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Family {
+    Debian,
+    Rhel,
+    Suse,
+    Arch,
+    Alpine,
+    Unknown,
+}
+
+fn family_of(os_id: &str) -> Family {
+    match os_id {
+        "ubuntu" | "debian" | "linuxmint" | "pop" | "elementary" | "zorin" => Family::Debian,
+        "centos" | "rhel" | "fedora" | "rocky" | "almalinux" | "amazon" | "amzn" => Family::Rhel,
+        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" | "sles" => Family::Suse,
+        "arch" | "manjaro" | "endeavouros" => Family::Arch,
+        "alpine" => Family::Alpine,
+        _ => Family::Unknown,
+    }
+}
+
+/// The systemd unit that runs sshd. Debian and Ubuntu call it `ssh`.
+fn ssh_unit(family: Family) -> &'static str {
+    match family {
+        Family::Debian => "ssh",
+        _ => "sshd",
+    }
+}
+
+/// A read-only command that shows the recent failed authentication lines.
+/// The whole command is a literal per family rather than a path spliced into
+/// a format string, so no value read off the host can reach it.
+fn failed_login_inspect(family: Family) -> &'static str {
+    match family {
+        Family::Rhel | Family::Suse => {
+            "sudo grep -i 'authentication failure\\|failed password' /var/log/secure | tail -n 50"
+        }
+        _ => {
+            "sudo grep -i 'authentication failure\\|failed password' /var/log/auth.log | tail -n 50"
+        }
+    }
+}
+
+/// Where the sshd directives actually come from. Both Debian and RHEL ship an
+/// `Include /etc/ssh/sshd_config.d/*.conf` at the top of the main file, and
+/// sshd keeps the *first* value it reads, so a low-numbered drop-in beats the
+/// main file. Editing blind is how a change silently does nothing.
+const LOCATE_PASSWORD_AUTH: &str =
+    "sudo grep -rniE '^[[:space:]]*passwordauthentication' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/";
+const LOCATE_ROOT_LOGIN: &str =
+    "sudo grep -rniE '^[[:space:]]*permitrootlogin' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/";
+const SHOW_PASSWORD_AUTH: &str = "sudo sshd -T | grep -i passwordauthentication";
+const SHOW_ROOT_LOGIN: &str = "sudo sshd -T | grep -i permitrootlogin";
+const SHOW_LISTENERS: &str = "sudo ss -tlnp | grep -i sshd";
+const SHOW_SUDOERS: &str = "getent group sudo wheel";
+
+/// Advice for a check that came back undetermined for lack of rights.
+const NEEDS_ELEVATION: &str =
+    "Re-run the audit from an account with sudo, or run this yourself on a shell that has it.";
+
+/// A read-only command that shows the current firewall rules.
+fn firewall_inspect(family: Family) -> &'static str {
+    match family {
+        Family::Debian => "sudo ufw status verbose",
+        Family::Rhel | Family::Suse => "sudo firewall-cmd --list-all",
+        _ => "sudo nft list ruleset",
+    }
+}
+
+/// Package manager name, the command that counts pending security updates,
+/// and the command that applies them. `None` when the family is unrecognized.
+fn package_manager(family: Family) -> Option<(&'static str, &'static str, &'static str)> {
+    match family {
+        Family::Debian => Some((
+            "apt",
+            "apt list --upgradable 2>/dev/null | grep -c security || echo 0",
+            "sudo apt-get update && sudo apt-get upgrade",
+        )),
+        Family::Rhel => Some((
+            "dnf",
+            // `check-update --security` lists packages, not the word "security",
+            // so the old grep always counted zero. updateinfo lists advisories.
+            "dnf -q updateinfo list --security 2>/dev/null | grep -c . || echo 0",
+            "sudo dnf upgrade --security",
+        )),
+        Family::Alpine => Some((
+            "apk",
+            "apk upgrade --simulate 2>/dev/null | grep -c Upgrading || echo 0",
+            "sudo apk upgrade",
+        )),
+        Family::Arch => Some((
+            "pacman",
+            "pacman -Qu 2>/dev/null | grep -c . || echo 0",
+            "sudo pacman -Syu",
+        )),
+        Family::Suse => Some((
+            "zypper",
+            "zypper --quiet list-patches --category security 2>/dev/null | grep -c ' | ' || echo 0",
+            "sudo zypper patch --category security",
+        )),
+        Family::Unknown => None,
+    }
+}
+
+/// What the audit knew about the host while classifying it.
+#[derive(Debug, Clone, Copy)]
+struct Ctx {
+    family: Family,
+    has_privilege: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -35,6 +176,7 @@ fn check(name: &str, status: &str, message: String, detail: Option<String>) -> S
         status: status.to_string(),
         message,
         detail,
+        remediation: None,
     }
 }
 
@@ -133,7 +275,7 @@ fn unreadable_detail(base: &str, has_privilege: bool) -> String {
 
 const SSHD_UNREADABLE: &str = "Could not read the SSH server configuration";
 
-fn classify_password_auth(directive: &Directive, has_privilege: bool) -> SecurityCheck {
+fn classify_password_auth(directive: &Directive, ctx: Ctx) -> SecurityCheck {
     let name = "SSH Password Authentication";
     match directive {
         Directive::Value(v) if v.eq_ignore_ascii_case("no") => check(
@@ -147,7 +289,8 @@ fn classify_password_auth(directive: &Directive, has_privilege: bool) -> Securit
             FAIL,
             "Password authentication is enabled".to_string(),
             Some(format!("PasswordAuthentication {}", v)),
-        ),
+        )
+        .with_fix(&password_auth_fix(ctx.family), Some(LOCATE_PASSWORD_AUTH)),
         // OpenSSH defaults this to "yes", so an absent directive means
         // password login is accepted.
         Directive::NotSet => check(
@@ -155,17 +298,29 @@ fn classify_password_auth(directive: &Directive, has_privilege: bool) -> Securit
             FAIL,
             "Password authentication is enabled".to_string(),
             Some("Not set; the OpenSSH default is yes".to_string()),
-        ),
+        )
+        .with_fix(&password_auth_fix(ctx.family), Some(LOCATE_PASSWORD_AUTH)),
         Directive::Unknown => check(
             name,
             UNKNOWN,
             "Could not determine".to_string(),
-            Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
-        ),
+            Some(unreadable_detail(SSHD_UNREADABLE, ctx.has_privilege)),
+        )
+        .with_fix(NEEDS_ELEVATION, Some(SHOW_PASSWORD_AUTH)),
     }
 }
 
-fn classify_root_login(directive: &Directive, has_privilege: bool) -> SecurityCheck {
+fn password_auth_fix(family: Family) -> String {
+    format!(
+        "Confirm every account has a working key, then set PasswordAuthentication no \
+         and reload the service with `systemctl reload {}`. Find the file that sets it \
+         first: sshd keeps the first value it reads, so a drop-in in sshd_config.d can \
+         override an edit to the main file and leave the setting unchanged.",
+        ssh_unit(family)
+    )
+}
+
+fn classify_root_login(directive: &Directive, ctx: Ctx) -> SecurityCheck {
     let name = "SSH Root Login";
     match directive {
         Directive::Value(v) if v.eq_ignore_ascii_case("no") => check(
@@ -190,7 +345,8 @@ fn classify_root_login(directive: &Directive, has_privilege: bool) -> SecurityCh
             FAIL,
             "Root login is allowed".to_string(),
             Some(format!("PermitRootLogin {}", v)),
-        ),
+        )
+        .with_fix(&root_login_fix(ctx.family), Some(LOCATE_ROOT_LOGIN)),
         // The OpenSSH default is prohibit-password, which is acceptable, but
         // some distributions have shipped a different default.
         Directive::NotSet => check(
@@ -198,14 +354,26 @@ fn classify_root_login(directive: &Directive, has_privilege: bool) -> SecurityCh
             WARN,
             "Using the default (prohibit-password)".to_string(),
             Some("Not set; set PermitRootLogin explicitly to be sure".to_string()),
-        ),
+        )
+        .with_fix(&root_login_fix(ctx.family), Some(LOCATE_ROOT_LOGIN)),
         Directive::Unknown => check(
             name,
             UNKNOWN,
             "Could not determine".to_string(),
-            Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
-        ),
+            Some(unreadable_detail(SSHD_UNREADABLE, ctx.has_privilege)),
+        )
+        .with_fix(NEEDS_ELEVATION, Some(SHOW_ROOT_LOGIN)),
     }
+}
+
+fn root_login_fix(family: Family) -> String {
+    format!(
+        "Set PermitRootLogin to no, or to prohibit-password if root needs key access, \
+         then reload the service with `systemctl reload {}`. Check that you can still \
+         reach a sudo-capable account before you disconnect. As with the other sshd \
+         directives, the first file that sets it wins.",
+        ssh_unit(family)
+    )
 }
 
 /// Ports sshd listens on, parsed from one or more `Port` values.
@@ -216,7 +384,7 @@ fn parse_ports(value: &str) -> Vec<u16> {
         .collect()
 }
 
-fn classify_ssh_port(directive: &Directive, has_privilege: bool) -> SecurityCheck {
+fn classify_ssh_port(directive: &Directive, ctx: Ctx) -> SecurityCheck {
     let name = "SSH Port";
     let value = match directive {
         Directive::Value(v) => v.clone(),
@@ -227,8 +395,9 @@ fn classify_ssh_port(directive: &Directive, has_privilege: bool) -> SecurityChec
                 name,
                 UNKNOWN,
                 "Could not determine".to_string(),
-                Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
+                Some(unreadable_detail(SSHD_UNREADABLE, ctx.has_privilege)),
             )
+            .with_fix(NEEDS_ELEVATION, Some(SHOW_LISTENERS))
         }
     };
 
@@ -239,6 +408,11 @@ fn classify_ssh_port(directive: &Directive, has_privilege: bool) -> SecurityChec
             UNKNOWN,
             "Could not determine".to_string(),
             Some(format!("Unrecognized Port value: {}", value)),
+        )
+        .with_fix(
+            "The Port directive did not parse as a list of port numbers. Check what sshd \
+             is actually listening on.",
+            Some(SHOW_LISTENERS),
         );
     }
 
@@ -255,6 +429,12 @@ fn classify_ssh_port(directive: &Directive, has_privilege: bool) -> SecurityChec
             WARN,
             "Listening on the default port 22".to_string(),
             detail,
+        )
+        .with_fix(
+            "A non-default port only quiets untargeted scanners; it is not a substitute \
+             for key-only authentication. If you move it, open the new port in the \
+             firewall first and confirm a second login works before closing this session.",
+            Some(SHOW_LISTENERS),
         )
     } else {
         check(
@@ -298,7 +478,7 @@ fn classify_firewall(
     ufw: Option<&str>,
     firewalld: Option<&str>,
     rule_count: Option<&str>,
-    has_privilege: bool,
+    ctx: Ctx,
 ) -> SecurityCheck {
     let name = "Firewall";
     let mut probed = false;
@@ -351,6 +531,13 @@ fn classify_firewall(
             "No active firewall detected".to_string(),
             Some("ufw, firewalld, nftables, and iptables all report no rules".to_string()),
         )
+        .with_fix(
+            "Nothing is filtering inbound traffic. Enabling a default-deny firewall from \
+             this SSH session will lock you out unless you allow the SSH port first, so \
+             add that rule, then enable it, and keep this session open while you test a \
+             second login. Look at what is configured now before changing anything.",
+            Some(firewall_inspect(ctx.family)),
+        )
     } else {
         check(
             name,
@@ -358,9 +545,10 @@ fn classify_firewall(
             "Could not determine".to_string(),
             Some(unreadable_detail(
                 "Firewall status could not be read",
-                has_privilege,
+                ctx.has_privilege,
             )),
         )
+        .with_fix(NEEDS_ELEVATION, Some(firewall_inspect(ctx.family)))
     }
 }
 
@@ -368,7 +556,11 @@ fn classify_firewall(
 // Remaining checks
 // ---------------------------------------------------------------------------
 
-fn classify_failed_logins(auth_log: Option<&str>, journal: Option<&str>) -> SecurityCheck {
+fn classify_failed_logins(
+    auth_log: Option<&str>,
+    journal: Option<&str>,
+    ctx: Ctx,
+) -> SecurityCheck {
     let name = "Failed Login Attempts";
     let counts: Vec<i32> = [auth_log, journal]
         .iter()
@@ -381,7 +573,8 @@ fn classify_failed_logins(auth_log: Option<&str>, journal: Option<&str>) -> Secu
             UNKNOWN,
             "Could not determine".to_string(),
             Some("Authentication logs are not readable by this user".to_string()),
-        );
+        )
+        .with_fix(NEEDS_ELEVATION, Some(failed_login_inspect(ctx.family)));
     }
 
     let total = counts.into_iter().max().unwrap_or(0);
@@ -399,12 +592,23 @@ fn classify_failed_logins(auth_log: Option<&str>, journal: Option<&str>) -> Secu
             format!("{} recent failed login attempts", total),
             Some("Consider reviewing logs".to_string()),
         )
+        .with_fix(
+            "A handful of failures is usually a mistyped password rather than an attack. \
+             Read the lines and see which account and source address they came from.",
+            Some(failed_login_inspect(ctx.family)),
+        )
     } else {
         check(
             name,
             FAIL,
             format!("{} recent failed login attempts", total),
             Some("Potential brute-force attack — consider fail2ban".to_string()),
+        )
+        .with_fix(
+            "This volume usually means an automated attack. Read the lines to see which \
+             accounts are being tried, then disable password authentication so the \
+             attempts cannot succeed, and install fail2ban to cut the noise.",
+            Some(failed_login_inspect(ctx.family)),
         )
     }
 }
@@ -432,73 +636,62 @@ fn classify_sudo_users(sudo_group: Option<&str>, wheel_group: Option<&str>) -> S
         "Sudo users enumerated".to_string(),
         Some(users),
     )
+    .with_fix(
+        "Informational, so it is not scored. Check that every account listed still needs \
+         elevation, and that none of them is a shared or service account.",
+        Some(SHOW_SUDOERS),
+    )
 }
 
 fn os_family_from(output: &str) -> String {
     output.trim().to_lowercase()
 }
 
-/// Runs 1-2 package-manager commands chosen by the OS family, so it stays
+/// Runs one package-manager command chosen by the OS family, so it stays
 /// outside the batched script.
-fn check_security_updates(session: &Session, os_family: String) -> SecurityCheck {
-    let (out, pkg_manager) = match os_family.as_str() {
-        "ubuntu" | "debian" | "linuxmint" | "pop" | "elementary" | "zorin" => (
-            run_command(
-                session,
-                "apt list --upgradable 2>/dev/null | grep -c security || echo 0",
-            ),
-            "apt",
-        ),
-        "centos" | "rhel" | "fedora" | "rocky" | "almalinux" | "amazon" | "amzn" => (
-            // `check-update --security` lists packages, not the word "security",
-            // so the old grep always counted zero. updateinfo lists advisories.
-            run_command(
-                session,
-                "dnf -q updateinfo list --security 2>/dev/null | grep -c . || echo 0",
-            ),
-            "dnf",
-        ),
-        "alpine" => (
-            run_command(
-                session,
-                "apk upgrade --simulate 2>/dev/null | grep -c Upgrading || echo 0",
-            ),
-            "apk",
-        ),
-        "arch" | "manjaro" | "endeavouros" => (
-            run_command(session, "pacman -Qu 2>/dev/null | grep -c . || echo 0"),
-            "pacman",
-        ),
-        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" | "sles" => (
-            run_command(
-                session,
-                "zypper --quiet list-patches --category security 2>/dev/null | grep -c ' | ' || echo 0",
-            ),
-            "zypper",
-        ),
-        _ => (Ok(String::new()), "unknown"),
-    };
-
-    match out {
-        Ok(text) if pkg_manager != "unknown" => {
-            classify_security_updates(parse_count(&text), pkg_manager)
-        }
-        _ => check(
+fn check_security_updates(session: &Session, family: Family) -> SecurityCheck {
+    let Some((manager, count_cmd, upgrade_cmd)) = package_manager(family) else {
+        return check(
             "Security Updates",
             UNKNOWN,
             "Could not determine".to_string(),
             Some("No supported package manager was detected".to_string()),
+        )
+        .with_fix(
+            "The audit did not recognize this distribution, so it could not count pending \
+             updates. Check for them the way this system normally does.",
+            None,
+        );
+    };
+
+    match run_command(session, count_cmd) {
+        Ok(text) => classify_security_updates(parse_count(&text), manager, upgrade_cmd),
+        Err(_) => check(
+            "Security Updates",
+            UNKNOWN,
+            "Could not determine".to_string(),
+            Some(format!("The {} query did not run", manager)),
+        )
+        .with_fix(
+            "The update query did not run, so this is not a verdict. The package \
+             manager's own upgrade command lists what is pending and prompts before \
+             it changes anything.",
+            Some(upgrade_cmd),
         ),
     }
 }
 
-fn classify_security_updates(total: i32, pkg_manager: &str) -> SecurityCheck {
+fn classify_security_updates(
+    total: i32,
+    manager: &str,
+    upgrade_cmd: &'static str,
+) -> SecurityCheck {
     let name = "Security Updates";
     if total == 0 {
         check(
             name,
             PASS,
-            format!("No pending security updates ({})", pkg_manager),
+            format!("No pending security updates ({})", manager),
             None,
         )
     } else {
@@ -506,7 +699,13 @@ fn classify_security_updates(total: i32, pkg_manager: &str) -> SecurityCheck {
             name,
             FAIL,
             format!("{} security updates pending", total),
-            Some(format!("Run {} upgrade to patch", pkg_manager)),
+            Some(format!("Run {} upgrade to patch", manager)),
+        )
+        .with_fix(
+            "Applying updates can restart services and, for a kernel update, needs a \
+             reboot to take effect. The command is written to the terminal without a \
+             newline, so review it and confirm the package list before you run it.",
+            Some(upgrade_cmd),
         )
     }
 }
@@ -699,35 +898,42 @@ fn section<'a>(sections: &'a HashMap<String, Option<String>>, key: &str) -> Opti
 
 /// Build the report from parsed sections plus the separately fetched
 /// updates check.
+/// The distribution and the elevation the script reported, which together
+/// decide both the wording of a verdict and which remediation command applies.
+/// The script reports elevation once, so a check that came back empty can say
+/// whether it was blocked or the setting is genuinely absent.
+fn ctx_from_sections(sections: &HashMap<String, Option<String>>) -> Ctx {
+    Ctx {
+        family: family_of(&os_family_from(section(sections, "OS_ID").unwrap_or(""))),
+        has_privilege: section(sections, "PRIVILEGE") == Some("yes"),
+    }
+}
+
 fn audit_from_sections(
     sections: &HashMap<String, Option<String>>,
     updates: SecurityCheck,
 ) -> SecurityReport {
     let effective = section(sections, "SSHD_EFFECTIVE");
     let raw = section(sections, "SSHD_RAW");
-    // The script reports once whether it could elevate at all, so a check that
-    // came back empty can say whether it was blocked or genuinely absent.
-    let has_privilege = section(sections, "PRIVILEGE") == Some("yes");
+    let ctx = ctx_from_sections(sections);
 
     let checks = vec![
         classify_password_auth(
             &resolve_directive(effective, raw, "passwordauthentication"),
-            has_privilege,
+            ctx,
         ),
-        classify_root_login(
-            &resolve_directive(effective, raw, "permitrootlogin"),
-            has_privilege,
-        ),
-        classify_ssh_port(&resolve_directive(effective, raw, "port"), has_privilege),
+        classify_root_login(&resolve_directive(effective, raw, "permitrootlogin"), ctx),
+        classify_ssh_port(&resolve_directive(effective, raw, "port"), ctx),
         classify_firewall(
             section(sections, "UFW"),
             section(sections, "FIREWALLD"),
             section(sections, "RULE_COUNT"),
-            has_privilege,
+            ctx,
         ),
         classify_failed_logins(
             section(sections, "FAILED_AUTH_LOG"),
             section(sections, "FAILED_JOURNAL"),
+            ctx,
         ),
         classify_sudo_users(
             section(sections, "SUDO_GROUP"),
@@ -744,14 +950,197 @@ pub fn run_security_audit(session: &Session) -> Result<SecurityReport, String> {
     let sections = run_command(session, &audit_command())
         .map(|out| parse_audit_sections(&out))
         .unwrap_or_default();
-    let os_family = os_family_from(section(&sections, "OS_ID").unwrap_or(""));
-    let updates = check_security_updates(session, os_family);
+    let updates = check_security_updates(session, ctx_from_sections(&sections).family);
     Ok(audit_from_sections(&sections, updates))
 }
 
 #[cfg(test)]
 mod tests {
+
+    // -- remediation --------------------------------------------------------
+
+    const FAMILIES: [Family; 6] = [
+        Family::Debian,
+        Family::Rhel,
+        Family::Suse,
+        Family::Arch,
+        Family::Alpine,
+        Family::Unknown,
+    ];
+
+    /// Every command string the module is allowed to emit. The list is written
+    /// out by hand so that adding a command means deliberately adding it here.
+    fn allowed_commands() -> Vec<&'static str> {
+        let mut all = vec![
+            LOCATE_PASSWORD_AUTH,
+            LOCATE_ROOT_LOGIN,
+            SHOW_PASSWORD_AUTH,
+            SHOW_ROOT_LOGIN,
+            SHOW_LISTENERS,
+            SHOW_SUDOERS,
+        ];
+        for f in FAMILIES {
+            all.push(firewall_inspect(f));
+            all.push(failed_login_inspect(f));
+            if let Some((_, _, upgrade)) = package_manager(f) {
+                all.push(upgrade);
+            }
+        }
+        all
+    }
+
+    /// Produces a check for every branch that can carry a remediation, across
+    /// every family and both elevation states.
+    fn every_check() -> Vec<SecurityCheck> {
+        // Values a hostile or broken host could report. If any of these ever
+        // reached a command string, this is where it would show up.
+        let hostile = "yes\n$(id)`id`; rm -rf / |tee /etc/passwd";
+        let values = [
+            Directive::Value("no".into()),
+            Directive::Value("yes".into()),
+            Directive::Value("prohibit-password".into()),
+            Directive::Value(hostile.into()),
+            Directive::Value("22 2222".into()),
+            Directive::NotSet,
+            Directive::Unknown,
+        ];
+        let mut out = Vec::new();
+        for family in FAMILIES {
+            for has_privilege in [true, false] {
+                let ctx = Ctx {
+                    family,
+                    has_privilege,
+                };
+                for v in &values {
+                    out.push(classify_password_auth(v, ctx));
+                    out.push(classify_root_login(v, ctx));
+                    out.push(classify_ssh_port(v, ctx));
+                }
+                for probe in [None, Some("Status: inactive"), Some(hostile)] {
+                    out.push(classify_firewall(probe, probe, probe, ctx));
+                }
+                for count in [None, Some("0"), Some("2"), Some("40"), Some(hostile)] {
+                    out.push(classify_failed_logins(count, count, ctx));
+                    out.push(classify_sudo_users(count, count));
+                }
+                if let Some((manager, _, upgrade)) = package_manager(family) {
+                    out.push(classify_security_updates(0, manager, upgrade));
+                    out.push(classify_security_updates(9, manager, upgrade));
+                }
+            }
+        }
+        out
+    }
+
+    /// The load-bearing invariant of the whole remediation feature: a command
+    /// can be typed into a live, often root-capable shell, so no value read off
+    /// the audited host may reach one. Enforced by requiring every emitted
+    /// command to be one of the module's own literals.
+    #[test]
+    fn remediation_commands_never_carry_host_output() {
+        let allowed = allowed_commands();
+        for c in every_check() {
+            let Some(cmd) = c.remediation.as_ref().and_then(|r| r.command.as_deref()) else {
+                continue;
+            };
+            assert!(
+                allowed.contains(&cmd),
+                "{} produced a command that is not a module literal: {:?}",
+                c.name,
+                cmd
+            );
+        }
+    }
+
+    /// The literals themselves have to be safe to insert: one line, nothing
+    /// that mutates state beyond the package upgrades, and short enough that
+    /// the user can read the whole thing before pressing Enter.
+    #[test]
+    fn remediation_commands_are_safe_to_insert() {
+        // Enabling a default-deny firewall over SSH is the classic lockout, and
+        // restarting sshd from the session it serves is the other one. Both are
+        // described in prose instead.
+        const FORBIDDEN: [&str; 12] = [
+            "rm ",
+            "sed -i",
+            "tee ",
+            ">",
+            "systemctl restart",
+            "systemctl stop",
+            "reboot",
+            "ufw enable",
+            "ufw disable",
+            "--assume-yes",
+            "--noconfirm",
+            " -y",
+        ];
+        for cmd in allowed_commands() {
+            assert!(!cmd.is_empty());
+            assert!(cmd.len() <= 512, "too long to review: {:?}", cmd);
+            assert!(
+                !cmd.chars().any(|c| c.is_control()),
+                "control character in {:?}",
+                cmd
+            );
+            for bad in FORBIDDEN {
+                assert!(!cmd.contains(bad), "{:?} contains {:?}", cmd, bad);
+            }
+        }
+    }
+
+    /// Without elevation the sshd probes cannot answer, and the panel has to
+    /// say why rather than implying the host is misconfigured.
+    #[test]
+    fn undetermined_checks_name_the_missing_elevation() {
+        for c in [
+            classify_password_auth(&Directive::Unknown, NOPRIV),
+            classify_root_login(&Directive::Unknown, NOPRIV),
+            classify_ssh_port(&Directive::Unknown, NOPRIV),
+            classify_firewall(None, None, None, NOPRIV),
+        ] {
+            assert_eq!(c.status, UNKNOWN);
+            assert!(
+                c.detail.as_deref().unwrap_or("").contains("no elevation"),
+                "{} does not explain the missing elevation",
+                c.name
+            );
+        }
+        // With elevation the same probes failing means something else, so the
+        // detail must not blame permissions.
+        let elevated = classify_firewall(None, None, None, PRIV);
+        assert!(!elevated.detail.unwrap().contains("no elevation"));
+    }
+
+    /// A failing check is the one a user most needs to act on, so it must not
+    /// be the one left without advice.
+    #[test]
+    fn failing_and_undetermined_checks_carry_advice() {
+        for c in every_check() {
+            if c.status == FAIL || c.status == UNKNOWN {
+                assert!(
+                    c.remediation
+                        .as_ref()
+                        .is_some_and(|r| !r.summary.is_empty()),
+                    "{} is {} with no remediation",
+                    c.name,
+                    c.status
+                );
+            }
+        }
+    }
+
     use super::*;
+
+    /// The two contexts the classifiers branch on. The family only selects
+    /// wording and remediation commands, so it is fixed here.
+    const PRIV: Ctx = Ctx {
+        family: Family::Debian,
+        has_privilege: true,
+    };
+    const NOPRIV: Ctx = Ctx {
+        family: Family::Debian,
+        has_privilege: false,
+    };
 
     fn status(check: &SecurityCheck) -> &str {
         check.status.as_str()
@@ -838,25 +1227,25 @@ mod tests {
         assert_eq!(
             status(&classify_password_auth(
                 &Directive::Value("no".into()),
-                true
+                PRIV
             )),
             PASS
         );
         assert_eq!(
             status(&classify_password_auth(
                 &Directive::Value("yes".into()),
-                true
+                PRIV
             )),
             FAIL
         );
         // was: false pass. "notset" contains "no", so an unset directive used to
         // report as disabled. The OpenSSH default is yes, so it is enabled.
         assert_eq!(
-            status(&classify_password_auth(&Directive::NotSet, true)),
+            status(&classify_password_auth(&Directive::NotSet, PRIV)),
             FAIL
         );
         assert_eq!(
-            status(&classify_password_auth(&Directive::Unknown, true)),
+            status(&classify_password_auth(&Directive::Unknown, PRIV)),
             UNKNOWN
         );
     }
@@ -864,27 +1253,27 @@ mod tests {
     #[test]
     fn root_login_classification() {
         assert_eq!(
-            status(&classify_root_login(&Directive::Value("no".into()), true)),
+            status(&classify_root_login(&Directive::Value("no".into()), PRIV)),
             PASS
         );
-        let keyonly = classify_root_login(&Directive::Value("prohibit-password".into()), true);
+        let keyonly = classify_root_login(&Directive::Value("prohibit-password".into()), PRIV);
         assert_eq!(status(&keyonly), PASS);
         assert_eq!(keyonly.message, "Root login requires key authentication");
         assert_eq!(
             status(&classify_root_login(
                 &Directive::Value("without-password".into()),
-                true
+                PRIV
             )),
             PASS
         );
         assert_eq!(
-            status(&classify_root_login(&Directive::Value("yes".into()), true)),
+            status(&classify_root_login(&Directive::Value("yes".into()), PRIV)),
             FAIL
         );
         // was: false pass, for the same "notset" reason.
-        assert_eq!(status(&classify_root_login(&Directive::NotSet, true)), WARN);
+        assert_eq!(status(&classify_root_login(&Directive::NotSet, PRIV)), WARN);
         assert_eq!(
-            status(&classify_root_login(&Directive::Unknown, true)),
+            status(&classify_root_login(&Directive::Unknown, PRIV)),
             UNKNOWN
         );
     }
@@ -892,37 +1281,37 @@ mod tests {
     #[test]
     fn ssh_port_classification_parses_numbers_instead_of_substrings() {
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("22".into()), true)),
+            status(&classify_ssh_port(&Directive::Value("22".into()), PRIV)),
             WARN
         );
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("2222".into()), true)),
+            status(&classify_ssh_port(&Directive::Value("2222".into()), PRIV)),
             PASS
         );
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("220".into()), true)),
+            status(&classify_ssh_port(&Directive::Value("220".into()), PRIV)),
             PASS
         );
         // was: false warn. 8022 contains "22" but is not the default port.
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("8022".into()), true)),
+            status(&classify_ssh_port(&Directive::Value("8022".into()), PRIV)),
             PASS
         );
         // was: false pass. 22 is listening even though 2222 contains "222".
         assert_eq!(
             status(&classify_ssh_port(
                 &Directive::Value("22 2222".into()),
-                true
+                PRIV
             )),
             WARN
         );
-        assert_eq!(status(&classify_ssh_port(&Directive::NotSet, true)), WARN);
+        assert_eq!(status(&classify_ssh_port(&Directive::NotSet, PRIV)), WARN);
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Unknown, true)),
+            status(&classify_ssh_port(&Directive::Unknown, PRIV)),
             UNKNOWN
         );
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("http".into()), true)),
+            status(&classify_ssh_port(&Directive::Value("http".into()), PRIV)),
             UNKNOWN
         );
     }
@@ -941,14 +1330,14 @@ mod tests {
     #[test]
     fn firewall_reports_unknown_when_no_probe_could_run() {
         // was: a hard "No active firewall detected" whenever sudo was unavailable.
-        assert_eq!(status(&classify_firewall(None, None, None, true)), UNKNOWN);
+        assert_eq!(status(&classify_firewall(None, None, None, PRIV)), UNKNOWN);
 
         assert_eq!(
-            classify_firewall(Some("Status: active"), None, None, true).message,
+            classify_firewall(Some("Status: active"), None, None, PRIV).message,
             "UFW firewall is active"
         );
         assert_eq!(
-            classify_firewall(Some("Status: inactive"), Some("running"), None, true).message,
+            classify_firewall(Some("Status: inactive"), Some("running"), None, PRIV).message,
             "firewalld is active"
         );
         // was: false pass. The old probe counted blank lines left by its filter.
@@ -957,25 +1346,28 @@ mod tests {
                 Some("Status: inactive"),
                 Some("not running"),
                 Some("0"),
-                true
+                PRIV
             )),
             FAIL
         );
         assert_eq!(
-            status(&classify_firewall(None, None, Some("7"), true)),
+            status(&classify_firewall(None, None, Some("7"), PRIV)),
             PASS
         );
     }
 
     #[test]
     fn failed_logins_take_max_of_available_sources() {
-        assert_eq!(status(&classify_failed_logins(Some("0"), Some("0"))), PASS);
-        let warn = classify_failed_logins(Some("2"), Some("4"));
+        assert_eq!(
+            status(&classify_failed_logins(Some("0"), Some("0"), PRIV)),
+            PASS
+        );
+        let warn = classify_failed_logins(Some("2"), Some("4"), PRIV);
         assert_eq!(status(&warn), WARN);
         assert_eq!(warn.message, "4 recent failed login attempts");
-        assert_eq!(status(&classify_failed_logins(Some("5"), None)), FAIL);
+        assert_eq!(status(&classify_failed_logins(Some("5"), None, PRIV)), FAIL);
         // was: false pass. An unreadable auth.log counted as zero failures.
-        assert_eq!(status(&classify_failed_logins(None, None)), UNKNOWN);
+        assert_eq!(status(&classify_failed_logins(None, None, PRIV)), UNKNOWN);
     }
 
     #[test]
@@ -992,10 +1384,10 @@ mod tests {
 
     #[test]
     fn security_updates_classification() {
-        let ok = classify_security_updates(0, "apt");
+        let ok = classify_security_updates(0, "apt", "sudo apt-get upgrade");
         assert_eq!(status(&ok), PASS);
         assert_eq!(ok.message, "No pending security updates (apt)");
-        let bad = classify_security_updates(7, "dnf");
+        let bad = classify_security_updates(7, "dnf", "sudo dnf upgrade --security");
         assert_eq!(status(&bad), FAIL);
         assert_eq!(bad.message, "7 security updates pending");
     }
@@ -1088,7 +1480,10 @@ mod tests {
             ("OS_ID", 0, "ubuntu"),
         ]);
         let sections = parse_audit_sections(&raw);
-        let report = audit_from_sections(&sections, classify_security_updates(0, "apt"));
+        let report = audit_from_sections(
+            &sections,
+            classify_security_updates(0, "apt", "sudo apt-get upgrade"),
+        );
 
         let by_name = |n: &str| -> SecurityCheck {
             report.checks.iter().find(|c| c.name == n).unwrap().clone()

@@ -99,6 +99,31 @@
                 class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono truncate"
                 :title="check.detail"
               >{{ check.detail }}</p>
+
+              <!-- What to do about it. Collapsed by default so the list stays
+                   scannable; a finding you are acting on is usually one. -->
+              <template v-if="check.remediation">
+                <button
+                  @click="toggle(check.name)"
+                  class="text-[10px] text-[#4daafc] hover:text-[#6fc0ff] mt-1 flex items-center gap-0.5"
+                >
+                  <ChevronRight
+                    :size="10"
+                    class="transition-transform"
+                    :class="isOpen(check.name) && 'rotate-90'"
+                  />
+                  What to do
+                </button>
+                <div v-if="isOpen(check.name)" class="mt-1 mb-0.5">
+                  <p class="text-[10px] text-[#a0a0a0] leading-relaxed">
+                    {{ check.remediation.summary }}
+                  </p>
+                  <pre
+                    v-if="check.remediation.command"
+                    class="mt-1 px-1.5 py-1 bg-[#252526] border border-[#3c3c3c] rounded text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap break-all"
+                  >{{ check.remediation.command }}</pre>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -108,9 +133,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight } from 'lucide-vue-next'
 
 const props = defineProps({
   hostId: {
@@ -186,6 +211,18 @@ function statusMeta(status) {
   return STATUS_META[status] || UNKNOWN_STATUS_META
 }
 
+/** Which findings have their guidance expanded, keyed by check name. */
+const expanded = reactive(new Set())
+
+function isOpen(name) {
+  return expanded.has(name)
+}
+
+function toggle(name) {
+  if (expanded.has(name)) expanded.delete(name)
+  else expanded.add(name)
+}
+
 function readFromCache() {
   if (!props.hostId) {
     report.value = null
@@ -194,6 +231,8 @@ function readFromCache() {
     lastUpdated.value = null
     return
   }
+  // A new report can renumber or drop checks, so stale expansions are cleared.
+  expanded.clear()
   const cached = store.getSecurityReport(props.hostId)
   if (cached) {
     report.value = cached.report
