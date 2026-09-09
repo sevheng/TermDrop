@@ -72,7 +72,7 @@ We use the standard fork-and-pull workflow:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18 or later
+- [Node.js](https://nodejs.org/) 24 or later (see `.nvmrc`)
 - [Rust](https://rustup.rs/) stable toolchain
 - A GitHub account
 
@@ -133,7 +133,7 @@ ssh-client/
 └── README.md
 ```
 
-- Frontend code lives in `src/` and uses Vue 3 + TypeScript.
+- Frontend code lives in `src/` and uses Vue 3 with plain JavaScript (`<script setup>`).
 - Backend code and native commands live in `src-tauri/src/` and are written in Rust.
 
 ---
@@ -172,6 +172,7 @@ Use descriptive branch names:
 
 Before opening a pull request, please:
 
+- [ ] Run `npm run lint && npm test` and `cargo test` (in `src-tauri/`)
 - [ ] Build the project successfully with `npm run tauri build`
 - [ ] Verify the dev app runs with `npm run tauri dev`
 - [ ] Update relevant documentation if your change affects behavior

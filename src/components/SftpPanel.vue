@@ -333,6 +333,7 @@ import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
+import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 
 const props = defineProps({
   sftpSessionId: {
@@ -1146,18 +1147,5 @@ function onBulkDownloadFromMenu() {
 function onBulkDeleteFromMenu() {
   contextMenu.value.show = false
   bulkDelete()
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
-}
-
-function formatSpeed(bytesPerSec) {
-  if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s'
-  if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s'
-  return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
 }
 </script>

@@ -149,6 +149,7 @@ import {
 } from 'lucide-vue-next'
 import VirtualList from './VirtualList.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import { shellEscape } from '../utils/shell.js'
 
 const props = defineProps({
   hostId: {
@@ -175,12 +176,6 @@ const confirmDialog = ref({
   danger: false,
   onConfirm: () => {},
 })
-
-function shellEscape(s) {
-  if (!s) return "''"
-  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
-  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
-}
 
 async function loadContainers(silent = false) {
   if (!props.hostId) return

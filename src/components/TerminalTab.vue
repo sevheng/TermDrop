@@ -322,6 +322,8 @@ import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
+import { formatBytes, formatRate } from '../utils/format.js'
+import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 
@@ -744,12 +746,6 @@ async function closeDockerPane() {
   dockerPane.value.following = false
 }
 
-function shellEscape(s) {
-  if (!s) return "''"
-  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
-  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
-}
-
 async function toggleFollow() {
   if (!dockerPane.value.show || dockerPane.value.type !== 'logs') return
   const following = dockerPane.value.following
@@ -765,20 +761,6 @@ function onDockerPaneOpen(event) {
   if (event.detail.sessionId === props.sessionId) {
     openDockerPane(event.detail)
   }
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
-}
-
-function formatRate(bytesPerSec) {
-  const abs = Math.abs(bytesPerSec)
-  if (abs < 1024) return bytesPerSec.toFixed(0) + ' B/s'
-  if (abs < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s'
-  return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
 }
 
 function showTooltip(event, text) {

@@ -96,7 +96,7 @@ Pre-built bundles are available on [GitHub Releases](https://github.com/sevheng/
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+
+- [Node.js](https://nodejs.org/) 24 (see `.nvmrc`)
 - [Rust](https://rustup.rs/) stable
 
 ### Run locally
