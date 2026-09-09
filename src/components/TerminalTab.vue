@@ -315,13 +315,14 @@ import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
-import { formatBytes, formatRate } from '../utils/format.js'
+import { formatBytes } from '../utils/format.js'
 import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { createTerminalInstance, loadTerminalFontSize } from '../composables/useXtermInstance.js'
+import { useHostStatusPolling } from '../composables/useHostStatusPolling.js'
 
 const props = defineProps({
   sessionId: {
@@ -347,7 +348,6 @@ let terminal = null // createTerminalInstance() result
 let term = null
 let fitAddon = null
 let searchAddon = null
-let statusInterval = null
 
 const isDisconnected = ref(false)
 
@@ -376,16 +376,21 @@ const searchQuery = ref('')
 const searchCaseSensitive = ref(false)
 
 const statusExpanded = ref(false)
-const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' })
-const statusLoading = ref(false)
-const statusError = ref('')
-
 const sysTab = ref('processes')
-const processes = ref([])
-const network = ref(null)
-const diskInfo = ref(null)
-const sysLoading = ref(false)
-let sysPollInterval = null
+const {
+  status,
+  statusLoading,
+  statusError,
+  startStatusPolling,
+  stopStatusPolling,
+  resetStatus,
+  processes,
+  network,
+  diskInfo,
+  sysLoading,
+  startSysPolling,
+  stopSysPolling,
+} = useHostStatusPolling({ hostId: () => props.hostId, isDisconnected, store })
 
 const visiblePorts = computed(() => network.value?.ports?.slice(0, 8) ?? [])
 const visibleInterfaces = computed(() => network.value?.interfaces?.filter(i => i.name !== 'lo').slice(0, 4) ?? [])
@@ -698,91 +703,6 @@ function hideTooltip() {
   tooltip.value.show = false
 }
 
-async function fetchSystemStatus() {
-  if (!props.hostId || isDisconnected.value) return
-  statusLoading.value = true
-  try {
-    const result = await invoke('get_system_stats', { hostId: props.hostId })
-
-    // Compute network rates
-    let netDown = ''
-    let netUp = ''
-    if (result.netdev) {
-      let rxTotal = 0
-      let txTotal = 0
-      for (const line of result.netdev.split('\n')) {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 3) {
-          const iface = parts[0].replace(':', '')
-          if (iface === 'lo') continue
-          const rx = parseInt(parts[1]) || 0
-          const tx = parseInt(parts[2]) || 0
-          rxTotal += rx
-          txTotal += tx
-        }
-      }
-      const now = Date.now()
-      const prev = store.getNetStats(props.hostId)
-      if (prev.time > 0 && prev.rx > 0 && prev.tx > 0) {
-        const elapsed = (now - prev.time) / 1000
-        if (elapsed > 0) {
-          const rxRate = (rxTotal - prev.rx) / elapsed
-          const txRate = (txTotal - prev.tx) / elapsed
-          netDown = formatRate(rxRate)
-          netUp = formatRate(txRate)
-        }
-      } else {
-        // First fetch: show cumulative totals instead of dash
-        netDown = formatBytes(rxTotal)
-        netUp = formatBytes(txTotal)
-      }
-      store.setNetStats(props.hostId, { rx: rxTotal, tx: txTotal, time: now })
-    }
-
-    const osParts = [result.os, result.kernel, result.arch].filter(Boolean)
-    const data = {
-      load: result.load || '',
-      ram: result.ram || '',
-      disk: result.disk || '',
-      uptime: result.uptime || '',
-      os: osParts.join(' · '),
-      cores: result.cores || '',
-      netDown,
-      netUp,
-    }
-    status.value = data
-    store.setSystemStatus(props.hostId, data)
-    statusError.value = ''
-  } catch (err) {
-    console.warn('get_system_stats failed:', err)
-    statusError.value = String(err).replace(/^Error: /, '')
-  } finally {
-    statusLoading.value = false
-  }
-}
-
-function startStatusPolling() {
-  if (statusInterval) clearInterval(statusInterval)
-  if (!props.hostId) return
-  // Don't poll when page is hidden
-  if (document.hidden) return
-  // Read from cache immediately
-  const cached = store.getSystemStatus(props.hostId)
-  if (cached) {
-    status.value = cached
-  }
-  // Fetch immediately, then every 5s
-  fetchSystemStatus()
-  statusInterval = setInterval(fetchSystemStatus, 5000)
-}
-
-function stopStatusPolling() {
-  if (statusInterval) {
-    clearInterval(statusInterval)
-    statusInterval = null
-  }
-}
-
 function onVisibilityChange() {
   if (document.hidden) {
     stopStatusPolling()
@@ -792,43 +712,6 @@ function onVisibilityChange() {
     if (statusExpanded.value) {
       startSysPolling()
     }
-  }
-}
-
-async function fetchPanelData(includeDisk = false) {
-  if (!props.hostId) return
-  try {
-    const panel = await invoke('get_system_panel', { hostId: props.hostId })
-    processes.value = panel.processes || []
-    network.value = panel.network || null
-    if (includeDisk) {
-      diskInfo.value = panel.disk || null
-    }
-  } catch (err) {
-    console.error('get_system_panel failed:', err)
-  }
-}
-
-async function loadSystemData() {
-  if (!props.hostId) return
-  sysLoading.value = true
-  await fetchPanelData(true)
-  sysLoading.value = false
-}
-
-function startSysPolling() {
-  if (sysPollInterval) clearInterval(sysPollInterval)
-  if (!props.hostId) return
-  loadSystemData()
-  sysPollInterval = setInterval(() => {
-    fetchPanelData(false)
-  }, 3000)
-}
-
-function stopSysPolling() {
-  if (sysPollInterval) {
-    clearInterval(sysPollInterval)
-    sysPollInterval = null
   }
 }
 
@@ -891,8 +774,7 @@ async function initTerminal() {
     onDisconnected: () => {
       isDisconnected.value = true
       stopStatusPolling()
-      status.value = { load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' }
-      statusError.value = ''
+      resetStatus()
       closeDockerPane()
     },
     onReconnected: () => {
