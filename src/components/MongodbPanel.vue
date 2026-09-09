@@ -340,9 +340,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '../utils/invoke.js'
-import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
   Database,
@@ -356,6 +355,7 @@ import {
 } from 'lucide-vue-next'
 import DbTree from './DbTree.vue'
 import { toast } from '../utils/toast.js'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
 
 const props = defineProps({
   hostId: { type: Number, required: true },
@@ -919,8 +919,7 @@ async function cancelOperation() {
   }
 }
 
-let unlistenProgress = null
-let unlistenCancelled = null
+const listeners = useListenerGroup()
 
 onMounted(async () => {
   await loadHost()
@@ -931,7 +930,7 @@ onMounted(async () => {
     await loadLocalDatabases()
   }
 
-  unlistenProgress = await listen('mongodb-sync-progress', (event) => {
+  await listeners.listen('mongodb-sync-progress', (event) => {
     const p = event.payload
     if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
     syncProgress.value = {
@@ -946,16 +945,11 @@ onMounted(async () => {
     }
   })
 
-  unlistenCancelled = await listen('mongodb-sync-cancelled', (event) => {
+  await listeners.listen('mongodb-sync-cancelled', (event) => {
     const p = event.payload
     if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
     resetOperationState()
   })
-})
-
-onUnmounted(() => {
-  if (unlistenProgress) unlistenProgress()
-  if (unlistenCancelled) unlistenCancelled()
 })
 
 watch(() => props.hostId, async () => {

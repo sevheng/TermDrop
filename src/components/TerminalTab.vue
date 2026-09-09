@@ -316,7 +316,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { CanvasAddon } from '@xterm/addon-canvas'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { listen } from '@tauri-apps/api/event'
 import { Channel } from '@tauri-apps/api/core'
 import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
@@ -329,6 +328,7 @@ import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 import { toast } from '../utils/toast.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
 
 const props = defineProps({
   sessionId: {
@@ -375,10 +375,7 @@ let dockerFitAddon = null
 let dockerCanvasAddon = null
 let dockerWebLinksAddon = null
 let dockerPaneResizeObserver = null
-let unlistenPtyData = null
-let unlistenPtyError = null
-let unlistenPtyConnected = null
-let unlistenPtyDisconnected = null
+const ptyListeners = useListenerGroup()
 let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl)
@@ -629,21 +626,21 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   // Listen for PTY data
-  unlistenPtyData = await listen('exec-pty-data', (event) => {
+  await ptyListeners.listen('exec-pty-data', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
       dockerTerm.write(payload.data)
     }
   })
 
-  unlistenPtyError = await listen('exec-pty-error', (event) => {
+  await ptyListeners.listen('exec-pty-error', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
       dockerTerm.writeln(`\r\n\x1b[31mError: ${payload.error}\x1b[0m`)
     }
   })
 
-  unlistenPtyConnected = await listen('exec-pty-connected', (event) => {
+  await ptyListeners.listen('exec-pty-connected', (event) => {
     if (event.payload === ptySessionId) {
       setTimeout(() => {
         if (dockerFitAddon) dockerFitAddon.fit()
@@ -651,7 +648,7 @@ async function openDockerPane({ type, containerId, containerName, command }) {
     }
   })
 
-  unlistenPtyDisconnected = await listen('exec-pty-disconnected', (event) => {
+  await ptyListeners.listen('exec-pty-disconnected', (event) => {
     if (event.payload === ptySessionId) {
       dockerPane.value.following = false
       // Auto-close exec panes when the shell exits
@@ -710,10 +707,7 @@ async function closeDockerPane() {
     dockerPaneResizeObserver = null
   }
 
-  if (unlistenPtyData) { unlistenPtyData(); unlistenPtyData = null }
-  if (unlistenPtyError) { unlistenPtyError(); unlistenPtyError = null }
-  if (unlistenPtyConnected) { unlistenPtyConnected(); unlistenPtyConnected = null }
-  if (unlistenPtyDisconnected) { unlistenPtyDisconnected(); unlistenPtyDisconnected = null }
+  ptyListeners.dispose()
 
   if (dockerTerm) {
     dockerTerm.dispose()

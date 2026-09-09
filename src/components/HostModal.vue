@@ -160,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Eye, EyeOff, Loader2, FileSearch } from 'lucide-vue-next'
 
@@ -322,5 +322,9 @@ watch(() => props.show, (visible) => {
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>

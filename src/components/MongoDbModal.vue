@@ -320,7 +320,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue'
+import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
 import { Loader2, Eye, EyeOff } from 'lucide-vue-next'
 import { parseMongoUri, buildMongoUri, parseUriToForm } from '../composables/useMongoUri.js'
 
@@ -603,5 +603,9 @@ watch(() => props.show, (visible) => {
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>

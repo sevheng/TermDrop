@@ -316,7 +316,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { listen } from '@tauri-apps/api/event'
 import { invoke } from '../utils/invoke.js'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -328,6 +327,7 @@ import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
 
 const props = defineProps({
   sftpSessionId: {
@@ -355,8 +355,17 @@ const filterQuery = ref('')
 const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
 
-let unlistenProgress = null
-let unlistenFileDrop = null
+const listeners = useListenerGroup()
+
+// Transfer rows linger 3s after they finish; timers are cleared on unmount.
+const transferTimers = new Set()
+function removeTransferLater(file) {
+  const timer = setTimeout(() => {
+    transferTimers.delete(timer)
+    transfers.value = transfers.value.filter(t => t.file !== file)
+  }, 3000)
+  transferTimers.add(timer)
+}
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
 
@@ -690,7 +699,7 @@ onMounted(async () => {
   }
   await resolveHomeDir()
   await loadFiles()
-  unlistenProgress = await listen('sftp-progress', (event) => {
+  await listeners.listen('sftp-progress', (event) => {
     const p = event.payload
     const now = Date.now()
     const fileName = p.file.split('/').pop() || p.file
@@ -706,9 +715,7 @@ onMounted(async () => {
       existing.lastUpdate = now
       if (existing.bytes >= existing.total && !existing.done) {
         existing.done = true
-        setTimeout(() => {
-          transfers.value = transfers.value.filter(t => t.file !== p.file)
-        }, 3000)
+        removeTransferLater(p.file)
       }
     } else {
       const isDone = p.total_bytes === 0 || p.bytes_transferred >= p.total_bytes
@@ -722,13 +729,11 @@ onMounted(async () => {
         done: isDone,
       })
       if (isDone) {
-        setTimeout(() => {
-          transfers.value = transfers.value.filter(t => t.file !== p.file)
-        }, 3000)
+        removeTransferLater(p.file)
       }
     }
   })
-  unlistenFileDrop = await listen('tauri://drag-drop', (event) => {
+  await listeners.listen('tauri://drag-drop', (event) => {
     const payload = event.payload
     const paths = payload?.paths
     if (paths && paths.length > 0) {
@@ -740,8 +745,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (unlistenProgress) unlistenProgress()
-  if (unlistenFileDrop) unlistenFileDrop()
+  transferTimers.forEach(clearTimeout)
+  transferTimers.clear()
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('contextmenu', closeMenu, true)
 })
@@ -825,9 +830,7 @@ async function onDownloadDir() {
     if (t) {
       t.done = true
       t.fileName = `📁 ${file.name} (saved)`
-      setTimeout(() => {
-        transfers.value = transfers.value.filter(x => x.file !== transferKey)
-      }, 3000)
+      removeTransferLater(transferKey)
     }
     toast(`Downloaded folder to ${savedPath}`, 'success')
   } catch (e) {
@@ -836,9 +839,7 @@ async function onDownloadDir() {
     if (t) {
       t.done = true
       t.fileName = `📁 ${file.name} (failed)`
-      setTimeout(() => {
-        transfers.value = transfers.value.filter(x => x.file !== transferKey)
-      }, 3000)
+      removeTransferLater(transferKey)
     }
     toast('Download folder failed: ' + e, 'error')
   }

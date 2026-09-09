@@ -605,6 +605,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('click', onWindowClick)
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 })
 
 function openModal() {
