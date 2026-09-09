@@ -45,6 +45,15 @@
         </div>
         <p class="text-[10px] text-[#6e6e6e] mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
       </div>
+      <div v-else-if="daemonNotRunning" class="flex flex-col items-center justify-center py-8 px-4 text-center">
+        <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
+        <p class="text-xs text-[#cccccc] mb-1">Docker daemon is not running</p>
+        <p class="text-[10px] text-[#858585] mb-2">Docker is installed but the service is stopped</p>
+        <div class="bg-[#252526] border border-[#3c3c3c] rounded px-3 py-2 text-left max-w-xs">
+          <p class="text-[10px] text-[#6e6e6e] mb-1">Start it by running in terminal:</p>
+          <code class="text-[10px] text-[#89d185] font-mono block">sudo systemctl start docker</code>
+        </div>
+      </div>
       <div v-else-if="permissionDenied" class="flex flex-col items-center justify-center py-8 px-4 text-center">
         <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
         <p class="text-xs text-[#cccccc] mb-1">Docker permission denied</p>
@@ -167,6 +176,7 @@ const loading = ref(false)
 const showAll = ref(false)
 const dockerNotInstalled = ref(false)
 const permissionDenied = ref(false)
+const daemonNotRunning = ref(false)
 const installing = ref(false)
 let refreshInterval = null
 
@@ -176,17 +186,17 @@ const { confirmDialog, openConfirm } = useConfirmDialog()
 async function loadContainers(silent = false) {
   if (!props.hostId) return
   if (!silent) loading.value = true
-  dockerNotInstalled.value = false
-  permissionDenied.value = false
   try {
     containers.value = await invoke('docker_ps', { hostId: props.hostId, all: showAll.value })
+    dockerNotInstalled.value = false
+    permissionDenied.value = false
+    daemonNotRunning.value = false
   } catch (err) {
     const errStr = String(err)
-    if (errStr.includes('DOCKER_NOT_INSTALLED')) {
-      dockerNotInstalled.value = true
-    } else if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
-      permissionDenied.value = true
-    } else {
+    dockerNotInstalled.value = errStr.includes('DOCKER_NOT_INSTALLED')
+    permissionDenied.value = errStr.includes('DOCKER_PERMISSION_DENIED')
+    daemonNotRunning.value = errStr.includes('DOCKER_DAEMON_NOT_RUNNING')
+    if (!dockerNotInstalled.value && !permissionDenied.value && !daemonNotRunning.value) {
       console.error('docker_ps failed:', err)
     }
     containers.value = []
@@ -194,8 +204,21 @@ async function loadContainers(silent = false) {
   if (!silent) loading.value = false
 }
 
-async function installDocker() {
+function installDocker() {
   if (!props.hostId) return
+  // This pipes a script from the internet into a root shell on the remote
+  // host, so it needs explicit consent rather than a single click.
+  openConfirm({
+    title: 'Install Docker',
+    message:
+      'This runs "curl -fsSL https://get.docker.com | sh" on the remote host, ' +
+      'which downloads and executes an installation script with root privileges. Continue?',
+    danger: true,
+    onConfirm: runDockerInstall,
+  })
+}
+
+async function runDockerInstall() {
   installing.value = true
   try {
     await invoke('docker_install', { hostId: props.hostId })
@@ -213,6 +236,10 @@ function handleDockerError(err, action) {
   const errStr = String(err)
   if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
     toast('Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', 'error')
+  } else if (errStr.includes('DOCKER_DAEMON_NOT_RUNNING')) {
+    toast('Docker daemon is not running. Start it with: sudo systemctl start docker', 'error')
+  } else if (errStr.includes('DOCKER_NOT_INSTALLED')) {
+    toast('Docker is not installed on this host', 'error')
   } else {
     toast(`${action} failed: ${errStr}`, 'error')
   }

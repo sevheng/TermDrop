@@ -4,11 +4,34 @@ use ssh2::Session;
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
 pub const DOCKER_PERMISSION_DENIED: &str = "DOCKER_PERMISSION_DENIED";
+pub const DOCKER_DAEMON_NOT_RUNNING: &str = "DOCKER_DAEMON_NOT_RUNNING";
 
-fn is_permission_error(err: &str) -> bool {
-    err.to_lowercase().contains("permission denied")
-        || err.to_lowercase().contains("connect: permission denied")
-        || err.to_lowercase().contains("dial unix")
+/// Map a failed `docker` invocation to one of the sentinels the UI knows how
+/// to explain, or `None` to pass the original error through.
+///
+/// Both the permission-denied and daemon-down messages mention `dial unix`,
+/// so matching on that alone told users to join the docker group when the
+/// daemon was simply stopped. The distinguishing text is what follows
+/// `connect:`, or the daemon's own "Is the docker daemon running?" hint.
+fn classify_docker_error(err: &str) -> Option<&'static str> {
+    let lower = err.to_lowercase();
+
+    if lower.contains("command not found")
+        || lower.contains("docker: not found")
+        || lower.contains("executable file not found")
+    {
+        return Some(DOCKER_NOT_INSTALLED);
+    }
+    if lower.contains("permission denied") {
+        return Some(DOCKER_PERMISSION_DENIED);
+    }
+    if lower.contains("is the docker daemon running")
+        || lower.contains("cannot connect to the docker daemon")
+        || lower.contains("connection refused")
+    {
+        return Some(DOCKER_DAEMON_NOT_RUNNING);
+    }
+    None
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -28,8 +51,8 @@ fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
     match run_command(session, &command) {
         Ok(output) => Ok(output),
         Err(e) => {
-            if is_permission_error(&e) {
-                Err(DOCKER_PERMISSION_DENIED.to_string())
+            if let Some(sentinel) = classify_docker_error(&e) {
+                Err(sentinel.to_string())
             } else {
                 Err(e)
             }
@@ -45,18 +68,9 @@ pub fn install_docker(session: &Session) -> Result<String, String> {
 pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String> {
     let flag = if all { "-a" } else { "" };
     let format = "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.CreatedAt}}";
-    let output = match run_docker_command(session, &format!("ps {} --format '{}'", flag, format)) {
-        Ok(out) => out,
-        Err(e) => {
-            if e.contains("not found")
-                || e.contains("No such file")
-                || e.contains("command not found")
-            {
-                return Err(DOCKER_NOT_INSTALLED.to_string());
-            }
-            return Err(e);
-        }
-    };
+    // run_docker_command already maps a missing binary, a stopped daemon, and
+    // a permissions problem to their sentinels.
+    let output = run_docker_command(session, &format!("ps {} --format '{}'", flag, format))?;
 
     Ok(parse_docker_ps(&output))
 }
@@ -144,6 +158,50 @@ mod tests {
         assert_eq!(c[2].ports, "");
         assert_eq!(c[2].created, "");
         assert!(c[2].running);
+    }
+
+    #[test]
+    fn classifies_the_three_docker_failure_modes() {
+        // was: "dial unix" matched both, so a stopped daemon told the user to
+        // join the docker group.
+        assert_eq!(
+            classify_docker_error(
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. \
+                 Is the docker daemon running?"
+            ),
+            Some(DOCKER_DAEMON_NOT_RUNNING)
+        );
+        assert_eq!(
+            classify_docker_error("dial unix /var/run/docker.sock: connect: connection refused"),
+            Some(DOCKER_DAEMON_NOT_RUNNING)
+        );
+        assert_eq!(
+            classify_docker_error(
+                "permission denied while trying to connect to the Docker daemon socket at \
+                 unix:///var/run/docker.sock: dial unix /var/run/docker.sock: connect: permission denied"
+            ),
+            Some(DOCKER_PERMISSION_DENIED)
+        );
+        assert_eq!(
+            classify_docker_error("bash: docker: command not found"),
+            Some(DOCKER_NOT_INSTALLED)
+        );
+        assert_eq!(
+            classify_docker_error("sh: 1: docker: not found"),
+            Some(DOCKER_NOT_INSTALLED)
+        );
+    }
+
+    #[test]
+    fn unrelated_errors_pass_through_unchanged() {
+        // was: any stderr containing "not found" became DOCKER_NOT_INSTALLED,
+        // so a missing container was reported as a missing Docker install.
+        assert_eq!(
+            classify_docker_error("Error response from daemon: No such container: web"),
+            None
+        );
+        assert_eq!(classify_docker_error("network mynet not found"), None);
+        assert_eq!(classify_docker_error(""), None);
     }
 
     #[test]
