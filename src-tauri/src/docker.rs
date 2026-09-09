@@ -1,16 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
 use std::io::Read;
-use std::time::Instant;
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
 pub const DOCKER_PERMISSION_DENIED: &str = "DOCKER_PERMISSION_DENIED";
-
-#[derive(Debug, Clone)]
-pub struct CachedDockerInfo {
-    pub containers: Vec<Container>,
-    pub cached_at: Instant,
-}
 
 fn is_permission_error(err: &str) -> bool {
     err.to_lowercase().contains("permission denied")

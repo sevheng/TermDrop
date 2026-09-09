@@ -24,8 +24,9 @@ mod ssh;
 mod ssh_config_parser;
 mod system;
 
-pub struct CachedSecurityReport {
-    report: security::SecurityReport,
+/// A per-host cached value with its fetch time.
+pub struct Cached<T> {
+    value: T,
     cached_at: std::time::Instant,
 }
 
@@ -40,9 +41,9 @@ pub struct AppState {
     exec_sessions: Mutex<HashMap<i64, Arc<Mutex<ssh2::Session>>>>,
     sftp_sessions: Mutex<HashMap<String, Arc<sftp::SftpSessionHandle>>>,
     exec_pty_sessions: Mutex<HashMap<String, ssh::ExecPtyHandle>>,
-    docker_cache: Arc<Mutex<HashMap<i64, docker::CachedDockerInfo>>>,
+    docker_cache: Arc<Mutex<HashMap<i64, Cached<Vec<docker::Container>>>>>,
     docker_ps_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
-    security_report_cache: Arc<Mutex<HashMap<i64, CachedSecurityReport>>>,
+    security_report_cache: Arc<Mutex<HashMap<i64, Cached<security::SecurityReport>>>>,
     security_report_fetching: Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
     forward_manager: port_forward::ForwardManager,
     pub mongo_ops: Arc<Mutex<HashMap<String, MongoOpHandle>>>,
@@ -173,6 +174,101 @@ where
         secs,
     )
     .await
+}
+
+/// Per-host cache with request coalescing, shared by docker_ps and the
+/// security audit. Returns the cached value while it is younger than
+/// `fresh_secs`; while younger than `stale_secs` returns it and refreshes in
+/// the background; otherwise blocks on `fetch`. `force` skips both reads.
+#[allow(clippy::too_many_arguments)]
+async fn cached_per_host<T, F>(
+    state: &State<'_, AppState>,
+    cache: &Arc<Mutex<HashMap<i64, Cached<T>>>>,
+    fetching: &Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    host_id: i64,
+    fresh_secs: u64,
+    stale_secs: u64,
+    force: bool,
+    fetch: F,
+) -> Result<T, String>
+where
+    T: Clone + Send + 'static,
+    F: Fn(&ssh2::Session) -> Result<T, String> + Clone + Send + 'static,
+{
+    // Fast path: fresh cache
+    if !force {
+        let cached = cache.lock().map_err(|e| e.to_string())?;
+        if let Some(c) = cached.get(&host_id) {
+            if c.cached_at.elapsed().as_secs() < fresh_secs {
+                return Ok(c.value.clone());
+            }
+        }
+    }
+
+    // Serialize fetches per host (request coalescing)
+    let fetch_lock = {
+        let mut fetching = fetching.lock().map_err(|e| e.to_string())?;
+        fetching
+            .entry(host_id)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+
+    let _guard = fetch_lock.lock().await;
+
+    // Re-check cache after acquiring lock (another request may have updated it)
+    if !force {
+        let cached = cache.lock().map_err(|e| e.to_string())?;
+        if let Some(c) = cached.get(&host_id) {
+            let elapsed = c.cached_at.elapsed().as_secs();
+            if elapsed < fresh_secs {
+                return Ok(c.value.clone());
+            }
+            if elapsed < stale_secs {
+                // Return stale immediately, refresh in background
+                let cache_clone = cache.clone();
+                let session_arc = exec_session(state, host_id, "No active session for this host")?;
+                let fetch = fetch.clone();
+                tokio::task::spawn(async move {
+                    let result = with_timeout(
+                        move || {
+                            let session = session_arc.lock().map_err(|e| e.to_string())?;
+                            fetch(&session)
+                        },
+                        60,
+                    )
+                    .await;
+                    if let Ok(value) = result {
+                        let mut cache = cache_clone.lock().unwrap();
+                        cache.insert(
+                            host_id,
+                            Cached {
+                                value,
+                                cached_at: std::time::Instant::now(),
+                            },
+                        );
+                    }
+                });
+                return Ok(c.value.clone());
+            }
+        }
+    }
+
+    // Cache is empty or very stale — block and fetch
+    let value = with_exec_session(state, host_id, 60, move |session| fetch(session)).await?;
+
+    {
+        let mut cached = cache.lock().map_err(|e| e.to_string())?;
+        cached.insert(
+            host_id,
+            Cached {
+                value: value.clone(),
+                cached_at: std::time::Instant::now(),
+            },
+        );
+    }
+
+    Ok(value)
 }
 
 #[tauri::command]
@@ -976,88 +1072,17 @@ async fn docker_ps(
     host_id: i64,
     all: bool,
 ) -> Result<Vec<docker::Container>, String> {
-    const CACHE_FRESH_SECS: u64 = 5;
-    const CACHE_STALE_SECS: u64 = 15;
-
-    // Fast path: fresh cache
-    {
-        let cache = state.docker_cache.lock().map_err(|e| e.to_string())?;
-        if let Some(info) = cache.get(&host_id) {
-            if info.cached_at.elapsed().as_secs() < CACHE_FRESH_SECS {
-                return Ok(info.containers.clone());
-            }
-        }
-    }
-
-    // Serialize fetches per host (request coalescing)
-    let fetch_lock = {
-        let mut fetching = state.docker_ps_fetching.lock().map_err(|e| e.to_string())?;
-        fetching
-            .entry(host_id)
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
-
-    let _guard = fetch_lock.lock().await;
-
-    // Re-check cache after acquiring lock (another request may have updated it)
-    {
-        let cache = state.docker_cache.lock().map_err(|e| e.to_string())?;
-        if let Some(info) = cache.get(&host_id) {
-            let elapsed = info.cached_at.elapsed().as_secs();
-            if elapsed < CACHE_FRESH_SECS {
-                return Ok(info.containers.clone());
-            }
-            if elapsed < CACHE_STALE_SECS {
-                // Return stale immediately, refresh in background
-                let cache_clone = state.docker_cache.clone();
-                let session_arc = exec_session(&state, host_id, "No active session for this host")?;
-                tokio::task::spawn(async move {
-                    match with_timeout(
-                        move || {
-                            let session = session_arc.lock().map_err(|e| e.to_string())?;
-                            docker::docker_ps(&session, all).map_err(|e| e.to_string())
-                        },
-                        60,
-                    )
-                    .await
-                    {
-                        Ok(containers) => {
-                            let mut cache = cache_clone.lock().unwrap();
-                            cache.insert(
-                                host_id,
-                                docker::CachedDockerInfo {
-                                    containers,
-                                    cached_at: std::time::Instant::now(),
-                                },
-                            );
-                        }
-                        _ => {}
-                    }
-                });
-                return Ok(info.containers.clone());
-            }
-        }
-    }
-
-    // Cache is empty or very stale — block and fetch
-    let containers = with_exec_session(&state, host_id, 60, move |session| {
-        docker::docker_ps(session, all)
-    })
-    .await?;
-
-    {
-        let mut cache = state.docker_cache.lock().map_err(|e| e.to_string())?;
-        cache.insert(
-            host_id,
-            docker::CachedDockerInfo {
-                containers: containers.clone(),
-                cached_at: std::time::Instant::now(),
-            },
-        );
-    }
-
-    Ok(containers)
+    cached_per_host(
+        &state,
+        &state.docker_cache,
+        &state.docker_ps_fetching,
+        host_id,
+        5,
+        15,
+        false,
+        move |session| docker::docker_ps(session, all),
+    )
+    .await
 }
 
 fn invalidate_docker_cache(state: &State<'_, AppState>, host_id: i64) -> Result<(), String> {
@@ -1132,100 +1157,17 @@ async fn run_security_audit(
     host_id: i64,
     force: bool,
 ) -> Result<security::SecurityReport, String> {
-    const CACHE_FRESH_SECS: u64 = 30;
-    const CACHE_STALE_SECS: u64 = 300;
-
-    // Fast path: fresh cache
-    if !force {
-        let cache = state
-            .security_report_cache
-            .lock()
-            .map_err(|e| e.to_string())?;
-        if let Some(cached) = cache.get(&host_id) {
-            if cached.cached_at.elapsed().as_secs() < CACHE_FRESH_SECS {
-                return Ok(cached.report.clone());
-            }
-        }
-    }
-
-    // Serialize fetches per host (request coalescing)
-    let fetch_lock = {
-        let mut fetching = state
-            .security_report_fetching
-            .lock()
-            .map_err(|e| e.to_string())?;
-        fetching
-            .entry(host_id)
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
-
-    let _guard = fetch_lock.lock().await;
-
-    // Re-check cache after acquiring lock
-    if !force {
-        let cache = state
-            .security_report_cache
-            .lock()
-            .map_err(|e| e.to_string())?;
-        if let Some(cached) = cache.get(&host_id) {
-            let elapsed = cached.cached_at.elapsed().as_secs();
-            if elapsed < CACHE_FRESH_SECS {
-                return Ok(cached.report.clone());
-            }
-            if elapsed < CACHE_STALE_SECS {
-                // Return stale immediately, refresh in background
-                let cache_clone = state.security_report_cache.clone();
-                let session_arc = exec_session(&state, host_id, "No active session for this host")?;
-                tokio::task::spawn(async move {
-                    match with_timeout(
-                        move || {
-                            let session = session_arc.lock().map_err(|e| e.to_string())?;
-                            security::run_security_audit(&session).map_err(|e| e.to_string())
-                        },
-                        60,
-                    )
-                    .await
-                    {
-                        Ok(report) => {
-                            let mut cache = cache_clone.lock().unwrap();
-                            cache.insert(
-                                host_id,
-                                CachedSecurityReport {
-                                    report,
-                                    cached_at: std::time::Instant::now(),
-                                },
-                            );
-                        }
-                        _ => {}
-                    }
-                });
-                return Ok(cached.report.clone());
-            }
-        }
-    }
-
-    // Cache is empty or very stale — block and fetch
-    let report = with_exec_session(&state, host_id, 60, |session| {
-        security::run_security_audit(session)
-    })
-    .await?;
-
-    {
-        let mut cache = state
-            .security_report_cache
-            .lock()
-            .map_err(|e| e.to_string())?;
-        cache.insert(
-            host_id,
-            CachedSecurityReport {
-                report: report.clone(),
-                cached_at: std::time::Instant::now(),
-            },
-        );
-    }
-
-    Ok(report)
+    cached_per_host(
+        &state,
+        &state.security_report_cache,
+        &state.security_report_fetching,
+        host_id,
+        30,
+        300,
+        force,
+        |session| security::run_security_audit(session),
+    )
+    .await
 }
 
 #[tauri::command]
