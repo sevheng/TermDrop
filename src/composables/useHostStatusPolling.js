@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { invoke } from '../utils/invoke.js'
 import { formatBytes, formatRate } from '../utils/format.js'
 
@@ -50,7 +50,7 @@ export function useHostStatusPolling({ hostId, isDisconnected, store }) {
   const statusError = ref('')
   let statusInterval = null
 
-  const processes = ref([])
+  const processes = shallowRef([]) // replaced wholesale every poll
   const network = ref(null)
   const diskInfo = ref(null)
   const sysLoading = ref(false)

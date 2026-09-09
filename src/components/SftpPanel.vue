@@ -242,7 +242,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, shallowRef } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -267,7 +267,7 @@ const props = defineProps({
 
 const store = useConnectionStore()
 const currentPath = ref('/')
-const files = ref([])
+const files = shallowRef([]) // replaced wholesale by loadFiles; rows are never edited in place
 const loading = ref(false)
 const contextMenuEl = ref(null)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: null })
