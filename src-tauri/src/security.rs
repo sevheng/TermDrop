@@ -122,9 +122,18 @@ fn resolve_directive(effective: Option<&str>, raw: Option<&str>, key: &str) -> D
     Directive::Unknown
 }
 
+/// Why a check could not answer, phrased for whichever situation applies.
+fn unreadable_detail(base: &str, has_privilege: bool) -> String {
+    if has_privilege {
+        base.to_string()
+    } else {
+        format!("{}; this needs root and the session has no elevation", base)
+    }
+}
+
 const SSHD_UNREADABLE: &str = "Could not read the SSH server configuration";
 
-fn classify_password_auth(directive: &Directive) -> SecurityCheck {
+fn classify_password_auth(directive: &Directive, has_privilege: bool) -> SecurityCheck {
     let name = "SSH Password Authentication";
     match directive {
         Directive::Value(v) if v.eq_ignore_ascii_case("no") => check(
@@ -151,12 +160,12 @@ fn classify_password_auth(directive: &Directive) -> SecurityCheck {
             name,
             UNKNOWN,
             "Could not determine".to_string(),
-            Some(SSHD_UNREADABLE.to_string()),
+            Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
         ),
     }
 }
 
-fn classify_root_login(directive: &Directive) -> SecurityCheck {
+fn classify_root_login(directive: &Directive, has_privilege: bool) -> SecurityCheck {
     let name = "SSH Root Login";
     match directive {
         Directive::Value(v) if v.eq_ignore_ascii_case("no") => check(
@@ -194,7 +203,7 @@ fn classify_root_login(directive: &Directive) -> SecurityCheck {
             name,
             UNKNOWN,
             "Could not determine".to_string(),
-            Some(SSHD_UNREADABLE.to_string()),
+            Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
         ),
     }
 }
@@ -207,7 +216,7 @@ fn parse_ports(value: &str) -> Vec<u16> {
         .collect()
 }
 
-fn classify_ssh_port(directive: &Directive) -> SecurityCheck {
+fn classify_ssh_port(directive: &Directive, has_privilege: bool) -> SecurityCheck {
     let name = "SSH Port";
     let value = match directive {
         Directive::Value(v) => v.clone(),
@@ -218,7 +227,7 @@ fn classify_ssh_port(directive: &Directive) -> SecurityCheck {
                 name,
                 UNKNOWN,
                 "Could not determine".to_string(),
-                Some(SSHD_UNREADABLE.to_string()),
+                Some(unreadable_detail(SSHD_UNREADABLE, has_privilege)),
             )
         }
     };
@@ -289,6 +298,7 @@ fn classify_firewall(
     ufw: Option<&str>,
     firewalld: Option<&str>,
     rule_count: Option<&str>,
+    has_privilege: bool,
 ) -> SecurityCheck {
     let name = "Firewall";
     let mut probed = false;
@@ -346,7 +356,10 @@ fn classify_firewall(
             name,
             UNKNOWN,
             "Could not determine".to_string(),
-            Some("Firewall status needs privileges this session does not have".to_string()),
+            Some(unreadable_detail(
+                "Firewall status could not be read",
+                has_privilege,
+            )),
         )
     }
 }
@@ -498,39 +511,6 @@ fn classify_security_updates(total: i32, pkg_manager: &str) -> SecurityCheck {
     }
 }
 
-fn classify_disk_space(output: Option<&str>) -> SecurityCheck {
-    let name = "Root Disk Space";
-    let pct = match output.map(|o| o.trim().parse::<u8>()) {
-        Some(Ok(p)) => p,
-        _ => {
-            return check(
-                name,
-                UNKNOWN,
-                "Could not determine".to_string(),
-                Some("Could not read disk usage for /".to_string()),
-            )
-        }
-    };
-
-    if pct < 70 {
-        check(name, PASS, format!("{}% used", pct), None)
-    } else if pct < 85 {
-        check(
-            name,
-            WARN,
-            format!("{}% used", pct),
-            Some("Consider cleaning up".to_string()),
-        )
-    } else {
-        check(
-            name,
-            FAIL,
-            format!("{}% used — critical", pct),
-            Some("Disk is nearly full".to_string()),
-        )
-    }
-}
-
 /// Percentage of checks that produced a verdict and passed. Checks that could
 /// not be determined are excluded from both halves rather than counting as
 /// failures, so an unprivileged session does not read as an insecure host.
@@ -563,14 +543,38 @@ fn shell_quote(s: &str) -> String {
 /// All single-round-trip probes in one POSIX sh script. Each `section` line
 /// carries a status flag: 0 means the probe ran and its output follows, 1
 /// means it could not run and the check reports `unknown` rather than
-/// guessing. Privileged probes use `sudo -n` so they fail immediately instead
-/// of waiting for a password prompt that has no terminal to appear on, and a
-/// `timeout` where one is available.
+/// guessing.
+///
+/// Elevation is decided once, up front, and the privileged probes are skipped
+/// entirely when it is unavailable. Previously each of them attempted
+/// elevation on its own, so an account without rights produced six failed
+/// attempts per audit, every one of which the server logs and may mail to
+/// root. Now it produces one.
 const AUDIT_SCRIPT: &str = r#"section() { printf '\n---TERMDROP-%s rc=%s---\n' "$1" "$2"; }
 if command -v timeout >/dev/null 2>&1; then TO="timeout 5"; else TO=""; fi
 
-# Effective sshd config: resolves Include, Match defaults and compiled-in values.
-if out=$($TO sudo -n sshd -T 2>/dev/null) || out=$($TO sudo -n /usr/sbin/sshd -T 2>/dev/null) || out=$($TO sshd -T 2>/dev/null); then
+# Decide once how to run privileged probes. The check uses `-l`, which asks
+# what this account may run, rather than attempting a trivial command: a
+# sudoers entry scoped to specific commands would let a real probe succeed
+# while a trivial one fails, which would silently downgrade a true verdict to
+# "could not determine". Running as root skips elevation altogether, which
+# also works on images that ship no sudo binary at all.
+if [ "$(id -u)" = 0 ]; then PRIV=''; PRIVOK=1
+elif $TO sudo -n -l >/dev/null 2>&1; then PRIV='sudo -n'; PRIVOK=1
+else PRIV=''; PRIVOK=0
+fi
+section PRIVILEGE 0
+if [ $PRIVOK -eq 1 ]; then printf 'yes'; else printf 'no'; fi
+
+# Effective sshd config: resolves Include, Match defaults and compiled-in
+# values. The unprivileged attempt is kept as a last resort because it costs
+# nothing and leaves no audit trail.
+out=''
+if [ $PRIVOK -eq 1 ]; then
+  out=$($TO $PRIV sshd -T 2>/dev/null) || out=$($TO $PRIV /usr/sbin/sshd -T 2>/dev/null) || out=''
+fi
+[ -n "$out" ] || out=$($TO sshd -T 2>/dev/null) || out=''
+if [ -n "$out" ]; then
   section SSHD_EFFECTIVE 0; printf '%s' "$out"
 else
   section SSHD_EFFECTIVE 1
@@ -584,14 +588,14 @@ else
 fi
 
 fw=0
-if out=$($TO sudo -n ufw status 2>/dev/null); then
+if [ $PRIVOK -eq 1 ] && out=$($TO $PRIV ufw status 2>/dev/null); then
   section UFW 0; printf '%s' "$out"
   case $(printf '%s' "$out" | tr 'A-Z' 'a-z') in *"status: active"*) fw=1;; esac
 else
   section UFW 1
 fi
 if [ $fw -eq 0 ]; then
-  if out=$($TO sudo -n firewall-cmd --state 2>/dev/null); then
+  if [ $PRIVOK -eq 1 ] && out=$($TO $PRIV firewall-cmd --state 2>/dev/null); then
     section FIREWALLD 0; printf '%s' "$out"
     case $(printf '%s' "$out" | tr 'A-Z' 'a-z') in running) fw=1;; esac
   else
@@ -599,10 +603,10 @@ if [ $fw -eq 0 ]; then
   fi
 fi
 if [ $fw -eq 0 ]; then
-  if raw=$($TO sudo -n nft list ruleset 2>/dev/null) && [ -n "$raw" ]; then
+  if [ $PRIVOK -eq 1 ] && raw=$($TO $PRIV nft list ruleset 2>/dev/null) && [ -n "$raw" ]; then
     section RULE_COUNT 0
     printf '%s\n' "$raw" | grep -cE '^[[:space:]]+(tcp|udp|ip|ip6|ct|iif|oif|meta|accept|drop|reject)' || printf '0'
-  elif raw=$($TO sudo -n iptables -S 2>/dev/null); then
+  elif [ $PRIVOK -eq 1 ] && raw=$($TO $PRIV iptables -S 2>/dev/null); then
     section RULE_COUNT 0
     printf '%s\n' "$raw" | grep -vc '^-P' || printf '0'
   else
@@ -644,11 +648,6 @@ if out=$(grep '^ID=' /etc/os-release 2>/dev/null | sed 's/ID=//; s/"//g'); then
   section OS_ID 0; printf '%s' "$out"
 else
   section OS_ID 1
-fi
-if out=$(df -P / 2>/dev/null | awk 'NR==2{print $5}' | tr -d '%'); then
-  section DISK 0; printf '%s' "$out"
-else
-  section DISK 1
 fi
 printf '\n'
 true
@@ -706,15 +705,25 @@ fn audit_from_sections(
 ) -> SecurityReport {
     let effective = section(sections, "SSHD_EFFECTIVE");
     let raw = section(sections, "SSHD_RAW");
+    // The script reports once whether it could elevate at all, so a check that
+    // came back empty can say whether it was blocked or genuinely absent.
+    let has_privilege = section(sections, "PRIVILEGE") == Some("yes");
 
     let checks = vec![
-        classify_password_auth(&resolve_directive(effective, raw, "passwordauthentication")),
-        classify_root_login(&resolve_directive(effective, raw, "permitrootlogin")),
-        classify_ssh_port(&resolve_directive(effective, raw, "port")),
+        classify_password_auth(
+            &resolve_directive(effective, raw, "passwordauthentication"),
+            has_privilege,
+        ),
+        classify_root_login(
+            &resolve_directive(effective, raw, "permitrootlogin"),
+            has_privilege,
+        ),
+        classify_ssh_port(&resolve_directive(effective, raw, "port"), has_privilege),
         classify_firewall(
             section(sections, "UFW"),
             section(sections, "FIREWALLD"),
             section(sections, "RULE_COUNT"),
+            has_privilege,
         ),
         classify_failed_logins(
             section(sections, "FAILED_AUTH_LOG"),
@@ -725,7 +734,6 @@ fn audit_from_sections(
             section(sections, "WHEEL_GROUP"),
         ),
         updates,
-        classify_disk_space(section(sections, "DISK")),
     ];
     score_report(checks)
 }
@@ -763,7 +771,7 @@ mod tests {
         let raw = sections_from(&[
             ("SSHD_RAW", 0, "PasswordAuthentication no"),
             ("UFW", 1, ""),
-            ("DISK", 0, "42"),
+            ("OS_ID", 0, "ubuntu"),
         ]);
         let sections = parse_audit_sections(&raw);
         assert_eq!(
@@ -771,7 +779,7 @@ mod tests {
             Some("PasswordAuthentication no")
         );
         assert_eq!(section(&sections, "UFW"), None, "rc=1 means unavailable");
-        assert_eq!(section(&sections, "DISK"), Some("42"));
+        assert_eq!(section(&sections, "OS_ID"), Some("ubuntu"));
         assert_eq!(section(&sections, "MISSING"), None);
     }
 
@@ -828,18 +836,27 @@ mod tests {
     #[test]
     fn password_auth_classification() {
         assert_eq!(
-            status(&classify_password_auth(&Directive::Value("no".into()))),
+            status(&classify_password_auth(
+                &Directive::Value("no".into()),
+                true
+            )),
             PASS
         );
         assert_eq!(
-            status(&classify_password_auth(&Directive::Value("yes".into()))),
+            status(&classify_password_auth(
+                &Directive::Value("yes".into()),
+                true
+            )),
             FAIL
         );
         // was: false pass. "notset" contains "no", so an unset directive used to
         // report as disabled. The OpenSSH default is yes, so it is enabled.
-        assert_eq!(status(&classify_password_auth(&Directive::NotSet)), FAIL);
         assert_eq!(
-            status(&classify_password_auth(&Directive::Unknown)),
+            status(&classify_password_auth(&Directive::NotSet, true)),
+            FAIL
+        );
+        assert_eq!(
+            status(&classify_password_auth(&Directive::Unknown, true)),
             UNKNOWN
         );
     }
@@ -847,55 +864,65 @@ mod tests {
     #[test]
     fn root_login_classification() {
         assert_eq!(
-            status(&classify_root_login(&Directive::Value("no".into()))),
+            status(&classify_root_login(&Directive::Value("no".into()), true)),
             PASS
         );
-        let keyonly = classify_root_login(&Directive::Value("prohibit-password".into()));
+        let keyonly = classify_root_login(&Directive::Value("prohibit-password".into()), true);
         assert_eq!(status(&keyonly), PASS);
         assert_eq!(keyonly.message, "Root login requires key authentication");
         assert_eq!(
-            status(&classify_root_login(&Directive::Value(
-                "without-password".into()
-            ))),
+            status(&classify_root_login(
+                &Directive::Value("without-password".into()),
+                true
+            )),
             PASS
         );
         assert_eq!(
-            status(&classify_root_login(&Directive::Value("yes".into()))),
+            status(&classify_root_login(&Directive::Value("yes".into()), true)),
             FAIL
         );
         // was: false pass, for the same "notset" reason.
-        assert_eq!(status(&classify_root_login(&Directive::NotSet)), WARN);
-        assert_eq!(status(&classify_root_login(&Directive::Unknown)), UNKNOWN);
+        assert_eq!(status(&classify_root_login(&Directive::NotSet, true)), WARN);
+        assert_eq!(
+            status(&classify_root_login(&Directive::Unknown, true)),
+            UNKNOWN
+        );
     }
 
     #[test]
     fn ssh_port_classification_parses_numbers_instead_of_substrings() {
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("22".into()))),
+            status(&classify_ssh_port(&Directive::Value("22".into()), true)),
             WARN
         );
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("2222".into()))),
+            status(&classify_ssh_port(&Directive::Value("2222".into()), true)),
             PASS
         );
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("220".into()))),
+            status(&classify_ssh_port(&Directive::Value("220".into()), true)),
             PASS
         );
         // was: false warn. 8022 contains "22" but is not the default port.
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("8022".into()))),
+            status(&classify_ssh_port(&Directive::Value("8022".into()), true)),
             PASS
         );
         // was: false pass. 22 is listening even though 2222 contains "222".
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("22 2222".into()))),
+            status(&classify_ssh_port(
+                &Directive::Value("22 2222".into()),
+                true
+            )),
             WARN
         );
-        assert_eq!(status(&classify_ssh_port(&Directive::NotSet)), WARN);
-        assert_eq!(status(&classify_ssh_port(&Directive::Unknown)), UNKNOWN);
+        assert_eq!(status(&classify_ssh_port(&Directive::NotSet, true)), WARN);
         assert_eq!(
-            status(&classify_ssh_port(&Directive::Value("http".into()))),
+            status(&classify_ssh_port(&Directive::Unknown, true)),
+            UNKNOWN
+        );
+        assert_eq!(
+            status(&classify_ssh_port(&Directive::Value("http".into()), true)),
             UNKNOWN
         );
     }
@@ -914,14 +941,14 @@ mod tests {
     #[test]
     fn firewall_reports_unknown_when_no_probe_could_run() {
         // was: a hard "No active firewall detected" whenever sudo was unavailable.
-        assert_eq!(status(&classify_firewall(None, None, None)), UNKNOWN);
+        assert_eq!(status(&classify_firewall(None, None, None, true)), UNKNOWN);
 
         assert_eq!(
-            classify_firewall(Some("Status: active"), None, None).message,
+            classify_firewall(Some("Status: active"), None, None, true).message,
             "UFW firewall is active"
         );
         assert_eq!(
-            classify_firewall(Some("Status: inactive"), Some("running"), None).message,
+            classify_firewall(Some("Status: inactive"), Some("running"), None, true).message,
             "firewalld is active"
         );
         // was: false pass. The old probe counted blank lines left by its filter.
@@ -929,11 +956,15 @@ mod tests {
             status(&classify_firewall(
                 Some("Status: inactive"),
                 Some("not running"),
-                Some("0")
+                Some("0"),
+                true
             )),
             FAIL
         );
-        assert_eq!(status(&classify_firewall(None, None, Some("7"))), PASS);
+        assert_eq!(
+            status(&classify_firewall(None, None, Some("7"), true)),
+            PASS
+        );
     }
 
     #[test]
@@ -967,18 +998,6 @@ mod tests {
         let bad = classify_security_updates(7, "dnf");
         assert_eq!(status(&bad), FAIL);
         assert_eq!(bad.message, "7 security updates pending");
-    }
-
-    #[test]
-    fn disk_space_thresholds_and_unreadable() {
-        assert_eq!(status(&classify_disk_space(Some("69"))), PASS);
-        assert_eq!(status(&classify_disk_space(Some("70"))), WARN);
-        assert_eq!(status(&classify_disk_space(Some("84"))), WARN);
-        assert_eq!(status(&classify_disk_space(Some("85"))), FAIL);
-        // was: false pass. Unparsable output was treated as 0% used.
-        assert_eq!(status(&classify_disk_space(Some(""))), UNKNOWN);
-        assert_eq!(status(&classify_disk_space(Some("300"))), UNKNOWN);
-        assert_eq!(status(&classify_disk_space(None)), UNKNOWN);
     }
 
     #[test]
@@ -1019,20 +1038,36 @@ mod tests {
         for needle in [
             "sshd -T",
             "sshd_config.d",
-            "sudo -n ufw status",
+            "$PRIV ufw status",
             "firewall-cmd --state",
             "nft list ruleset",
             "iptables -S",
             "/var/log/secure",
             "_SYSTEMD_UNIT=ssh.service",
             "getent group wheel",
-            "df -P /",
         ] {
             assert!(cmd.contains(needle), "{}", needle);
         }
-        // Privileged probes must never wait for a password prompt.
-        assert!(!cmd.contains("sudo ufw"), "sudo must be non-interactive");
-        assert!(cmd.contains("sudo -n"));
+        // Elevation is attempted exactly once per audit. These assertions are
+        // the guarantee: a probe that elevates on its own instead of going
+        // through $PRIV brings back the six-failed-attempts-per-audit
+        // behaviour, and the server logs every one of those attempts.
+        assert!(
+            cmd.contains("sudo -n -l"),
+            "one capability check, non-interactive"
+        );
+        for probe in [
+            "sudo -n sshd",
+            "sudo -n /usr/sbin/sshd",
+            "sudo -n ufw",
+            "sudo -n firewall-cmd",
+            "sudo -n nft",
+            "sudo -n iptables",
+        ] {
+            assert!(!cmd.contains(probe), "{} must go through $PRIV", probe);
+        }
+        // Disk usage is the status bar's job, not a security finding.
+        assert!(!cmd.contains("df -P"));
     }
 
     #[test]
@@ -1040,6 +1075,7 @@ mod tests {
         // No sudo, so every privileged probe is unavailable; the report must
         // say so rather than claiming the host is fine.
         let raw = sections_from(&[
+            ("PRIVILEGE", 0, "no"),
             ("SSHD_EFFECTIVE", 1, ""),
             ("SSHD_RAW", 0, "PasswordAuthentication yes\nPort 22\n"),
             ("UFW", 1, ""),
@@ -1050,7 +1086,6 @@ mod tests {
             ("SUDO_GROUP", 0, "alice"),
             ("WHEEL_GROUP", 1, ""),
             ("OS_ID", 0, "ubuntu"),
-            ("DISK", 0, "42"),
         ]);
         let sections = parse_audit_sections(&raw);
         let report = audit_from_sections(&sections, classify_security_updates(0, "apt"));
@@ -1063,10 +1098,12 @@ mod tests {
         assert_eq!(status(&by_name("Firewall")), UNKNOWN);
         assert_eq!(status(&by_name("Failed Login Attempts")), UNKNOWN);
         assert_eq!(status(&by_name("Security Updates")), PASS);
-        assert_eq!(status(&by_name("Root Disk Space")), PASS);
-        // Determinable: password auth, root login, port, updates, disk.
-        assert_eq!(report.scored, 5);
-        assert_eq!(report.passed, 2);
-        assert_eq!(report.score, 40);
+        // The firewall's detail must say elevation was the blocker, not imply
+        // the host has no firewall.
+        assert!(by_name("Firewall").detail.unwrap().contains("no elevation"));
+        // Determinable: password auth, root login, port, updates.
+        assert_eq!(report.scored, 4);
+        assert_eq!(report.passed, 1);
+        assert_eq!(report.score, 25);
     }
 }
