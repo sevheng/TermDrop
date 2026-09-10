@@ -217,7 +217,7 @@
           >
             <Download v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'dump-folder' ? 'Dumping...' : 'Dump folder' }}
+            {{ syncing && currentAction === 'dump-folder' ? 'Dumping...' : `Dump folder (${dumpSourceLabel})` }}
           </button>
           <button
             @click="startDumpArchive"
@@ -229,7 +229,7 @@
           >
             <Download v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'dump-archive' ? 'Dumping...' : 'Dump archive' }}
+            {{ syncing && currentAction === 'dump-archive' ? 'Dumping...' : `Dump archive (${dumpSourceLabel})` }}
           </button>
         </div>
         <div class="flex flex-col gap-2">
@@ -243,7 +243,7 @@
           >
             <Upload v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'restore-folder' ? 'Restoring...' : 'Restore folder' }}
+            {{ syncing && currentAction === 'restore-folder' ? 'Restoring...' : `Restore folder → ${restoreTargetLabel}` }}
           </button>
           <button
             @click="startRestoreFile"
@@ -255,7 +255,7 @@
           >
             <Upload v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'restore-archive' ? 'Restoring...' : 'Restore file' }}
+            {{ syncing && currentAction === 'restore-archive' ? 'Restoring...' : `Restore file → ${restoreTargetLabel}` }}
           </button>
         </div>
       </div>
@@ -263,7 +263,9 @@
 
     <!-- Restore confirmation modal -->
     <ModalShell :show="restoreConfirm.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
-        <h3 class="text-base font-semibold text-[#cccccc] mb-3">Confirm restore</h3>
+        <h3 class="text-base font-semibold text-[#cccccc] mb-3">
+          Confirm restore into <span class="text-[#75beff]">{{ restoreTargetLabel }}</span>
+        </h3>
         <div class="space-y-2 text-sm text-[#cccccc]">
           <p>
             Source {{ restoreConfirm.isArchive ? 'archive' : 'folder' }}:
@@ -436,6 +438,16 @@ function beginOperation(action) {
 }
 
 /**
+ * A fresh op id for the next backend call. `with_mongo_op` registers and
+ * unregisters per invocation, so a loop that reused one id left `mongodb_cancel`
+ * with nothing to find in the gaps between calls.
+ */
+function nextOpId() {
+  currentOpId.value = crypto.randomUUID()
+  return currentOpId.value
+}
+
+/**
  * Toast an operation error. Cancellations reset the panel and return true
  * so loops can stop; other errors are reported with `failedPrefix: err`.
  */
@@ -466,14 +478,18 @@ const canSync = computed(() => {
 })
 
 const canDumpRestore = computed(() => {
-  // Dump always operates on the actual Remote and needs selected collections.
-  return remoteUri.value && selectedCount.value > 0 && !syncing.value
+  // Dump reads from whichever side the selection tree is showing.
+  return sourceUri.value && selectedCount.value > 0 && !syncing.value
 })
 
 const canRestore = computed(() => {
-  // Restore operates on the actual Remote; the source folder/archive determines what is restored.
-  return remoteUri.value && !syncing.value
+  // Restore writes into the destination side; the folder/archive decides what.
+  return destUri.value && !syncing.value
 })
+
+/** Names the side dump reads from / restore writes to, for button labels. */
+const dumpSourceLabel = computed(() => (isRemoteToLocal.value ? 'Remote' : 'Local'))
+const restoreTargetLabel = computed(() => (isRemoteToLocal.value ? 'Local' : 'Remote'))
 
 const syncButtonLabel = computed(() => {
   if (syncing.value) return 'Syncing...'
@@ -564,7 +580,8 @@ async function startSync() {
   beginOperation('sync')
 
   for (const entry of entries) {
-    if (aborting.value || !currentOpId.value) break
+    if (aborting.value) break
+    nextOpId()
     try {
       await invoke('mongodb_sync', {
         remoteUri: sourceUri.value,
@@ -586,7 +603,7 @@ async function startSync() {
 }
 
 async function startDumpFolder() {
-  if (!remoteUri.value || selectedCount.value === 0) return
+  if (!sourceUri.value || selectedCount.value === 0) return
 
   const outputDir = await open({
     directory: true,
@@ -599,9 +616,20 @@ async function startDumpFolder() {
 }
 
 async function startDumpArchive() {
-  if (!remoteUri.value || selectedCount.value === 0) return
+  if (!sourceUri.value || selectedCount.value === 0) return
 
   const selectedDbs = Array.from(selectedCollections.value.keys())
+  // mongodump writes one archive per invocation and --db is singular, so there
+  // is no way to put several databases in one archive. Say so instead of
+  // silently overwriting the file once per database.
+  if (selectedDbs.length > 1) {
+    toast(
+      'An archive holds a single database. Select collections from one database, ' +
+        'or use Dump folder to write all selected databases into one tree.',
+      'error',
+    )
+    return
+  }
   const defaultName =
     selectedDbs.length === 1 ? `${selectedDbs[0]}.gz` : 'mongodb_dump.gz'
 
@@ -620,16 +648,24 @@ async function startDumpArchive() {
 }
 
 async function runDump(outputPath, isArchive) {
-  if (!remoteUri.value || selectedCount.value === 0) return
+  if (!sourceUri.value || selectedCount.value === 0) return
 
   const entries = buildEntries(selectedCollections.value)
+  // An archive is a single file: looping would overwrite it once per database
+  // and report success for every one. startDumpArchive refuses that case, so
+  // reaching here with more than one database is a bug.
+  if (isArchive && entries.length > 1) {
+    toast('An archive can only hold one database. Use Dump folder instead.', 'error')
+    return
+  }
   beginOperation(isArchive ? 'dump-archive' : 'dump-folder')
 
   for (const entry of entries) {
-    if (aborting.value || !currentOpId.value) break
+    if (aborting.value) break
+    nextOpId()
     try {
       await invoke('mongodb_dump', {
-        remoteUri: remoteUri.value,
+        remoteUri: sourceUri.value,
         db: entry.db,
         collections: entry.collections,
         outputDir: outputPath,
@@ -667,7 +703,7 @@ async function confirmRestore() {
 }
 
 async function startRestoreFolder() {
-  if (!remoteUri.value) return
+  if (!destUri.value) return
 
   const inputDir = await open({
     directory: true,
@@ -685,7 +721,7 @@ async function startRestoreFolder() {
 }
 
 async function startRestoreFile() {
-  if (!remoteUri.value) return
+  if (!destUri.value) return
 
   const inputFile = await open({
     directory: false,
@@ -738,7 +774,7 @@ function folderRestoreJobs(entries, sourceDbs) {
 }
 
 async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFirst = false) {
-  if (!remoteUri.value) return
+  if (!destUri.value) return
 
   beginOperation(isArchive ? 'restore-archive' : 'restore-folder')
 
@@ -755,7 +791,7 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
 
     try {
       await invoke('mongodb_restore_archive', {
-        remoteUri: remoteUri.value,
+        remoteUri: destUri.value,
         includes,
         inputPath,
         dropFirst,
@@ -767,10 +803,11 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
     }
   } else {
     for (const job of folderRestoreJobs(entries, sourceDbs)) {
-      if (aborting.value || !currentOpId.value) break
+      if (aborting.value) break
+      nextOpId()
       try {
         await invoke('mongodb_restore', {
-          remoteUri: remoteUri.value,
+          remoteUri: destUri.value,
           db: job.db,
           collections: job.collections,
           inputDir: inputPath,
@@ -786,8 +823,8 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
   }
 
   resetOperationState()
-  // Refresh the remote DB list so restored databases appear.
-  await remote.loadDatabases()
+  // Refresh the side we restored into so restored databases appear.
+  await destSide.value.loadDatabases()
 }
 
 async function cancelOperation() {
