@@ -107,8 +107,7 @@
           v-for="host in displayHosts"
           :key="host.id"
           :host="host"
-          :is-connected="isHostConnected(host.id)"
-          :is-connecting="store.connectingHostId === host.id"
+          :state="rowState(host.id)"
           @connect="connectHost(host.id)"
           @edit="editHost(host)"
           @delete="deleteHost(host)"
@@ -129,8 +128,7 @@
             v-for="host in favoriteHosts"
             :key="'fav-' + host.id"
             :host="host"
-            :is-connected="isHostConnected(host.id)"
-            :is-connecting="store.connectingHostId === host.id"
+            :state="rowState(host.id)"
             @connect="connectHost(host.id)"
             @edit="editHost(host)"
             @delete="deleteHost(host)"
@@ -165,8 +163,7 @@
                 v-for="host in groupHosts"
                 :key="host.id"
                 :host="host"
-                :is-connected="isHostConnected(host.id)"
-                :is-connecting="store.connectingHostId === host.id"
+                :state="rowState(host.id)"
                 @connect="connectHost(host.id)"
                 @edit="editHost(host)"
                 @delete="deleteHost(host)"
@@ -321,6 +318,7 @@ import { splitMongoUri } from '../utils/mongoUri.js'
 import { splitRedisUri } from '../utils/redisUri.js'
 import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
 import { groupAccentClass } from '../utils/groupAccent.js'
+import { hostRowState } from '../utils/hostRowState.js'
 import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
@@ -427,8 +425,16 @@ function toggleView() {
   localStorage.setItem('host-view-mode', viewMode.value)
 }
 
-function isHostConnected(hostId) {
-  return store.tabs.some(t => t.hostId === hostId)
+/**
+ * What a row should show. `isHostConnected` used to be "a tab exists", so a
+ * session that had dropped still rendered a green dot — the store knows
+ * better, and hostRowState reads it.
+ */
+function rowState(hostId) {
+  return hostRowState(
+    { tabs: store.tabs, activeTabId: store.activeTabId, connectingHostId: store.connectingHostId },
+    hostId,
+  )
 }
 
 function toggleGroup(name) {
