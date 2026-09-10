@@ -39,18 +39,17 @@
 
     <!-- Toolbar -->
     <div class="px-2 py-1.5 border-b border-line flex gap-1.5 flex-wrap items-center">
-      <button @click="goUp" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded">↑ Up</button>
+      <IconButton :icon="ArrowUp" label="Go up a directory" @click="goUp" />
       <button @click="onUpload" class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-1.5 py-0.5 rounded">Upload</button>
       <button @click="onMkdir" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded">+ Folder</button>
-      <button @click="loadFiles" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded">↻</button>
+      <IconButton :icon="RefreshCw" label="Refresh this directory" :pending="loading" @click="loadFiles" />
       <div class="relative ml-auto">
-        <button
+        <IconButton
+          :icon="Columns3"
+          label="Choose columns"
+          :active="showColumnMenu"
           @click.stop="showColumnMenu = !showColumnMenu"
-          class="text-xs text-ink-2 hover:text-ink px-1.5 py-0.5"
-          title="Toggle columns"
-        >
-          ☰
-        </button>
+        />
         <div
           v-if="showColumnMenu"
           @click.stop
@@ -255,12 +254,13 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivate
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
+import { Folder, FileText, Home, ChevronRight, ArrowUp, RefreshCw, Columns3 } from 'lucide-vue-next'
 import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import FloatingEditor from './FloatingEditor.vue'
+import IconButton from './IconButton.vue'
 import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'

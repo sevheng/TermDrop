@@ -1,21 +1,27 @@
 <template>
   <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-2 py-1 border-b border-line">
-      <div class="flex items-center gap-2">
-        <IconButton :icon="RefreshCw" label="Refresh containers" :pending="loading" @click="loadContainers" />
-        <label class="flex items-center gap-1 text-2xs text-ink-2 cursor-pointer select-none">
-          <input
-            v-model="showAll"
-            type="checkbox"
-            class="accent-accent"
-            @change="loadContainers"
-          />
+    <PanelHeader
+      title="Docker"
+      :icon="Container"
+      dense
+      :meta="containers.length ? `${containers.length} containers` : ''"
+    >
+      <template #badges>
+        <label class="flex items-center gap-1 text-2xs text-ink-2 cursor-pointer select-none shrink-0">
+          <input v-model="showAll" type="checkbox" class="accent-accent" @change="loadContainers" />
           Show all
         </label>
-      </div>
-      <span class="text-2xs text-ink-3">{{ containers.length }} containers</span>
-    </div>
+      </template>
+      <template #actions>
+        <IconButton
+          :icon="RefreshCw"
+          label="Refresh containers"
+          :pending="loading"
+          @click="loadContainers"
+        />
+      </template>
+    </PanelHeader>
 
     <!-- Container list -->
     <div class="flex-1 min-h-[80px] relative">
@@ -167,6 +173,7 @@ import VirtualList from './VirtualList.vue'
 import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import IconButton from './IconButton.vue'
+import PanelHeader from './PanelHeader.vue'
 import { shellEscape } from '../utils/shell.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'

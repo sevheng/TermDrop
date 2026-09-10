@@ -1,29 +1,23 @@
 <template>
   <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-4 py-2.5 border-b border-line shrink-0 bg-surface">
-      <div class="flex items-center gap-2 min-w-0">
-        <Database :size="14" class="text-mongo shrink-0" />
-        <span class="text-sm font-medium text-ink truncate">{{ connectionName }}</span>
-        <span
-          class="text-2xs text-ink-2 truncate max-w-[18rem]"
-          :title="connectionDisplay"
-        >
-          {{ connectionDisplay }}
-        </span>
-      </div>
-
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button
+    <PanelHeader
+      :title="connectionName"
+      :icon="Database"
+      icon-class="text-mongo"
+      :subtitle="connectionDisplay"
+      :subtitle-title="connectionDisplay"
+      subtitle-mono
+    >
+      <template #actions>
+        <IconButton
+          :icon="RefreshCw"
+          label="Refresh databases"
+          :pending="loading"
           @click="loadDatabases"
-          :disabled="loading"
-          class="p-1.5 rounded text-ink-2 hover:text-ink hover:bg-raised disabled:opacity-40"
-          title="Refresh databases"
-        >
-          <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
-        </button>
+        />
 
-        <div class="w-px h-4 bg-input mx-1" />
+        <div class="w-px h-4 bg-line mx-1" />
 
         <button
           @click="backup.backupFolder"
@@ -46,7 +40,7 @@
           Archive
         </button>
 
-        <div class="w-px h-4 bg-input mx-1" />
+        <div class="w-px h-4 bg-line mx-1" />
 
         <button
           @click="backup.restoreFolder"
@@ -65,8 +59,8 @@
         >
           From file
         </button>
-      </div>
-    </div>
+      </template>
+    </PanelHeader>
 
     <!-- Progress, while a backup or restore runs -->
     <div v-if="backup.busy.value" class="px-4 py-2 border-b border-line shrink-0 bg-surface space-y-1">
@@ -161,6 +155,8 @@ import EmptyState from './EmptyState.vue'
 import DbTree from './DbTree.vue'
 import MongoDocumentsView from './MongoDocumentsView.vue'
 import MongoRestoreDialog from './MongoRestoreDialog.vue'
+import PanelHeader from './PanelHeader.vue'
+import IconButton from './IconButton.vue'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'

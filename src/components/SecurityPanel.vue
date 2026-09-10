@@ -1,20 +1,22 @@
 <template>
   <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-2 py-1 border-b border-line">
-      <div class="flex items-center gap-2">
-        <span class="text-2xs text-ink-3">{{ report?.checks?.length || 0 }} checks</span>
-        <span v-if="timeAgo" class="text-2xs text-ink-2">· updated {{ timeAgo }}</span>
-      </div>
-      <button
-        @click="runAudit(true)"
-        :disabled="loading"
-        class="text-xs text-ink-2 hover:text-ink disabled:text-ink-3 disabled:opacity-60 flex items-center gap-1"
-      >
-        <RefreshCw :size="12" :class="loading && 'animate-spin'" />
-        Re-run
-      </button>
-    </div>
+    <PanelHeader
+      title="Security"
+      :icon="Shield"
+      dense
+      :subtitle="timeAgo ? `updated ${timeAgo}` : ''"
+      :meta="report?.checks?.length ? `${report.checks.length} checks` : ''"
+    >
+      <template #actions>
+        <IconButton
+          :icon="RefreshCw"
+          label="Re-run the audit"
+          :pending="loading"
+          @click="runAudit(true)"
+        />
+      </template>
+    </PanelHeader>
 
     <!-- Content -->
     <div class="flex-1 overflow-y-auto">
@@ -153,6 +155,8 @@ import { RefreshCw, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, Ch
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 import EmptyState from './EmptyState.vue'
+import PanelHeader from './PanelHeader.vue'
+import IconButton from './IconButton.vue'
 
 const props = defineProps({
   hostId: {
