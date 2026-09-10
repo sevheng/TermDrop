@@ -190,10 +190,17 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  async function importHosts(fileContent) {
-    const count = await invoke('import_hosts', { json: fileContent })
-    await loadHosts()
-    return count
+  /**
+   * Import prepared entries and return the backend's summary. The reload runs
+   * even when the call throws, because a partial import must still show up in
+   * the sidebar rather than looking like nothing happened.
+   */
+  async function importHosts(entries) {
+    try {
+      return await invoke('import_hosts', { entries })
+    } finally {
+      await loadHosts()
+    }
   }
 
   /**
@@ -276,9 +283,6 @@ export const useConnectionStore = defineStore('connection', () => {
 
     // Try SFTP in background — don't block tab creation
     await attachSftp(sessionId, hostId, isKeyAuth, providedPassword)
-    // Run security audit in background — don't block tab creation
-    runSecurityAudit(hostId).catch(() => {})
-
     connectingHostId.value = null
     return sessionId
   }
@@ -292,6 +296,11 @@ export const useConnectionStore = defineStore('connection', () => {
     tabs.value = tabs.value.filter(t => t.id !== sessionId)
     if (activeTabId.value === sessionId) {
       activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
+    }
+    // The backend drops its cached report when the last tab for a host goes
+    // away; mirror that so a stale report is never shown as current.
+    if (tab && !tabs.value.some(t => t.hostId === tab.hostId)) {
+      securityReports.value.delete(tab.hostId)
     }
   }
 

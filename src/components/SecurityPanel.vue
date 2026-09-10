@@ -41,8 +41,8 @@
       <!-- Empty -->
       <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
         <Shield :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">No audit data</p>
-        <p class="text-[10px] mt-1">Connect to a host to run audit</p>
+        <p class="text-xs">No audit has run for this host</p>
+        <p class="text-[10px] mt-1">The audit runs privileged probes on the server</p>
         <button
           @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
@@ -60,9 +60,13 @@
               class="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold mx-auto mb-1"
               :class="scoreClass"
             >
-              {{ report.score }}
+              {{ hasScore ? report.score : '—' }}
             </div>
             <span class="text-[10px] text-[#858585] uppercase tracking-wide">{{ scoreLabel }}</span>
+            <p class="text-[10px] text-[#858585] mt-1">
+              {{ hasScore ? `${report.passed} of ${report.scored} checks passed` : 'Nothing could be determined' }}
+            </p>
+            <p v-if="breakdown" class="text-[10px] text-[#6e6e6e] mt-0.5">{{ breakdown }}</p>
           </div>
         </div>
 
@@ -90,7 +94,56 @@
                 </span>
               </div>
               <p class="text-[10px] text-[#858585] mt-0.5">{{ check.message }}</p>
-              <p v-if="check.detail" class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono truncate">{{ check.detail }}</p>
+              <p
+                v-if="check.detail"
+                class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono whitespace-pre-wrap break-words"
+              >{{ check.detail }}</p>
+
+              <!-- What to do about it. Collapsed by default so the list stays
+                   scannable; a finding you are acting on is usually one. -->
+              <template v-if="check.remediation">
+                <button
+                  @click="toggle(check.name)"
+                  class="text-[10px] text-[#4daafc] hover:text-[#6fc0ff] mt-1 flex items-center gap-0.5"
+                >
+                  <ChevronRight
+                    :size="10"
+                    class="transition-transform"
+                    :class="isOpen(check.name) && 'rotate-90'"
+                  />
+                  What to do
+                </button>
+                <div v-if="isOpen(check.name)" class="mt-1 mb-0.5">
+                  <p class="text-[10px] text-[#a0a0a0] leading-relaxed">
+                    {{ check.remediation.summary }}
+                  </p>
+                  <template v-if="check.remediation.command">
+                    <pre
+                      class="mt-1 px-1.5 py-1 bg-[#252526] border border-[#3c3c3c] rounded text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap break-all"
+                    >{{ check.remediation.command }}</pre>
+                    <div class="flex items-center gap-2 mt-1">
+                      <button
+                        @click="copyCommand(check.remediation.command)"
+                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                      >
+                        <Copy :size="10" />
+                        Copy
+                      </button>
+                      <button
+                        v-if="canSend"
+                        @click="sendCommand(check.remediation.command)"
+                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                      >
+                        <TerminalSquare :size="10" />
+                        Send to terminal
+                      </button>
+                    </div>
+                    <p v-if="canSend" class="text-[9px] text-[#6e6e6e] mt-0.5">
+                      Typed at the prompt without running. Press Enter yourself.
+                    </p>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -100,9 +153,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight, Copy, TerminalSquare } from 'lucide-vue-next'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 
 const props = defineProps({
   hostId: {
@@ -111,16 +166,44 @@ const props = defineProps({
   },
 })
 
+const emit = defineEmits(['sendToTerminal'])
+
 const store = useConnectionStore()
+
+/** MongoDB tabs have no shell, and a disconnected tab has nothing to write to. */
+const canSend = computed(() => canReceiveCommand(store.activeTab))
+
+async function copyCommand(command) {
+  try {
+    await writeText(command)
+  } catch {
+    // Clipboard access can be refused; the command is on screen either way.
+  }
+}
+
+/**
+ * Hands the command to MainWindow, which knows the active session. It is typed
+ * at the prompt and deliberately not submitted, so the user reads it and
+ * presses Enter. The guard is a second check on top of the backend's, which
+ * only ever emits its own literals.
+ */
+function sendCommand(command) {
+  if (!canSend.value || !isInsertableCommand(command)) return
+  emit('sendToTerminal', command)
+}
 
 const report = ref(null)
 const loading = ref(false)
 const error = ref(null)
 const lastUpdated = ref(null)
 
+// Re-read on a timer so the label ages instead of freezing at "just now".
+const now = ref(Date.now())
+let clock = null
+
 const timeAgo = computed(() => {
   if (!lastUpdated.value) return ''
-  const seconds = Math.floor((Date.now() - lastUpdated.value) / 1000)
+  const seconds = Math.max(0, Math.floor((now.value - lastUpdated.value) / 1000))
   if (seconds < 5) return 'just now'
   if (seconds < 60) return `${seconds}s ago`
   const minutes = Math.floor(seconds / 60)
@@ -129,8 +212,12 @@ const timeAgo = computed(() => {
   return `${hours}h ago`
 })
 
+/** False when every check came back undetermined, so there is nothing to grade. */
+const hasScore = computed(() => (report.value?.scored ?? 0) > 0)
+
 const scoreLabel = computed(() => {
   if (!report.value) return ''
+  if (!hasScore.value) return 'Unknown'
   const s = report.value.score
   if (s >= 80) return 'Good'
   if (s >= 50) return 'Fair'
@@ -139,21 +226,51 @@ const scoreLabel = computed(() => {
 
 const scoreClass = computed(() => {
   if (!report.value) return ''
+  if (!hasScore.value) return 'bg-[#3c3c3c] text-[#858585]'
   const s = report.value.score
   if (s >= 80) return 'bg-[#89d185]/20 text-[#89d185]'
   if (s >= 50) return 'bg-[#cca700]/20 text-[#cca700]'
   return 'bg-[#f44336]/20 text-[#f44336]'
 })
 
+/** "2 failed · 1 warning · 3 undetermined", omitting whichever counts are zero. */
+const breakdown = computed(() => {
+  const checks = report.value?.checks
+  if (!checks?.length) return ''
+  const count = (status) => checks.filter((c) => c.status === status).length
+  const parts = []
+  const failed = count('fail')
+  const warned = count('warn')
+  const unknown = count('unknown')
+  if (failed) parts.push(`${failed} failed`)
+  if (warned) parts.push(`${warned} warning${warned === 1 ? '' : 's'}`)
+  if (unknown) parts.push(`${unknown} undetermined`)
+  return parts.join(' · ')
+})
+
 const STATUS_META = {
   pass: { icon: ShieldCheck, color: 'text-[#89d185]', badge: 'bg-[#89d185]/20 text-[#89d185]' },
   warn: { icon: AlertTriangle, color: 'text-[#cca700]', badge: 'bg-[#cca700]/20 text-[#cca700]' },
   fail: { icon: XCircle, color: 'text-[#f44336]', badge: 'bg-[#f44336]/20 text-[#f44336]' },
+  // The backend reports this when a probe lacked the privileges to answer.
+  unknown: { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' },
 }
-const UNKNOWN_STATUS_META = { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' }
+const UNKNOWN_STATUS_META = STATUS_META.unknown
 
 function statusMeta(status) {
   return STATUS_META[status] || UNKNOWN_STATUS_META
+}
+
+/** Which findings have their guidance expanded, keyed by check name. */
+const expanded = reactive(new Set())
+
+function isOpen(name) {
+  return expanded.has(name)
+}
+
+function toggle(name) {
+  if (expanded.has(name)) expanded.delete(name)
+  else expanded.add(name)
 }
 
 function readFromCache() {
@@ -164,14 +281,18 @@ function readFromCache() {
     lastUpdated.value = null
     return
   }
+  // A new report can renumber or drop checks, so stale expansions are cleared.
+  expanded.clear()
   const cached = store.getSecurityReport(props.hostId)
   if (cached) {
     report.value = cached.report
     loading.value = cached.loading
     error.value = cached.error
-    if (cached.report && !lastUpdated.value) {
-      lastUpdated.value = Date.now()
-    }
+    // From the audit's own timestamp, not from when this panel read it. Both
+    // the backend and the store cache the report, so the two differ.
+    lastUpdated.value = cached.report?.generated_at
+      ? cached.report.generated_at * 1000
+      : null
   } else {
     report.value = null
     loading.value = false
@@ -186,13 +307,55 @@ function runAudit(force = false) {
   readFromCache()
 }
 
-onMounted(readFromCache)
+/**
+ * The audit runs privileged probes on the server, so it starts when the panel
+ * is actually opened rather than on every connect. Once per host is enough,
+ * because the store keeps the report across panel switches.
+ */
+let attempted = false
 
-watch(() => props.hostId, readFromCache)
+function maybeRun() {
+  if (attempted || !props.hostId) return
+  // Anything already present — a report, a run in flight, or an error — is
+  // left alone. Not retrying an error matters: the panel is inside KeepAlive,
+  // so a host that always fails would otherwise re-audit on every tab switch.
+  if (store.getSecurityReport(props.hostId)) return
+  attempted = true
+  runAudit(false)
+}
 
-// Reactive: re-read from cache whenever the store version changes
-// securityReports is a reactive Map, so this fires whenever the entry for
-// this host is replaced by setSecurityLoading/Report/Error.
-watch(() => store.getSecurityReport(props.hostId), readFromCache)
+onMounted(() => {
+  readFromCache()
+  maybeRun()
+  clock = setInterval(() => { now.value = Date.now() }, 15000)
+})
+
+onUnmounted(() => {
+  clearInterval(clock)
+  clock = null
+})
+
+// Fires on every panel-tab switch, and after KeepAlive evicts and remounts.
+// KeepAlive can leave this mounted but hidden, so the age label is refreshed
+// here too: it only needs to be right while the panel is on screen.
+onActivated(() => {
+  now.value = Date.now()
+  maybeRun()
+})
+
+watch(() => props.hostId, () => {
+  attempted = false
+  readFromCache()
+  maybeRun()
+})
+
+// securityReports is a reactive Map, so this fires whenever the entry for this
+// host is replaced by setSecurityLoading/Report/Error, or removed on disconnect.
+watch(() => store.getSecurityReport(props.hostId), (entry) => {
+  // A disconnect drops the report; allow a fresh audit next time this panel
+  // is opened for the host.
+  if (!entry) attempted = false
+  readFromCache()
+})
 
 </script>

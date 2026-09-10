@@ -215,6 +215,60 @@ fn handle_local_connection(
     Ok(())
 }
 
+const ATYP_IPV4: u8 = 0x01;
+const ATYP_DOMAIN: u8 = 0x03;
+const ATYP_IPV6: u8 = 0x04;
+
+/// Where a SOCKS5 client asked us to connect.
+#[derive(Debug, PartialEq)]
+struct SocksDest {
+    host: String,
+    port: u16,
+}
+
+/// Read the address and port following a SOCKS5 request header. `atyp` must
+/// already be known-supported; the caller sends the rejection reply.
+fn read_socks_dest(reader: &mut impl Read, atyp: u8) -> Result<SocksDest, String> {
+    let host = match atyp {
+        ATYP_IPV4 => {
+            let mut addr = [0u8; 4];
+            reader
+                .read_exact(&mut addr)
+                .map_err(|e| format!("socks ipv4: {}", e))?;
+            std::net::Ipv4Addr::from(addr).to_string()
+        }
+        ATYP_IPV6 => {
+            let mut addr = [0u8; 16];
+            reader
+                .read_exact(&mut addr)
+                .map_err(|e| format!("socks ipv6: {}", e))?;
+            std::net::Ipv6Addr::from(addr).to_string()
+        }
+        ATYP_DOMAIN => {
+            let mut len = [0u8; 1];
+            reader
+                .read_exact(&mut len)
+                .map_err(|e| format!("socks domain len: {}", e))?;
+            let mut domain = vec![0u8; len[0] as usize];
+            reader
+                .read_exact(&mut domain)
+                .map_err(|e| format!("socks domain: {}", e))?;
+            String::from_utf8_lossy(&domain).to_string()
+        }
+        _ => return Err("unsupported address type".to_string()),
+    };
+
+    let mut port = [0u8; 2];
+    reader
+        .read_exact(&mut port)
+        .map_err(|e| format!("socks port: {}", e))?;
+
+    Ok(SocksDest {
+        host,
+        port: u16::from_be_bytes(port),
+    })
+}
+
 fn handle_socks_connection(
     ssh_host: String,
     ssh_port: u16,
@@ -254,56 +308,20 @@ fn handle_socks_connection(
         return Err("unsupported SOCKS command".to_string());
     }
 
-    let dst = match req[3] {
-        0x01 => {
-            // IPv4
-            let mut addr = [0u8; 4];
-            client
-                .read_exact(&mut addr)
-                .map_err(|e| format!("socks ipv4: {}", e))?;
-            let mut port = [0u8; 2];
-            client
-                .read_exact(&mut port)
-                .map_err(|e| format!("socks port: {}", e))?;
-            let port = u16::from_be_bytes(port);
-            (
-                format!("{}.{}", addr[0], addr[1]),
-                format!("{}.{}", addr[2], addr[3]),
-                port,
-            )
-        }
-        0x03 => {
-            // Domain
-            let mut len = [0u8; 1];
-            client
-                .read_exact(&mut len)
-                .map_err(|e| format!("socks domain len: {}", e))?;
-            let mut domain = vec![0u8; len[0] as usize];
-            client
-                .read_exact(&mut domain)
-                .map_err(|e| format!("socks domain: {}", e))?;
-            let mut port = [0u8; 2];
-            client
-                .read_exact(&mut port)
-                .map_err(|e| format!("socks port: {}", e))?;
-            let port = u16::from_be_bytes(port);
-            let host = String::from_utf8_lossy(&domain).to_string();
-            (host.clone(), host, port)
-        }
-        _ => {
-            client
-                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-                .ok();
-            return Err("unsupported address type".to_string());
-        }
-    };
+    if !matches!(req[3], ATYP_IPV4 | ATYP_DOMAIN | ATYP_IPV6) {
+        client
+            .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .ok();
+        return Err("unsupported address type".to_string());
+    }
+    let dest = read_socks_dest(&mut client, req[3])?;
 
     let pw = password.as_deref();
     let kp = key_path.as_deref();
     let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
 
     let mut channel = session
-        .channel_direct_tcpip(&dst.0, dst.2, Some(("127.0.0.1", 0)))
+        .channel_direct_tcpip(&dest.host, dest.port, Some(("127.0.0.1", 0)))
         .map_err(|e| format!("direct_tcpip: {}", e))?;
 
     // Respond success
@@ -409,4 +427,68 @@ fn pipe_bidirectional_nb(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn dest(bytes: &[u8], atyp: u8) -> Result<SocksDest, String> {
+        read_socks_dest(&mut Cursor::new(bytes.to_vec()), atyp)
+    }
+
+    #[test]
+    fn ipv4_destination_keeps_all_four_octets() {
+        // was: the address was split into two halves and only the first was
+        // used, so this connected to host "142.250" instead of the real one.
+        assert_eq!(
+            dest(&[142, 250, 185, 46, 0x01, 0xBB], ATYP_IPV4).unwrap(),
+            SocksDest {
+                host: "142.250.185.46".to_string(),
+                port: 443,
+            }
+        );
+        assert_eq!(
+            dest(&[127, 0, 0, 1, 0x1F, 0x90], ATYP_IPV4).unwrap().host,
+            "127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn domain_destination_reads_the_length_prefix() {
+        let mut bytes = vec![11];
+        bytes.extend_from_slice(b"example.com");
+        bytes.extend_from_slice(&[0x00, 0x50]);
+        assert_eq!(
+            dest(&bytes, ATYP_DOMAIN).unwrap(),
+            SocksDest {
+                host: "example.com".to_string(),
+                port: 80,
+            }
+        );
+    }
+
+    #[test]
+    fn ipv6_destination_is_supported() {
+        let mut bytes = vec![0u8; 16];
+        bytes[15] = 1; // ::1
+        bytes.extend_from_slice(&[0x01, 0xBB]);
+        assert_eq!(dest(&bytes, ATYP_IPV6).unwrap().host, "::1");
+    }
+
+    #[test]
+    fn unknown_address_type_is_rejected() {
+        assert!(dest(&[0, 0], 0x09).is_err());
+    }
+
+    #[test]
+    fn truncated_input_is_an_error_not_a_wrong_address() {
+        assert!(dest(&[142, 250], ATYP_IPV4).is_err(), "short address");
+        assert!(
+            dest(&[142, 250, 185, 46], ATYP_IPV4).is_err(),
+            "missing port"
+        );
+        assert!(dest(&[5, b'a', b'b'], ATYP_DOMAIN).is_err(), "short domain");
+    }
 }

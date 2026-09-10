@@ -104,6 +104,16 @@
       >
         Loading...
       </div>
+      <div v-else-if="listError" class="flex flex-col items-center justify-center gap-2 py-6 px-3 text-center">
+        <p class="text-xs text-[#f44336]">Could not list this directory</p>
+        <p class="text-[10px] text-[#858585] break-words" :title="listError">{{ listError }}</p>
+        <button
+          @click="loadFiles"
+          class="mt-1 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
+        >
+          Retry
+        </button>
+      </div>
       <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
         {{ sortedFiles.length === 0 ? 'Empty directory' : 'No matching files' }}
       </div>
@@ -242,7 +252,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, shallowRef } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -269,6 +279,7 @@ const store = useConnectionStore()
 const currentPath = ref('/')
 const files = shallowRef([]) // replaced wholesale by loadFiles; rows are never edited in place
 const loading = ref(false)
+const listError = ref('')
 const contextMenuEl = ref(null)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: null })
 const sortKey = ref('name')
@@ -284,6 +295,14 @@ const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
 
 const listeners = useListenerGroup()
+
+// Panels live inside <KeepAlive>, so a hidden panel is deactivated rather than
+// unmounted and its listeners stay registered. Without this flag a file
+// dropped on the visible panel would also upload to every other host whose
+// panel had ever been opened.
+const isPanelActive = ref(true)
+onActivated(() => { isPanelActive.value = true })
+onDeactivated(() => { isPanelActive.value = false })
 const { transfers, handleProgress, beginFolderTransfer, finishFolderTransfer } = useSftpTransfers()
 
 /** Run `fn`, logging and toasting any error with the given labels. */
@@ -548,8 +567,12 @@ onMounted(async () => {
   }
   await resolveHomeDir()
   await loadFiles()
-  await listeners.listen('sftp-progress', (event) => handleProgress(event.payload))
+  await listeners.listen('sftp-progress', (event) => {
+    if (event.payload?.sftp_session_id !== props.sftpSessionId) return
+    handleProgress(event.payload)
+  })
   await listeners.listen('tauri://drag-drop', (event) => {
+    if (!isPanelActive.value) return
     const payload = event.payload
     const paths = payload?.paths
     if (paths && paths.length > 0) {
@@ -574,33 +597,45 @@ watch(showColumns, (val) => {
   localStorage.setItem('sftp-columns', JSON.stringify(val))
 }, { deep: true })
 
+/** Loads the current directory. Returns false if the listing failed. */
 async function loadFiles() {
-  if (!props.sftpSessionId) return
+  if (!props.sftpSessionId) return false
   loading.value = true
   try {
     const result = await store.sftpList(props.sftpSessionId, currentPath.value)
     files.value = result || []
+    listError.value = ''
+    return true
   } catch (e) {
+    // Previously swallowed, so a dead session or an unreadable directory
+    // looked like a panel that had simply stopped responding.
     console.error('sftp_list failed:', e)
+    listError.value = String(e)
+    return false
+  } finally {
+    loading.value = false
   }
-  loading.value = false
 }
 
-function navigateTo(path) {
+/**
+ * Move to `path`, reverting if the listing fails so the breadcrumb never
+ * describes a directory other than the one whose rows are on screen.
+ */
+async function navigateTo(path) {
+  const previous = currentPath.value
   clearSelection()
   filterQuery.value = ''
   currentPath.value = path
-  loadFiles()
+  if (!(await loadFiles())) {
+    currentPath.value = previous
+  }
 }
 
 function goUp() {
   if (currentPath.value === '/') return
-  clearSelection()
-  filterQuery.value = ''
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()
-  currentPath.value = parts.length === 0 ? '/' : '/' + parts.join('/')
-  loadFiles()
+  navigateTo(parts.length === 0 ? '/' : '/' + parts.join('/'))
 }
 
 async function onUpload() {
@@ -692,8 +727,9 @@ async function copyRemotePath() {
 
 async function onPreviewFile(file) {
   if (!file || file.is_dir) return
-  // Close editor if open to avoid overlapping panels
-  editorRef.value?.hide()
+  // Close the editor to avoid overlapping panels, but let it prompt first
+  // rather than discarding unsaved changes.
+  if (editorRef.value && !(await editorRef.value.hide())) return
   previewModal.value = { show: true, fileName: file.name, filePath: file.path, fileSize: file.size || 0 }
 }
 

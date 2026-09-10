@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Security audit reported passes it could not verify** — four of the eight checks could return a false pass on a stock RHEL 9 or Ubuntu host, so an insecure server could score 87 "Good". Checks that cannot determine an answer now report `unknown` and are excluded from the score rather than counting as passes, and the panel shows how many checks passed out of how many could be determined.
+  - `ufw status` reporting `inactive` matched a `contains("active")` test and was read as active
+  - an unset `PasswordAuthentication` or `PermitRootLogin` matched a `contains("no")` test and was read as disabled; absence is now judged against the OpenSSH default
+  - the SSH config is read with `sshd -T` where possible, so settings in `/etc/ssh/sshd_config.d/` are seen; Ubuntu 22.04+ and RHEL 9 keep the real values there
+  - the SSH port check parses numbers instead of substring-matching `22`
+  - the iptables probe counted blank lines, so an empty ruleset looked configured
+  - dnf/yum security updates were structurally always zero
+  - an unreadable auth log was reported as "no failed login attempts"
+  - the sudo-user enumeration always returned a pass and is now informational
+- **SOCKS5 proxy connected to the wrong host** for requests carrying a literal IP address, which affected curl, proxychains, and most CLI tools.
+- **SFTP editor discarded unsaved changes** when a preview or a second file was opened, did not notice that the file had changed on the server, and truncated the target before writing, so an interrupted save could leave a half-written file.
+- **SFTP panel stayed broken after a reconnect**, and directory listing failures were invisible.
+- **A file dropped on the SFTP panel uploaded to every open host**, and transfer progress from one host appeared in every panel.
+- **Docker panel kept polling while hidden**, reported a stopped daemon as a permissions problem, and installed Docker without asking.
+- **Host import misreported its results** — a failed row was reported as a total failure even though earlier rows had been saved, and those rows did not appear until the list was reloaded.
+
+
 ## [0.2.6] — 2026-06-15
 
 ### Fixed

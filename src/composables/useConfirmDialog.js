@@ -11,6 +11,7 @@ export function useConfirmDialog() {
     message: '',
     danger: false,
     onConfirm: () => {},
+    onCancel: () => {},
   })
 
   function openConfirm(options) {
@@ -22,6 +23,12 @@ export function useConfirmDialog() {
       onConfirm: () => {
         confirmDialog.value.show = false
         options.onConfirm()
+      },
+      // Optional: callers that need to know the user declined, such as a
+      // discard-changes prompt guarding a navigation.
+      onCancel: () => {
+        confirmDialog.value.show = false
+        options.onCancel?.()
       },
     }
   }

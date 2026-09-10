@@ -80,7 +80,7 @@
     :danger="confirmDialog.danger"
     confirm-text="Delete"
     @confirm="confirmDialog.onConfirm"
-    @cancel="confirmDialog.show = false"
+    @cancel="confirmDialog.onCancel"
   />
 </template>
 
@@ -119,6 +119,10 @@ const editorModal = ref({
   x: typeof window !== 'undefined' ? window.innerWidth - 580 : 100,
   y: typeof window !== 'undefined' ? window.innerHeight - 420 : 100,
 })
+
+// Size and mtime as of the last load or save, so a save can tell whether
+// someone else changed the file in the meantime.
+let loadedStat = null
 
 const editorModalRef = ref(null)
 const editorLineNumbersRef = ref(null)
@@ -186,8 +190,41 @@ function onEditorResizeUp() {
 }
 
 
+/**
+ * Resolves true when the current buffer may be dropped: either it is clean,
+ * or the user confirmed discarding it.
+ */
+function confirmDiscard() {
+  if (!editorModal.value.dirty) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    openConfirm({
+      title: 'Unsaved Changes',
+      message: `You have unsaved changes in "${editorModal.value.fileName}". Discard them?`,
+      danger: true,
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    })
+  })
+}
+
+async function readStat() {
+  try {
+    return await invoke('sftp_stat_file', {
+      sftpSessionId: props.sftpSessionId,
+      remotePath: editorModal.value.filePath,
+    })
+  } catch (e) {
+    // Not being able to stat is not a reason to block a save.
+    console.warn('stat failed:', e)
+    return null
+  }
+}
+
 async function open(file) {
   if (!file || file.is_dir) return
+  // Opening a second file used to replace the buffer outright.
+  if (!(await confirmDiscard())) return
+  loadedStat = null
   editorModal.value = {
     show: true,
     fileName: file.name,
@@ -210,6 +247,7 @@ async function open(file) {
     })
     editorModal.value.content = content
     editorModal.value.originalContent = content
+    loadedStat = await readStat()
   } catch (e) {
     console.error('Editor load failed:', e)
     toast('Failed to load file: ' + e, 'error')
@@ -221,6 +259,26 @@ async function open(file) {
 
 async function onEditorSave() {
   if (!editorModal.value.dirty || editorModal.value.saving) return
+
+  // Refuse to silently clobber a file that changed under us.
+  const current = await readStat()
+  if (
+    loadedStat &&
+    current &&
+    (current.modified !== loadedStat.modified || current.size !== loadedStat.size)
+  ) {
+    const overwrite = await new Promise((resolve) => {
+      openConfirm({
+        title: 'File Changed on Server',
+        message: `"${editorModal.value.fileName}" was modified on the server after you opened it. Overwrite those changes?`,
+        danger: true,
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      })
+    })
+    if (!overwrite) return
+  }
+
   editorModal.value.saving = true
   try {
     await invoke('sftp_write_file', {
@@ -230,6 +288,7 @@ async function onEditorSave() {
     })
     editorModal.value.originalContent = editorModal.value.content
     editorModal.value.dirty = false
+    loadedStat = await readStat()
     toast(`Saved ${editorModal.value.fileName}`, 'success')
   } catch (e) {
     console.error('Save failed:', e)
@@ -263,9 +322,15 @@ function onEditorKeydown(e) {
   }
 }
 
-/** Hide without a dirty check (used when the preview opens on top). */
-function hide() {
+/**
+ * Hide the editor, prompting first if there are unsaved changes. Returns
+ * false if the user chose to keep editing, so a caller that was about to
+ * open something on top can stand down.
+ */
+async function hide() {
+  if (!(await confirmDiscard())) return false
   editorModal.value.show = false
+  return true
 }
 
 const isOpen = computed(() => editorModal.value.show)

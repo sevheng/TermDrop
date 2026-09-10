@@ -132,7 +132,8 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<()> {
+/// Returns the number of rows updated, which is 0 when `id` no longer exists.
+pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usize> {
     conn.execute(
         "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10 WHERE id = ?11",
         params![
@@ -148,8 +149,7 @@ pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<()> 
             host.mongo_local_uri.as_deref(),
             id
         ],
-    )?;
-    Ok(())
+    )
 }
 
 pub fn delete_host(conn: &Connection, id: i64) -> SqlResult<()> {
@@ -414,6 +414,111 @@ pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
 mod tests {
     use super::*;
 
+    fn sample(name: &str) -> NewHost {
+        NewHost {
+            name: name.to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth_type: "password".to_string(),
+            key_path: None,
+            group: None,
+            favorite: None,
+            mongo_uri: None,
+            mongo_local_uri: None,
+        }
+    }
+
+    #[test]
+    fn validate_new_host_rejects_what_the_form_rejects() {
+        assert!(validate_new_host(&sample("ok")).is_ok());
+
+        let mut h = sample("");
+        assert!(validate_new_host(&h).unwrap_err().contains("Name"));
+
+        h = sample("x");
+        h.port = 0;
+        assert!(validate_new_host(&h).unwrap_err().contains("Port"));
+        h.port = 65536;
+        assert!(validate_new_host(&h).unwrap_err().contains("Port"));
+
+        h = sample("x");
+        h.auth_type = "agent".to_string();
+        assert!(validate_new_host(&h).unwrap_err().contains("Auth type"));
+
+        h = sample("x");
+        h.host = String::new();
+        assert!(validate_new_host(&h).unwrap_err().contains("Host"));
+    }
+
+    #[test]
+    fn validate_new_host_allows_a_mongo_only_row() {
+        // These legitimately carry no SSH host, username, or port.
+        let mut h = sample("mongo");
+        h.host = String::new();
+        h.username = String::new();
+        h.port = 0;
+        h.mongo_uri = Some("mongodb://localhost".to_string());
+        assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn update_host_reports_rows_affected() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let id = add_host(&conn, &sample("a")).unwrap();
+        assert_eq!(update_host(&conn, id, &sample("b")).unwrap(), 1);
+        // was: a silent no-op, so a stale id looked like a successful edit.
+        assert_eq!(update_host(&conn, 9999, &sample("b")).unwrap(), 0);
+    }
+
+    #[test]
+    fn import_adds_replaces_and_reports_failures_without_losing_good_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let existing = add_host(&conn, &sample("existing")).unwrap();
+
+        let mut bad = sample("bad");
+        bad.port = -1;
+        let mut replacement = sample("existing");
+        replacement.username = "replaced".to_string();
+
+        let summary = import_entries(
+            &conn,
+            vec![
+                ImportEntry {
+                    host: sample("fresh"),
+                    replace_id: None,
+                },
+                ImportEntry {
+                    host: replacement,
+                    replace_id: Some(existing),
+                },
+                ImportEntry {
+                    host: bad,
+                    replace_id: None,
+                },
+                // A replace whose target is gone becomes an insert.
+                ImportEntry {
+                    host: sample("orphan"),
+                    replace_id: Some(4242),
+                },
+            ],
+        );
+
+        assert_eq!(summary.added, 2, "fresh and orphan");
+        assert_eq!(summary.replaced, 1);
+        assert_eq!(summary.failed.len(), 1);
+        assert_eq!(summary.failed[0].name, "bad");
+        assert!(summary.failed[0].reason.contains("Port"));
+
+        // The good rows are committed even though one row failed.
+        let hosts = get_hosts(&conn).unwrap();
+        assert_eq!(hosts.len(), 3);
+        let replaced = hosts.iter().find(|h| h.id == existing).unwrap();
+        assert_eq!(replaced.username, "replaced", "replace keeps the row id");
+    }
+
     #[test]
     fn test_host_crud() {
         let conn = Connection::open_in_memory().unwrap();
@@ -450,4 +555,98 @@ mod tests {
         let hosts = get_hosts(&conn).unwrap();
         assert_eq!(hosts.len(), 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Host import
+// ---------------------------------------------------------------------------
+
+/// One host to import. `replace_id` names an existing row to update in place
+/// rather than inserting; updating preserves the row id, and therefore the
+/// keyring entry and any port forwards that reference it.
+#[derive(Debug, Deserialize)]
+pub struct ImportEntry {
+    pub host: NewHost,
+    pub replace_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportFailure {
+    pub name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct ImportSummary {
+    pub added: usize,
+    pub replaced: usize,
+    pub failed: Vec<ImportFailure>,
+}
+
+/// Reject rows the host form would not accept either. Username is not
+/// required and a missing key file is not an error here, because a
+/// MongoDB-only host legitimately has no SSH fields at all.
+pub fn validate_new_host(host: &NewHost) -> Result<(), String> {
+    if host.name.trim().is_empty() {
+        return Err("Name is required".to_string());
+    }
+    if !(1..=65535).contains(&host.port) && host.mongo_uri.is_none() {
+        return Err(format!(
+            "Port must be between 1 and 65535, got {}",
+            host.port
+        ));
+    }
+    if host.auth_type != "password" && host.auth_type != "key" {
+        return Err(format!(
+            "Auth type must be \"password\" or \"key\", got \"{}\"",
+            host.auth_type
+        ));
+    }
+    if host.host.trim().is_empty() && host.mongo_uri.is_none() {
+        return Err("Host is required".to_string());
+    }
+    Ok(())
+}
+
+/// Insert or replace each entry, collecting per-row failures instead of
+/// aborting the whole import. The caller has already reviewed the list, so
+/// one bad row should not discard the rest.
+pub fn import_entries(conn: &Connection, entries: Vec<ImportEntry>) -> ImportSummary {
+    let mut summary = ImportSummary::default();
+
+    for entry in entries {
+        let name = entry.host.name.clone();
+        if let Err(reason) = validate_new_host(&entry.host) {
+            summary.failed.push(ImportFailure { name, reason });
+            continue;
+        }
+
+        // A replace whose target has since been deleted falls back to an insert.
+        let replaced = match entry.replace_id {
+            Some(id) => match update_host(conn, id, &entry.host) {
+                Ok(rows) => rows > 0,
+                Err(e) => {
+                    summary.failed.push(ImportFailure {
+                        name,
+                        reason: e.to_string(),
+                    });
+                    continue;
+                }
+            },
+            None => false,
+        };
+
+        if replaced {
+            summary.replaced += 1;
+        } else if let Err(e) = add_host(conn, &entry.host) {
+            summary.failed.push(ImportFailure {
+                name,
+                reason: e.to_string(),
+            });
+        } else {
+            summary.added += 1;
+        }
+    }
+
+    summary
 }

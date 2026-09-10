@@ -304,7 +304,7 @@ fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String
 
 #[tauri::command]
 fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host(conn, id, &host))
+    with_db(&state, |conn| db::update_host(conn, id, &host)).map(|_| ())
 }
 
 #[tauri::command]
@@ -440,37 +440,6 @@ fn parse_ssh_config() -> Result<Vec<ssh_config_parser::SshConfigHost>, String> {
 }
 
 #[tauri::command]
-fn import_ssh_config_hosts(
-    state: State<'_, AppState>,
-    hosts: Vec<ssh_config_parser::SshConfigHost>,
-) -> Result<usize, String> {
-    let mut conn = state.db.get().map_err(db_err)?;
-    // One transaction instead of one fsync per row. A row that fails to
-    // insert is skipped, as before; SQLite rolls back only that statement.
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let mut count = 0;
-    for h in hosts {
-        let new_host = db::NewHost {
-            name: h.name,
-            host: h.host,
-            port: h.port,
-            username: h.username,
-            auth_type: h.auth_type,
-            key_path: h.key_path,
-            group: None,
-            favorite: None,
-            mongo_uri: None,
-            mongo_local_uri: None,
-        };
-        if db::add_host(&tx, &new_host).is_ok() {
-            count += 1;
-        }
-    }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(count)
-}
-
-#[tauri::command]
 fn ssh_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let host_id = {
         let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -542,6 +511,7 @@ async fn ssh_reconnect(
     window: Window,
     state: State<'_, AppState>,
     session_id: String,
+    sftp_session_id: Option<String>,
     password: Option<String>,
 ) -> Result<(), String> {
     let host_id = {
@@ -608,6 +578,36 @@ async fn ssh_reconnect(
         exec_sessions.insert(host_id, Arc::new(Mutex::new(exec_session)));
     }
 
+    // The tab's SFTP handle died with the connection. Replace it under the
+    // same id so the panel keeps working instead of holding a dead session
+    // until the tab is closed. A failure here is not fatal to the shell.
+    if let Some(sftp_id) = sftp_session_id {
+        let sftp_host = host.host.clone();
+        let sftp_port = host.port as u16;
+        let sftp_user = host.username.clone();
+        let sftp_password = password.clone();
+        let sftp_key = key_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            sftp::sftp_connect(
+                sftp_host,
+                sftp_port,
+                sftp_user,
+                sftp_password,
+                sftp_key,
+                host_id,
+            )
+        })
+        .await
+        {
+            Ok(Ok(handle)) => {
+                let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
+                sftp_sessions.insert(sftp_id, Arc::new(handle));
+            }
+            Ok(Err(e)) => tracing::warn!("SFTP reconnect failed: {}", e),
+            Err(e) => tracing::warn!("SFTP reconnect task failed: {}", e),
+        }
+    }
+
     let _ = window.emit("ssh-reconnected", session_id);
     Ok(())
 }
@@ -664,8 +664,9 @@ async fn sftp_upload(
     local_path: String,
     remote_path: String,
 ) -> Result<(), String> {
+    let session_id = sftp_session_id.clone();
     sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_upload(window, handle, &local_path, &remote_path)
+        sftp::sftp_upload(window, &session_id, handle, &local_path, &remote_path)
     })
     .await
 }
@@ -687,8 +688,15 @@ async fn sftp_download(
     let local_path = download_dir.join(&file_name);
     let local_path_str = local_path.to_string_lossy().to_string();
     let local_path_str_for_dl = local_path_str.clone();
+    let session_id = sftp_session_id.clone();
     sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_download(window, handle, &remote_path, &local_path_str_for_dl)
+        sftp::sftp_download(
+            window,
+            &session_id,
+            handle,
+            &remote_path,
+            &local_path_str_for_dl,
+        )
     })
     .await?;
     Ok(local_path_str)
@@ -836,6 +844,20 @@ async fn sftp_write_file(
 ) -> Result<(), String> {
     sftp_blocking(&state, &sftp_session_id, move |handle| {
         sftp::sftp_write_file(handle, &remote_path, &content)
+    })
+    .await
+}
+
+/// Size and mtime of a remote file, used to detect that it changed while an
+/// editor had it open.
+#[tauri::command]
+async fn sftp_stat_file(
+    state: State<'_, AppState>,
+    sftp_session_id: String,
+    remote_path: String,
+) -> Result<sftp::SftpStat, String> {
+    sftp_blocking(&state, &sftp_session_id, move |handle| {
+        sftp::sftp_stat_file(handle, &remote_path)
     })
     .await
 }
@@ -1025,23 +1047,19 @@ fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn import_hosts(state: State<'_, AppState>, json: String) -> Result<i64, String> {
-    let hosts: Vec<db::NewHost> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+/// Import hosts from either source. Rows that fail validation or insertion
+/// are reported individually rather than aborting the import, so the caller
+/// can tell the user exactly what landed and what did not.
+fn import_hosts(
+    state: State<'_, AppState>,
+    entries: Vec<db::ImportEntry>,
+) -> Result<db::ImportSummary, String> {
     let mut conn = state.db.get().map_err(db_err)?;
-    // One transaction instead of one fsync per row. On a bad row the rows
-    // before it are kept and the error is returned, matching the previous
-    // autocommit behavior.
+    // One transaction instead of one fsync per row.
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let mut count = 0;
-    for host in hosts {
-        if let Err(e) = db::add_host(&tx, &host) {
-            tx.commit().map_err(|e| e.to_string())?;
-            return Err(e.to_string());
-        }
-        count += 1;
-    }
+    let summary = db::import_entries(&tx, entries);
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(count)
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1492,6 +1510,7 @@ fn main() {
             sftp_mkdir,
             sftp_rmdir,
             sftp_realpath,
+            sftp_stat_file,
             sftp_read_file,
             sftp_read_file_base64,
             sftp_write_file,
@@ -1504,7 +1523,6 @@ fn main() {
             export_hosts,
             import_hosts,
             parse_ssh_config,
-            import_ssh_config_hosts,
             write_file,
             get_setting,
             set_setting,
