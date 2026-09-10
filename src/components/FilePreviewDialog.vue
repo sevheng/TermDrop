@@ -50,7 +50,7 @@
           <button @click="$emit('download')" class="text-[10px] text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded" title="Download">
             ⬇
           </button>
-          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-[10px] text-white bg-accent hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
+          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-[10px] text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
             Edit
           </button>
           <button @click="$emit('close')" class="text-ink-2 hover:text-ink leading-none">×</button>

@@ -14,7 +14,7 @@
         placeholder="Production cache"
         class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
       />
-      <p v-if="errors.name" class="text-[10px] text-red-400 mt-1">{{ errors.name }}</p>
+      <p v-if="errors.name" class="text-[10px] text-bad mt-1">{{ errors.name }}</p>
     </div>
 
     <fieldset class="border border-line rounded p-3 mb-5">

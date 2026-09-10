@@ -19,14 +19,14 @@
         <button
           @click.stop="editorModal.wordWrap = !editorModal.wordWrap"
           class="text-[10px] px-1.5 py-0.5 rounded"
-          :class="editorModal.wordWrap ? 'bg-accent text-white' : 'bg-input text-ink-2 hover:text-ink'"
+          :class="editorModal.wordWrap ? 'bg-accent-solid text-white' : 'bg-input text-ink-2 hover:text-ink'"
           title="Toggle word wrap"
         >↵ Wrap</button>
         <button
           @click.stop="onEditorSave"
           :disabled="editorModal.saving || !editorModal.dirty"
           class="text-[11px] px-2.5 py-1 rounded font-medium"
-          :class="editorModal.dirty ? 'bg-good hover:bg-good-hover text-black' : 'bg-input text-ink-2 cursor-not-allowed'"
+          :class="editorModal.dirty ? 'bg-good-solid hover:bg-good-solid-hover text-white' : 'bg-input text-ink-2 cursor-not-allowed'"
         >
           {{ editorModal.saving ? 'Saving...' : 'Save' }}
         </button>

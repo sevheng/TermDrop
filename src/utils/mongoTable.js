@@ -3,8 +3,8 @@
  *
  * A MongoDB collection has no schema, so the columns are whatever the documents
  * on the current page happen to contain. Deriving them here, rather than in the
- * component, is what makes the behaviour testable — MongoDocumentsView.vue
- * cannot be mounted in tests because @vue/test-utils is not installed.
+ * component, is what makes the behaviour testable: a pure function is far
+ * cheaper to cover than a mounted SFC.
  */
 
 import { toDisplayValue } from './bsonDisplay.js'

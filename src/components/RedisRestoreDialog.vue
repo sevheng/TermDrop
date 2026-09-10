@@ -54,11 +54,11 @@
         type="checkbox"
         :checked="state.flushFirst"
         @change="$emit('update:flushFirst', $event.target.checked)"
-        class="accent-red-500 mt-0.5"
+        class="accent-bad mt-0.5"
       />
       <span class="text-xs text-ink">
         Empty the database first
-        <span class="block text-[10px] text-red-400">
+        <span class="block text-[10px] text-bad">
           Deletes every key in db{{ state.targetDb }} before restoring. This cannot be undone.
         </span>
       </span>
@@ -74,7 +74,7 @@
       <button
         @click="$emit('confirm')"
         class="px-3 py-1.5 text-xs rounded text-white"
-        :class="state.flushFirst ? 'bg-red-700 hover:bg-red-600' : 'bg-accent-solid hover:bg-accent-solid-hover'"
+        :class="state.flushFirst ? 'bg-bad-solid-hover hover:bg-bad-solid' : 'bg-accent-solid hover:bg-accent-solid-hover'"
       >
         {{ state.flushFirst ? 'Empty and restore' : 'Restore' }}
       </button>

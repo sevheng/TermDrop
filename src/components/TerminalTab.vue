@@ -370,7 +370,7 @@ let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl)
 const contextMenuForward = ref(null) // { port, label } or null
-const terminalBgClass = ref('bg-gray-900')
+const terminalBgClass = ref('bg-canvas')
 
 const searchVisible = ref(false)
 const searchQuery = ref('')

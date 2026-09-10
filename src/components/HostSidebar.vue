@@ -117,7 +117,7 @@
       <template v-else>
         <!-- Favorites section -->
         <div v-if="favoriteHosts.length > 0 && !searchQuery.trim()" class="mb-1">
-          <div class="px-2 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider dark:text-gray-500 flex items-center gap-1">
+          <div class="px-2 py-0.5 text-[10px] font-semibold text-ink-3 uppercase tracking-wider dark:text-ink-3 flex items-center gap-1">
             <Star :size="10" class="text-warn" />
             Favorites
           </div>
@@ -139,8 +139,11 @@
         <template v-for="(groupHosts, groupName) in groupedHosts" :key="groupName">
           <div class="mb-1">
             <div
-              class="flex items-center justify-between px-2 py-0.5 rounded cursor-pointer select-none"
-              :class="[groupColorClass(groupName), dragOverGroup === groupName ? 'ring-1 ring-blue-400' : '']"
+              class="flex items-center justify-between border-l-2 pl-2 pr-2 py-0.5 rounded-r cursor-pointer select-none hover:bg-raised"
+              :class="[
+                groupAccentClass(groupName),
+                dragOverGroup === groupName ? 'ring-1 ring-accent' : '',
+              ]"
               @click="toggleGroup(groupName)"
               @contextmenu.prevent.stop="showGroupMenu($event, groupName)"
               @dragover.prevent="dragOverGroup = groupName"
@@ -187,7 +190,7 @@
           {{ activateVerb(contextMenu.data) }}
         </button>
         <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
-          <Pencil :size="12" class="text-gray-400" />
+          <Pencil :size="12" class="text-ink-3" />
           Edit
         </button>
         <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
@@ -207,7 +210,7 @@
           @click="menuAction(() => moveHostToGroup(contextMenu.data.id, g))"
           class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink-2 hover:bg-raised"
         >
-          <Folder :size="10" class="text-gray-400" />
+          <Folder :size="10" class="text-ink-3" />
           {{ g || 'Ungrouped' }}
         </button>
       </template>
@@ -219,7 +222,7 @@
           Add Host
         </button>
         <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
-          <Pencil :size="12" class="text-gray-400" />
+          <Pencil :size="12" class="text-ink-3" />
           Rename
         </button>
         <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-bad hover:bg-raised">
@@ -312,6 +315,7 @@ import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/h
 import { splitMongoUri } from '../utils/mongoUri.js'
 import { splitRedisUri } from '../utils/redisUri.js'
 import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
+import { groupAccentClass } from '../utils/groupAccent.js'
 import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
@@ -412,31 +416,6 @@ const groupedHosts = computed(() => {
   return sorted
 })
 
-const GROUP_COLORS = [
-  'hover:bg-blue-50 dark:hover:bg-blue-900/20',
-  'hover:bg-green-50 dark:hover:bg-green-900/20',
-  'hover:bg-purple-50 dark:hover:bg-purple-900/20',
-  'hover:bg-orange-50 dark:hover:bg-orange-900/20',
-  'hover:bg-pink-50 dark:hover:bg-pink-900/20',
-  'hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
-  'hover:bg-yellow-50 dark:hover:bg-yellow-900/20',
-  'hover:bg-red-50 dark:hover:bg-red-900/20',
-]
-const colorClassCache = new Map()
-
-function groupColorClass(name) {
-  if (colorClassCache.has(name)) {
-    return colorClassCache.get(name)
-  }
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash) + name.charCodeAt(i)
-    hash |= 0
-  }
-  const result = GROUP_COLORS[Math.abs(hash) % GROUP_COLORS.length]
-  colorClassCache.set(name, result)
-  return result
-}
 
 function toggleView() {
   viewMode.value = viewMode.value === 'grouped' ? 'flat' : 'grouped'

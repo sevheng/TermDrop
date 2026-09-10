@@ -75,6 +75,25 @@
      replaces Menlo/Monaco, which resolve to Courier New anywhere but macOS */
   --td-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --td-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* solid fills — a tone bright enough to read as text cannot carry a white
+     label, so good/warn get the same split bad and accent already have */
+  --td-good-solid: 20 122 59;
+  --td-good-solid-hover: 15 95 46;
+  --td-warn-solid: 122 79 0;
+  --td-warn-solid-hover: 94 61 0;
+
+  /* group rails — eight hues for the sidebar's group markers. Non-text, so
+     the bar is 3:1 against the surface behind them; all eight clear it in
+     both themes. */
+  --td-tag-1: 44 107 181;
+  --td-tag-2: 37 121 76;
+  --td-tag-3: 107 79 181;
+  --td-tag-4: 168 95 33;
+  --td-tag-5: 138 109 0;
+  --td-tag-6: 176 58 58;
+  --td-tag-7: 27 124 119;
+  --td-tag-8: 168 74 128;
 }
 
 html.dark {
@@ -133,4 +152,20 @@ html.dark {
   --td-syn-yellow: 227 192 139;
   --td-syn-teal: 111 211 190;
   --td-syn-purple: 211 162 216;
+
+  /* solid fills — see the light block */
+  --td-good-solid: 21 128 61;
+  --td-good-solid-hover: 26 147 73;
+  --td-warn-solid: 138 90 0;
+  --td-warn-solid-hover: 161 108 0;
+
+  /* group rails */
+  --td-tag-1: 79 143 224;
+  --td-tag-2: 79 176 122;
+  --td-tag-3: 155 127 224;
+  --td-tag-4: 217 136 74;
+  --td-tag-5: 201 162 39;
+  --td-tag-6: 217 106 106;
+  --td-tag-7: 63 175 168;
+  --td-tag-8: 217 122 176;
 }

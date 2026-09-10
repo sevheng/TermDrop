@@ -38,17 +38,17 @@
             <span
               v-else
               class="w-2 h-2 rounded-full shrink-0"
-              :class="tab.connected !== false ? 'bg-green-500' : 'bg-red-500'"
+              :class="tab.connected !== false ? 'bg-good' : 'bg-bad'"
             ></span>
             <span>{{ tab.name }}</span>
             <span
               v-if="tab.connecting"
-              class="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0"
+              class="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0"
             ></span>
             <span
               v-else
               @click.stop="confirmDisconnect(tab.id, tab.name)"
-              class="hover:text-red-400 cursor-pointer ml-1"
+              class="hover:text-bad cursor-pointer ml-1"
             >
               <X :size="14" />
             </span>
@@ -92,7 +92,7 @@
           />
           <div
             v-if="!store.activeTabId"
-            class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 absolute inset-0"
+            class="flex items-center justify-center h-full text-ink-3 dark:text-ink-3 absolute inset-0"
           >
             <div class="text-center">
               <TerminalIcon :size="40" class="mx-auto mb-3 opacity-50" />

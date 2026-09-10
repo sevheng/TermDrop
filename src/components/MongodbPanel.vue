@@ -72,7 +72,7 @@
     <div v-if="backup.busy.value" class="px-4 py-2 border-b border-line shrink-0 bg-surface space-y-1">
       <div class="flex items-center justify-between text-[10px] text-ink-3">
         <span>{{ backup.progress.value.stage }} {{ backup.progress.value.collection }}</span>
-        <button @click="backup.cancel" class="text-bad hover:text-red-300 underline">
+        <button @click="backup.cancel" class="text-bad hover:text-bad underline">
           Cancel
         </button>
       </div>

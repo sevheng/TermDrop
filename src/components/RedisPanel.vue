@@ -66,7 +66,7 @@
       </span>
       <button
         @click="backup.cancel()"
-        class="text-xs px-2 py-0.5 rounded text-red-400 hover:bg-input shrink-0"
+        class="text-xs px-2 py-0.5 rounded text-bad hover:bg-input shrink-0"
       >
         Cancel
       </button>
@@ -77,8 +77,8 @@
       v-if="connectError"
       class="flex items-start gap-2 px-3 py-2 bg-bad-bg border-b border-bad-line shrink-0"
     >
-      <AlertCircle :size="14" class="text-red-400 shrink-0 mt-0.5" />
-      <p class="text-xs text-red-300 flex-1">{{ connectError }}</p>
+      <AlertCircle :size="14" class="text-bad shrink-0 mt-0.5" />
+      <p class="text-xs text-bad flex-1">{{ connectError }}</p>
       <button
         @click="connect"
         class="text-xs px-2 py-0.5 rounded text-ink hover:bg-input shrink-0"

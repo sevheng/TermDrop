@@ -62,7 +62,7 @@
             <Table :size="10" class="shrink-0 text-ink-3" />
             <span
               class="truncate flex-1"
-              :class="isActive(db.name, coll) ? 'text-white' : ''"
+              :class="isActive(db.name, coll) ? 'text-ink font-medium' : ''"
               @click.stop.prevent="browsable && $emit('open-collection', db.name, coll)"
             >
               {{ coll }}

@@ -30,7 +30,7 @@
       Inline, not a toast: a bad pattern is something you correct in place, and
       a toast would scroll away from the box you fix it in.
     -->
-    <div v-if="error" class="px-3 py-2 text-xs text-red-400 border-b border-line shrink-0">
+    <div v-if="error" class="px-3 py-2 text-xs text-bad border-b border-line shrink-0">
       {{ error }}
     </div>
 

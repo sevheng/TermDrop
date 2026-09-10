@@ -21,7 +21,7 @@
       <div v-if="loading" class="flex items-center justify-center py-8">
         <Loader2 :size="16" class="animate-spin text-ink-2" />
       </div>
-      <div v-else-if="error" class="px-3 py-2 text-xs text-red-400">{{ error }}</div>
+      <div v-else-if="error" class="px-3 py-2 text-xs text-bad">{{ error }}</div>
 
       <div
         v-else-if="!isViewableKind(page?.kind)"
