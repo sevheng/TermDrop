@@ -142,13 +142,16 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import {
   RefreshCw, Loader2, Container,
   Play, Square, RotateCcw, FileText, Terminal,
 } from 'lucide-vue-next'
 import VirtualList from './VirtualList.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import { shellEscape } from '../utils/shell.js'
+import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
 const props = defineProps({
   hostId: {
@@ -168,19 +171,7 @@ const installing = ref(false)
 let refreshInterval = null
 
 // Confirm dialog state
-const confirmDialog = ref({
-  show: false,
-  title: 'Confirm',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
-
-function shellEscape(s) {
-  if (!s) return "''"
-  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
-  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
-}
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 async function loadContainers(silent = false) {
   if (!props.hostId) return
@@ -208,12 +199,12 @@ async function installDocker() {
   installing.value = true
   try {
     await invoke('docker_install', { hostId: props.hostId })
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker installed successfully', type: 'success' } }))
+    toast('Docker installed successfully', 'success')
     dockerNotInstalled.value = false
     await loadContainers()
   } catch (err) {
     console.error('docker_install failed:', err)
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker install failed: ' + err, type: 'error' } }))
+    toast('Docker install failed: ' + err, 'error')
   }
   installing.value = false
 }
@@ -221,9 +212,9 @@ async function installDocker() {
 function handleDockerError(err, action) {
   const errStr = String(err)
   if (errStr.includes('DOCKER_PERMISSION_DENIED')) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', type: 'error' } }))
+    toast('Docker permission denied. Add user to docker group: sudo usermod -aG docker $USER', 'error')
   } else {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `${action} failed: ${errStr}`, type: 'error' } }))
+    toast(`${action} failed: ${errStr}`, 'error')
   }
 }
 
@@ -242,13 +233,11 @@ async function startContainer(id) {
 async function stopContainer(id) {
   const c = containers.value.find(x => x.id === id)
   if (!c) return
-  confirmDialog.value = {
-    show: true,
+  openConfirm({
     title: 'Stop Container',
     message: `Stop "${c.name}"?`,
     danger: true,
     onConfirm: async () => {
-      confirmDialog.value.show = false
       c.running = false
       c.status = 'Stopping...'
       try {
@@ -259,19 +248,17 @@ async function stopContainer(id) {
         loadContainers(true)
       }
     },
-  }
+  })
 }
 
 async function restartContainer(id) {
   const c = containers.value.find(x => x.id === id)
   if (!c) return
-  confirmDialog.value = {
-    show: true,
+  openConfirm({
     title: 'Restart Container',
     message: `Restart "${c.name}"?`,
     danger: true,
     onConfirm: async () => {
-      confirmDialog.value.show = false
       c.status = 'Restarting...'
       try {
         await invoke('docker_restart', { hostId: props.hostId, containerId: id })
@@ -281,7 +268,7 @@ async function restartContainer(id) {
         loadContainers(true)
       }
     },
-  }
+  })
 }
 
 async function viewLogs(id, name, running) {

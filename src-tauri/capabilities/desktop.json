@@ -11,8 +11,6 @@
   "permissions": [
     "window-state:default",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    "shell:allow-spawn",
-    "shell:allow-execute"
+    "clipboard-manager:allow-write-text"
   ]
 }

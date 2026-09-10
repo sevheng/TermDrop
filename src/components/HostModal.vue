@@ -1,9 +1,5 @@
 <template>
-  <div
-    v-if="show"
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-  >
-    <div class="bg-[#252526] rounded-lg p-6 w-[28rem] border border-[#3c3c3c] shadow-xl">
+  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
         {{ isEditing ? 'Edit Host' : 'Add Host' }}
       </h3>
@@ -155,14 +151,14 @@
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Host') }}
         </button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Eye, EyeOff, Loader2, FileSearch } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -322,5 +318,9 @@ watch(() => props.show, (visible) => {
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>

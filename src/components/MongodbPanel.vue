@@ -262,11 +262,7 @@
     </div>
 
     <!-- Restore confirmation modal -->
-    <div
-      v-if="restoreConfirm.show"
-      class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-    >
-      <div class="bg-[#252526] rounded-lg p-5 w-[28rem] border border-[#3c3c3c] shadow-xl">
+    <ModalShell :show="restoreConfirm.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
         <h3 class="text-base font-semibold text-[#cccccc] mb-3">Confirm restore</h3>
         <div class="space-y-2 text-sm text-[#cccccc]">
           <p>
@@ -334,15 +330,13 @@
             Restore
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { ref, computed, onMounted, watch } from 'vue'
+import { invoke } from '../utils/invoke.js'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
   Database,
@@ -355,19 +349,37 @@ import {
   ArrowRightLeft,
 } from 'lucide-vue-next'
 import DbTree from './DbTree.vue'
+import ModalShell from './ModalShell.vue'
+import { toast } from '../utils/toast.js'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
+import { useMongoSide, fetchCollections } from '../composables/useMongoSide.js'
+import {
+  dbSelectionState,
+  countSelected,
+  buildEntries,
+  toggleCollection as toggleCollectionIn,
+  withoutDb,
+  withAllCollections,
+} from '../utils/mongoSelection.js'
 
 const props = defineProps({
   hostId: { type: Number, required: true },
 })
 
 const host = ref(null)
-const remoteDatabases = ref([])
-const localDatabases = ref([])
-const expandedRemoteDbs = ref(new Set())
-const expandedLocalDbs = ref(new Set())
+const remoteUri = computed(() => host.value?.mongo_uri || '')
+const localUri = computed(() => host.value?.mongo_local_uri || '')
+const hasLocalUri = computed(() => !!localUri.value)
+
+// The two physical sides. "Source" and "dest" are roles that flip with the direction.
+const remote = useMongoSide(remoteUri, 'remote')
+const local = useMongoSide(localUri, 'local')
+const loadingRemote = remote.loading
+const loadingLocal = local.loading
+const loadRemoteDatabases = remote.loadDatabases
+const loadLocalDatabases = local.loadDatabases
+
 const selectedCollections = ref(new Map())
-const loadingRemote = ref(false)
-const loadingLocal = ref(false)
 const syncing = ref(false)
 const currentAction = ref('') // 'sync' | 'dump-folder' | 'dump-archive' | 'restore-folder' | 'restore-archive'
 const dropFirst = ref(false)
@@ -375,14 +387,8 @@ const isRemoteToLocal = ref(true) // true = Remote→Local, false = Local→Remo
 const currentOpId = ref('')
 const aborting = ref(false)
 
-const syncProgress = ref({
-  db: '',
-  collection: '',
-  stage: '',
-  synced: 0,
-  total: 0,
-  percent: 0,
-})
+const EMPTY_PROGRESS = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+const syncProgress = ref({ ...EMPTY_PROGRESS })
 
 const restoreConfirm = ref({
   show: false,
@@ -397,28 +403,43 @@ function resetOperationState() {
   currentAction.value = ''
   currentOpId.value = ''
   aborting.value = false
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  syncProgress.value = { ...EMPTY_PROGRESS }
 }
 
-const remoteUri = computed(() => host.value?.mongo_uri || '')
-const localUri = computed(() => host.value?.mongo_local_uri || '')
-const hasLocalUri = computed(() => !!localUri.value)
+/** Mark an operation as running with a fresh op id for cancellation. */
+function beginOperation(action) {
+  syncing.value = true
+  currentAction.value = action
+  currentOpId.value = crypto.randomUUID()
+  aborting.value = false
+  syncProgress.value = { ...EMPTY_PROGRESS }
+}
+
+/**
+ * Toast an operation error. Cancellations reset the panel and return true
+ * so loops can stop; other errors are reported with `failedPrefix: err`.
+ */
+function handleOperationError(err, cancelledMessage, failedPrefix) {
+  if (String(err).includes('cancelled')) {
+    resetOperationState()
+    toast(cancelledMessage, 'info')
+    return true
+  }
+  toast(`${failedPrefix}: ${err}`, 'error')
+  return false
+}
 
 // Source/dest computed based on direction
+const sourceSide = computed(() => isRemoteToLocal.value ? remote : local)
+const destSide = computed(() => isRemoteToLocal.value ? local : remote)
 const sourceUri = computed(() => isRemoteToLocal.value ? remoteUri.value : localUri.value)
 const destUri = computed(() => isRemoteToLocal.value ? localUri.value : remoteUri.value)
-const sourceDatabases = computed(() => isRemoteToLocal.value ? remoteDatabases.value : localDatabases.value)
-const destDatabases = computed(() => isRemoteToLocal.value ? localDatabases.value : remoteDatabases.value)
-const sourceExpandedDbs = computed(() => isRemoteToLocal.value ? expandedRemoteDbs.value : expandedLocalDbs.value)
-const destExpandedDbs = computed(() => isRemoteToLocal.value ? expandedLocalDbs.value : expandedRemoteDbs.value)
+const sourceDatabases = computed(() => sourceSide.value.databases.value)
+const destDatabases = computed(() => destSide.value.databases.value)
+const sourceExpandedDbs = computed(() => sourceSide.value.expandedDbs.value)
+const destExpandedDbs = computed(() => destSide.value.expandedDbs.value)
 
-const selectedCount = computed(() => {
-  let count = 0
-  for (const set of selectedCollections.value.values()) {
-    count += set.size
-  }
-  return count
-})
+const selectedCount = computed(() => countSelected(selectedCollections.value))
 
 const canSync = computed(() => {
   return sourceUri.value && destUri.value && selectedCount.value > 0 && !syncing.value
@@ -440,102 +461,58 @@ const syncButtonLabel = computed(() => {
   return `Sync ${selectedCount.value} collection${selectedCount.value === 1 ? '' : 's'} (${dir})`
 })
 
-function isSelected(db, coll) {
-  return selectedCollections.value.get(db)?.has(coll) || false
-}
-
-function dbSelectionState(db) {
-  const selected = selectedCollections.value.get(db.name)
-  if (!selected || selected.size === 0) return 'none'
-  if (db.collections.length > 0 && selected.size === db.collections.length) return 'all'
-  return 'some'
-}
-
 async function toggleDbSelection(db) {
-  const state = dbSelectionState(db)
-  const newMap = new Map(selectedCollections.value)
+  const state = dbSelectionState(selectedCollections.value, db)
 
   if (state === 'all') {
-    newMap.delete(db.name)
-  } else {
-    if (!sourceExpandedDbs.value.has(db.name)) {
-      const newExpanded = new Set(sourceExpandedDbs.value)
-      newExpanded.add(db.name)
-      if (isRemoteToLocal.value) {
-        expandedRemoteDbs.value = newExpanded
-      } else {
-        expandedLocalDbs.value = newExpanded
-      }
-    }
-    if (db.collections.length === 0 && !db.loading) {
-      await fetchSourceCollections(db)
-    }
-    newMap.set(db.name, new Set(db.collections))
+    selectedCollections.value = withoutDb(selectedCollections.value, db.name)
+    return
   }
-  selectedCollections.value = newMap
+  const side = sourceSide.value
+  if (!side.expandedDbs.value.has(db.name)) {
+    const newExpanded = new Set(side.expandedDbs.value)
+    newExpanded.add(db.name)
+    side.expandedDbs.value = newExpanded
+  }
+  if (db.collections.length === 0 && !db.loading) {
+    await fetchCollections(sourceUri.value, db, 'source')
+  }
+  selectedCollections.value = withAllCollections(selectedCollections.value, db)
 }
 
 function toggleCollection(db, coll) {
-  const set = selectedCollections.value.get(db) || new Set()
-  const newSet = new Set(set)
-  if (newSet.has(coll)) {
-    newSet.delete(coll)
-  } else {
-    newSet.add(coll)
-  }
-  const newMap = new Map(selectedCollections.value)
-  if (newSet.size === 0) {
-    newMap.delete(db)
-  } else {
-    newMap.set(db, newSet)
-  }
-  selectedCollections.value = newMap
+  selectedCollections.value = toggleCollectionIn(selectedCollections.value, db, coll)
 }
 
 function clearDbSelection(db) {
-  const newMap = new Map(selectedCollections.value)
-  newMap.delete(db)
-  selectedCollections.value = newMap
+  selectedCollections.value = withoutDb(selectedCollections.value, db)
 }
 
 function clearSelection() {
   selectedCollections.value = new Map()
 }
 
-function toggleSourceDb(dbName) {
-  const newSet = new Set(sourceExpandedDbs.value)
+/** Expand or collapse a database on one side, loading its collections on first expand. */
+function toggleExpanded(side, dbName, uriValue, roleLabel) {
+  const newSet = new Set(side.expandedDbs.value)
   if (newSet.has(dbName)) {
     newSet.delete(dbName)
   } else {
     newSet.add(dbName)
-    const db = sourceDatabases.value.find(d => d.name === dbName)
+    const db = side.databases.value.find(d => d.name === dbName)
     if (db && db.collections.length === 0 && !db.loading) {
-      fetchSourceCollections(db)
+      fetchCollections(uriValue, db, roleLabel)
     }
   }
-  if (isRemoteToLocal.value) {
-    expandedRemoteDbs.value = newSet
-  } else {
-    expandedLocalDbs.value = newSet
-  }
+  side.expandedDbs.value = newSet
+}
+
+function toggleSourceDb(dbName) {
+  toggleExpanded(sourceSide.value, dbName, sourceUri.value, 'source')
 }
 
 function toggleDestDb(dbName) {
-  const newSet = new Set(destExpandedDbs.value)
-  if (newSet.has(dbName)) {
-    newSet.delete(dbName)
-  } else {
-    newSet.add(dbName)
-    const db = destDatabases.value.find(d => d.name === dbName)
-    if (db && db.collections.length === 0 && !db.loading) {
-      fetchDestCollections(db)
-    }
-  }
-  if (isRemoteToLocal.value) {
-    expandedLocalDbs.value = newSet
-  } else {
-    expandedRemoteDbs.value = newSet
-  }
+  toggleExpanded(destSide.value, dbName, destUri.value, 'dest')
 }
 
 function flipDirection() {
@@ -551,83 +528,20 @@ async function loadHost() {
   }
 }
 
-async function loadRemoteDatabases() {
-  if (!remoteUri.value) return
-  loadingRemote.value = true
-  try {
-    const dbNames = await invoke('mongodb_list_databases', { uri: remoteUri.value })
-    remoteDatabases.value = dbNames.map(name => ({
-      name,
-      collections: [],
-      loading: false,
-    }))
-  } catch (err) {
-    toast('Failed to list remote databases: ' + err, 'error')
-  } finally {
-    loadingRemote.value = false
+async function loadConfiguredDatabases() {
+  if (remoteUri.value) {
+    await remote.loadDatabases()
   }
-}
-
-async function loadLocalDatabases() {
-  if (!localUri.value) return
-  loadingLocal.value = true
-  try {
-    const dbNames = await invoke('mongodb_list_databases', { uri: localUri.value })
-    localDatabases.value = dbNames.map(name => ({
-      name,
-      collections: [],
-      loading: false,
-    }))
-  } catch (err) {
-    toast('Failed to list local databases: ' + err, 'error')
-  } finally {
-    loadingLocal.value = false
-  }
-}
-
-async function fetchSourceCollections(db) {
-  db.loading = true
-  try {
-    const colls = await invoke('mongodb_list_collections', {
-      uri: sourceUri.value,
-      db: db.name,
-    })
-    db.collections = colls
-  } catch (err) {
-    toast(`Failed to list source collections for ${db.name}: ${err}`, 'error')
-  } finally {
-    db.loading = false
-  }
-}
-
-async function fetchDestCollections(db) {
-  db.loading = true
-  try {
-    const colls = await invoke('mongodb_list_collections', {
-      uri: destUri.value,
-      db: db.name,
-    })
-    db.collections = colls
-  } catch (err) {
-    toast(`Failed to list dest collections for ${db.name}: ${err}`, 'error')
-  } finally {
-    db.loading = false
+  if (localUri.value) {
+    await local.loadDatabases()
   }
 }
 
 async function startSync() {
   if (!sourceUri.value || !destUri.value || selectedCount.value === 0) return
 
-  const entries = []
-  for (const [db, set] of selectedCollections.value) {
-    entries.push({ db, collections: Array.from(set) })
-  }
-
-  syncing.value = true
-  currentAction.value = 'sync'
-  currentOpId.value = crypto.randomUUID()
-  aborting.value = false
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  const entries = buildEntries(selectedCollections.value)
+  beginOperation('sync')
 
   for (const entry of entries) {
     if (aborting.value || !currentOpId.value) break
@@ -642,23 +556,13 @@ async function startSync() {
       })
       toast(`Synced ${entry.db}: ${entry.collections.join(', ')}`, 'success')
     } catch (err) {
-      if (String(err).includes('cancelled')) {
-        resetOperationState()
-        toast(`Cancelled ${entry.db}`, 'info')
-        break
-      } else {
-        toast(`Sync failed for ${entry.db}: ${err}`, 'error')
-      }
+      if (handleOperationError(err, `Cancelled ${entry.db}`, `Sync failed for ${entry.db}`)) break
     }
   }
 
   resetOperationState()
   // Refresh the destination side
-  if (isRemoteToLocal.value) {
-    await loadLocalDatabases()
-  } else {
-    await loadRemoteDatabases()
-  }
+  await destSide.value.loadDatabases()
 }
 
 async function startDumpFolder() {
@@ -698,16 +602,8 @@ async function startDumpArchive() {
 async function runDump(outputPath, isArchive) {
   if (!remoteUri.value || selectedCount.value === 0) return
 
-  const entries = []
-  for (const [db, set] of selectedCollections.value) {
-    entries.push({ db, collections: Array.from(set) })
-  }
-
-  syncing.value = true
-  currentAction.value = isArchive ? 'dump-archive' : 'dump-folder'
-  currentOpId.value = crypto.randomUUID()
-  aborting.value = false
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  const entries = buildEntries(selectedCollections.value)
+  beginOperation(isArchive ? 'dump-archive' : 'dump-folder')
 
   for (const entry of entries) {
     if (aborting.value || !currentOpId.value) break
@@ -722,25 +618,11 @@ async function runDump(outputPath, isArchive) {
       })
       toast(`Dumped ${entry.db}: ${entry.collections.join(', ')}`, 'success')
     } catch (err) {
-      if (String(err).includes('cancelled')) {
-        resetOperationState()
-        toast(`Cancelled ${entry.db}`, 'info')
-        break
-      } else {
-        toast(`Dump failed for ${entry.db}: ${err}`, 'error')
-      }
+      if (handleOperationError(err, `Cancelled ${entry.db}`, `Dump failed for ${entry.db}`)) break
     }
   }
 
   resetOperationState()
-}
-
-function buildRestoreEntries() {
-  const entries = []
-  for (const [db, set] of selectedCollections.value) {
-    entries.push({ db, collections: Array.from(set) })
-  }
-  return entries
 }
 
 function openRestoreConfirm(inputPath, isArchive, sourceDbs = []) {
@@ -748,7 +630,7 @@ function openRestoreConfirm(inputPath, isArchive, sourceDbs = []) {
     show: true,
     inputPath,
     isArchive,
-    entries: buildRestoreEntries(),
+    entries: buildEntries(selectedCollections.value),
     sourceDbs,
   }
 }
@@ -798,14 +680,46 @@ async function startRestoreFile() {
   openRestoreConfirm(inputFile, true, [])
 }
 
+/**
+ * The mongorestore invocations for a folder restore, each with its own
+ * success, cancel, and failure wording.
+ */
+function folderRestoreJobs(entries, sourceDbs) {
+  if (entries.length === 0 && sourceDbs.length === 1) {
+    // User picked a folder representing a single DB (either direct or parent with one DB).
+    // Tell mongorestore which DB to restore so it doesn't skip the files.
+    const name = sourceDbs[0].name
+    return [{
+      db: name,
+      collections: [],
+      success: `Restored ${name}`,
+      cancelled: 'Cancelled folder restore',
+      failed: 'Folder restore failed',
+    }]
+  }
+  if (entries.length === 0) {
+    // If nothing is selected and there are multiple DBs, restore every DB under the folder.
+    return [{
+      db: '',
+      collections: [],
+      success: 'Restored folder',
+      cancelled: 'Cancelled folder restore',
+      failed: 'Folder restore failed',
+    }]
+  }
+  return entries.map(entry => ({
+    db: entry.db,
+    collections: entry.collections,
+    success: `Restored ${entry.db}: ${entry.collections.join(', ')}`,
+    cancelled: `Cancelled ${entry.db}`,
+    failed: `Restore failed for ${entry.db}`,
+  }))
+}
+
 async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
   if (!remoteUri.value) return
 
-  syncing.value = true
-  currentAction.value = isArchive ? 'restore-archive' : 'restore-folder'
-  currentOpId.value = crypto.randomUUID()
-  aborting.value = false
-  syncProgress.value = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+  beginOperation(isArchive ? 'restore-archive' : 'restore-folder')
 
   const hasSelection = entries.length > 0
 
@@ -827,84 +741,30 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
       })
       toast(hasSelection ? 'Restored selected collections from archive' : 'Restored archive', 'success')
     } catch (err) {
-      if (String(err).includes('cancelled')) {
-        resetOperationState()
-        toast('Cancelled archive restore', 'info')
-      } else {
-        toast(`Archive restore failed: ${err}`, 'error')
-      }
+      handleOperationError(err, 'Cancelled archive restore', 'Archive restore failed')
     }
   } else {
-    if (!hasSelection && sourceDbs.length === 1) {
-      // User picked a folder representing a single DB (either direct or parent with one DB).
-      // Tell mongorestore which DB to restore so it doesn't skip the files.
+    for (const job of folderRestoreJobs(entries, sourceDbs)) {
+      if (aborting.value || !currentOpId.value) break
       try {
         await invoke('mongodb_restore', {
           remoteUri: remoteUri.value,
-          db: sourceDbs[0].name,
-          collections: [],
+          db: job.db,
+          collections: job.collections,
           inputDir: inputPath,
           isArchive: false,
           opId: currentOpId.value,
         })
-        toast(`Restored ${sourceDbs[0].name}`, 'success')
+        toast(job.success, 'success')
       } catch (err) {
-        if (String(err).includes('cancelled')) {
-          resetOperationState()
-          toast('Cancelled folder restore', 'info')
-        } else {
-          toast(`Folder restore failed: ${err}`, 'error')
-        }
-      }
-    } else if (!hasSelection) {
-      // If nothing is selected and there are multiple DBs, restore every DB under the folder.
-      try {
-        await invoke('mongodb_restore', {
-          remoteUri: remoteUri.value,
-          db: '',
-          collections: [],
-          inputDir: inputPath,
-          isArchive: false,
-          opId: currentOpId.value,
-        })
-        toast('Restored folder', 'success')
-      } catch (err) {
-        if (String(err).includes('cancelled')) {
-          resetOperationState()
-          toast('Cancelled folder restore', 'info')
-        } else {
-          toast(`Folder restore failed: ${err}`, 'error')
-        }
-      }
-    } else {
-      for (const entry of entries) {
-        if (aborting.value || !currentOpId.value) break
-        try {
-          await invoke('mongodb_restore', {
-            remoteUri: remoteUri.value,
-            db: entry.db,
-            collections: entry.collections,
-            inputDir: inputPath,
-            isArchive: false,
-            opId: currentOpId.value,
-          })
-          toast(`Restored ${entry.db}: ${entry.collections.join(', ')}`, 'success')
-        } catch (err) {
-          if (String(err).includes('cancelled')) {
-            resetOperationState()
-            toast(`Cancelled ${entry.db}`, 'info')
-            break
-          } else {
-            toast(`Restore failed for ${entry.db}: ${err}`, 'error')
-          }
-        }
+        if (handleOperationError(err, job.cancelled, job.failed)) break
       }
     }
   }
 
   resetOperationState()
   // Refresh the remote DB list so restored databases appear.
-  await loadRemoteDatabases()
+  await remote.loadDatabases()
 }
 
 async function cancelOperation() {
@@ -918,19 +778,13 @@ async function cancelOperation() {
   }
 }
 
-let unlistenProgress = null
-let unlistenCancelled = null
+const listeners = useListenerGroup()
 
 onMounted(async () => {
   await loadHost()
-  if (remoteUri.value) {
-    await loadRemoteDatabases()
-  }
-  if (localUri.value) {
-    await loadLocalDatabases()
-  }
+  await loadConfiguredDatabases()
 
-  unlistenProgress = await listen('mongodb-sync-progress', (event) => {
+  await listeners.listen('mongodb-sync-progress', (event) => {
     const p = event.payload
     if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
     syncProgress.value = {
@@ -945,35 +799,19 @@ onMounted(async () => {
     }
   })
 
-  unlistenCancelled = await listen('mongodb-sync-cancelled', (event) => {
+  await listeners.listen('mongodb-sync-cancelled', (event) => {
     const p = event.payload
     if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
     resetOperationState()
   })
 })
 
-onUnmounted(() => {
-  if (unlistenProgress) unlistenProgress()
-  if (unlistenCancelled) unlistenCancelled()
-})
-
 watch(() => props.hostId, async () => {
   await loadHost()
-  remoteDatabases.value = []
-  localDatabases.value = []
+  remote.reset()
+  local.reset()
   selectedCollections.value = new Map()
-  expandedRemoteDbs.value = new Set()
-  expandedLocalDbs.value = new Set()
   isRemoteToLocal.value = true
-  if (remoteUri.value) {
-    await loadRemoteDatabases()
-  }
-  if (localUri.value) {
-    await loadLocalDatabases()
-  }
+  await loadConfiguredDatabases()
 })
-
-function toast(message, type = 'info') {
-  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type } }))
-}
 </script>

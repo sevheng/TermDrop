@@ -1,9 +1,5 @@
 <template>
-  <div
-    v-if="show"
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-  >
-    <div class="bg-[#252526] rounded-lg p-5 w-80 border border-[#3c3c3c] shadow-xl">
+  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
       <div class="flex items-start gap-3 mb-4">
         <div class="shrink-0 mt-0.5">
           <AlertTriangle :size="20" class="text-[#cca700]" />
@@ -33,14 +29,14 @@
           {{ confirmText }}
         </button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
 import { AlertTriangle } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
 
-const props = defineProps({
+defineProps({
   show: Boolean,
   title: { type: String, default: 'Confirm' },
   message: { type: String, required: true },

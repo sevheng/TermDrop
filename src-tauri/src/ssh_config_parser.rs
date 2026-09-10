@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SshConfigHost {
@@ -21,6 +21,21 @@ pub fn parse_ssh_config() -> Result<Vec<SshConfigHost>, String> {
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read {:?}: {}", config_path, e))?;
 
+    let default_user = whoami::username().unwrap_or_else(|_| "user".to_string());
+    Ok(parse_ssh_config_str(
+        &content,
+        &default_user,
+        dirs::home_dir().as_deref(),
+    ))
+}
+
+/// Parse ssh_config text. `default_user` fills in hosts without a `User`
+/// line; `home_dir` expands a leading `~/` in `IdentityFile`.
+fn parse_ssh_config_str(
+    content: &str,
+    default_user: &str,
+    home_dir: Option<&Path>,
+) -> Vec<SshConfigHost> {
     let mut hosts = Vec::new();
     let mut current_patterns: Vec<String> = Vec::new();
     let mut current_fields: Vec<(String, String)> = Vec::new();
@@ -33,7 +48,13 @@ pub fn parse_ssh_config() -> Result<Vec<SshConfigHost>, String> {
 
         if line.to_lowercase().starts_with("host ") {
             // Flush previous block
-            flush_block(&mut hosts, &current_patterns, &current_fields);
+            flush_block(
+                &mut hosts,
+                &current_patterns,
+                &current_fields,
+                default_user,
+                home_dir,
+            );
             current_patterns.clear();
             current_fields.clear();
 
@@ -53,12 +74,24 @@ pub fn parse_ssh_config() -> Result<Vec<SshConfigHost>, String> {
     }
 
     // Flush last block
-    flush_block(&mut hosts, &current_patterns, &current_fields);
+    flush_block(
+        &mut hosts,
+        &current_patterns,
+        &current_fields,
+        default_user,
+        home_dir,
+    );
 
-    Ok(hosts)
+    hosts
 }
 
-fn flush_block(hosts: &mut Vec<SshConfigHost>, patterns: &[String], fields: &[(String, String)]) {
+fn flush_block(
+    hosts: &mut Vec<SshConfigHost>,
+    patterns: &[String],
+    fields: &[(String, String)],
+    default_user: &str,
+    home_dir: Option<&Path>,
+) {
     if patterns.is_empty() {
         return;
     }
@@ -85,7 +118,7 @@ fn flush_block(hosts: &mut Vec<SshConfigHost>, patterns: &[String], fields: &[(S
                     port = p;
                 }
             }
-            "identityfile" => identity_file = Some(expand_tilde(value)),
+            "identityfile" => identity_file = Some(expand_tilde(value, home_dir)),
             _ => {}
         }
     }
@@ -94,9 +127,7 @@ fn flush_block(hosts: &mut Vec<SshConfigHost>, patterns: &[String], fields: &[(S
         let name = pattern.clone();
         // If HostName is not set, use the pattern itself as the address
         let host = hostname.clone().unwrap_or_else(|| pattern.clone());
-        let username = user
-            .clone()
-            .unwrap_or_else(|| whoami::username().unwrap_or_else(|_| "user".to_string()));
+        let username = user.clone().unwrap_or_else(|| default_user.to_string());
         let auth_type = if identity_file.is_some() {
             "key"
         } else {
@@ -118,12 +149,84 @@ fn is_wildcard(pattern: &str) -> bool {
     pattern == "*" || pattern.contains('*') || pattern.contains('?')
 }
 
-fn expand_tilde(path: &str) -> String {
+fn expand_tilde(path: &str, home_dir: Option<&Path>) -> String {
     if path.starts_with("~/") {
-        dirs::home_dir()
+        home_dir
             .map(|h| h.join(&path[2..]).to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string())
     } else {
         path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG: &str = include_str!("fixtures/ssh_config.txt");
+
+    fn parse() -> Vec<SshConfigHost> {
+        parse_ssh_config_str(CONFIG, "fallback", Some(Path::new("/home/tester")))
+    }
+
+    #[test]
+    fn skips_wildcard_only_blocks() {
+        let hosts = parse();
+        let names: Vec<&str> = hosts.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["prod", "prod-alias", "staging", "mixed", "concrete"]
+        );
+    }
+
+    #[test]
+    fn each_concrete_pattern_becomes_a_host_sharing_the_block_fields() {
+        let hosts = parse();
+        for h in &hosts[..2] {
+            assert_eq!(h.host, "10.0.0.5");
+            assert_eq!(h.username, "deploy");
+            assert_eq!(h.port, 2222);
+            assert_eq!(h.auth_type, "key");
+        }
+    }
+
+    #[test]
+    fn expands_tilde_in_identity_file_and_keeps_absolute_paths() {
+        let hosts = parse();
+        assert_eq!(
+            hosts[0].key_path.as_deref(),
+            Some("/home/tester/.ssh/id_prod")
+        );
+        assert_eq!(hosts[3].key_path.as_deref(), Some("/abs/key"));
+        assert_eq!(
+            expand_tilde("~/.ssh/x", None),
+            "~/.ssh/x",
+            "no home dir leaves the path untouched"
+        );
+    }
+
+    #[test]
+    fn lowercases_keys_and_applies_defaults() {
+        let hosts = parse();
+        let staging = &hosts[2];
+        assert_eq!(staging.host, "staging.example.com");
+        assert_eq!(staging.username, "fallback");
+        assert_eq!(staging.port, 22);
+        assert_eq!(staging.auth_type, "password");
+        assert_eq!(staging.key_path, None);
+    }
+
+    #[test]
+    fn pattern_is_used_as_host_when_hostname_missing() {
+        let hosts = parse();
+        assert_eq!(hosts[4].name, "concrete");
+        assert_eq!(hosts[4].host, "concrete");
+        assert_eq!(hosts[4].username, "ops");
+    }
+
+    #[test]
+    fn invalid_port_keeps_default() {
+        let hosts = parse_ssh_config_str("Host a\n  Port notanumber\n", "u", None);
+        assert_eq!(hosts[0].port, 22);
     }
 }

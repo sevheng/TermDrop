@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, reactive } from 'vue'
-import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import { invokeWithSlowWarning as invoke } from '../utils/invoke.js'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { toast } from '../utils/toast.js'
 
-const INVOKE_TIMEOUT_MS = 10000 // 10 seconds
 
 /**
  * Show the global PromptDialog and return the user's input.
@@ -19,29 +19,6 @@ function showPromptDialog(title, message, placeholder = '', type = 'text') {
     window.dispatchEvent(new CustomEvent('prompt-dialog-open', {
       detail: { title, message, placeholder, type },
     }))
-  })
-}
-
-/**
- * Wrap Tauri invoke() with a freeze-detection timer.
- * If the call takes longer than INVOKE_TIMEOUT_MS, a warning toast is shown.
- */
-function invoke(cmd, args = {}) {
-  const start = performance.now()
-  let warned = false
-  const timer = setTimeout(() => {
-    warned = true
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: `${cmd} is taking longer than expected...`, type: 'warning' }
-    }))
-  }, INVOKE_TIMEOUT_MS)
-
-  return tauriInvoke(cmd, args).finally(() => {
-    clearTimeout(timer)
-    const elapsed = performance.now() - start
-    if (elapsed > INVOKE_TIMEOUT_MS) {
-      console.warn(`[SLOW] ${cmd} took ${elapsed.toFixed(0)}ms`, args)
-    }
   })
 }
 
@@ -123,7 +100,6 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   const securityReports = ref(new Map())
-  const securityReportVersion = ref(0)
 
   function getSecurityReport(hostId) {
     return securityReports.value.get(hostId) || null
@@ -131,17 +107,14 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function setSecurityLoading(hostId) {
     securityReports.value.set(hostId, { report: null, loading: true, error: null })
-    securityReportVersion.value++
   }
 
   function setSecurityReport(hostId, report) {
     securityReports.value.set(hostId, { report, loading: false, error: null })
-    securityReportVersion.value++
   }
 
   function setSecurityError(hostId, error) {
     securityReports.value.set(hostId, { report: null, loading: false, error })
-    securityReportVersion.value++
   }
 
   async function runSecurityAudit(hostId, force = false) {
@@ -223,18 +196,47 @@ export const useConnectionStore = defineStore('connection', () => {
     return count
   }
 
+  /**
+   * Estimate terminal size before creating the PTY so the remote shell
+   * starts with roughly the right dimensions instead of default 80x24.
+   */
+  function estimateTerminalSize() {
+    return {
+      cols: Math.max(80, Math.floor((window.innerWidth - 48) / 8)),
+      rows: Math.max(24, Math.floor((window.innerHeight - 200) / 16)),
+    }
+  }
+
+  /** The backend could not find a stored password for a password host. */
+  function isMissingKeyringPassword(err) {
+    const errStr = String(err)
+    return errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')
+  }
+
+  /** Open the SFTP side channel for a tab; failure only warns, the tab stays. */
+  async function attachSftp(sessionId, hostId, isKeyAuth, providedPassword) {
+    try {
+      const sftpArgs = { hostId }
+      if (!isKeyAuth && providedPassword) {
+        sftpArgs.password = providedPassword
+      }
+      const sftpId = await invoke('sftp_connect', sftpArgs)
+      tabs.value = tabs.value.map(t =>
+        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
+      )
+    } catch (err) {
+      console.warn('SFTP connection failed:', err)
+      toast('SFTP connection failed: ' + err, 'warning')
+    }
+  }
+
   async function connect(hostId, providedPassword = null) {
     const host = hosts.value.find(h => h.id === hostId)
     const isKeyAuth = host?.auth_type === 'key'
     connectingHostId.value = hostId
 
-    // Estimate terminal size before creating PTY so the remote shell
-    // starts with roughly the right dimensions instead of default 80x24.
-    const estCols = Math.max(80, Math.floor((window.innerWidth - 48) / 8))
-    const estRows = Math.max(24, Math.floor((window.innerHeight - 200) / 16))
-
     let sessionId
-    const sshArgs = { hostId, cols: estCols, rows: estRows }
+    const sshArgs = { hostId, ...estimateTerminalSize() }
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
@@ -242,8 +244,7 @@ export const useConnectionStore = defineStore('connection', () => {
       sessionId = await invoke('ssh_connect', sshArgs)
     } catch (err) {
       connectingHostId.value = null
-      const errStr = String(err)
-      if (!isKeyAuth && (errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')) && !providedPassword) {
+      if (!isKeyAuth && isMissingKeyringPassword(err) && !providedPassword) {
         const password = await showPromptDialog(
           'Password required',
           'Password not found in keyring. Enter password for this host:',
@@ -255,7 +256,7 @@ export const useConnectionStore = defineStore('connection', () => {
           return connect(hostId, password)
         }
       }
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SSH connection failed: ' + err, type: 'error' } }))
+      toast('SSH connection failed: ' + err, 'error')
       throw err
     }
 
@@ -274,19 +275,7 @@ export const useConnectionStore = defineStore('connection', () => {
     activeTabId.value = sessionId
 
     // Try SFTP in background — don't block tab creation
-    try {
-      const sftpArgs = { hostId }
-      if (!isKeyAuth && providedPassword) {
-        sftpArgs.password = providedPassword
-      }
-      const sftpId = await invoke('sftp_connect', sftpArgs)
-      tabs.value = tabs.value.map(t =>
-        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
-      )
-    } catch (err) {
-      console.warn('SFTP connection failed:', err)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'SFTP connection failed: ' + err, type: 'warning' } }))
-    }
+    await attachSftp(sessionId, hostId, isKeyAuth, providedPassword)
     // Run security audit in background — don't block tab creation
     runSecurityAudit(hostId).catch(() => {})
 
@@ -334,10 +323,6 @@ export const useConnectionStore = defineStore('connection', () => {
     if (activeTabId.value === sessionId) {
       activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
     }
-  }
-
-  async function writeData(sessionId, data) {
-    await invoke('ssh_write', { sessionId, data })
   }
 
   function setActiveTab(sessionId) {
@@ -453,7 +438,6 @@ export const useConnectionStore = defineStore('connection', () => {
     disconnect,
     openMongoTab,
     closeMongoTab,
-    writeData,
     setActiveTab,
     sftpList,
     sftpUpload,
@@ -478,7 +462,6 @@ export const useConnectionStore = defineStore('connection', () => {
     getNetStats,
     setNetStats,
     securityReports,
-    securityReportVersion,
     getSecurityReport,
     runSecurityAudit,
     registerTerminal,

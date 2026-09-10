@@ -1,16 +1,9 @@
+use crate::ssh::exec::run_command;
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
-use std::io::Read;
-use std::time::Instant;
 
 pub const DOCKER_NOT_INSTALLED: &str = "DOCKER_NOT_INSTALLED";
 pub const DOCKER_PERMISSION_DENIED: &str = "DOCKER_PERMISSION_DENIED";
-
-#[derive(Debug, Clone)]
-pub struct CachedDockerInfo {
-    pub containers: Vec<Container>,
-    pub cached_at: Instant,
-}
 
 fn is_permission_error(err: &str) -> bool {
     err.to_lowercase().contains("permission denied")
@@ -30,41 +23,6 @@ pub struct Container {
     pub running: bool,
 }
 
-fn run_command(session: &Session, command: &str) -> Result<String, String> {
-    let mut channel = session
-        .channel_session()
-        .map_err(|e| format!("channel: {}", e))?;
-    channel.exec(command).map_err(|e| format!("exec: {}", e))?;
-
-    let mut stdout = String::new();
-    channel
-        .read_to_string(&mut stdout)
-        .map_err(|e| format!("read: {}", e))?;
-
-    let mut stderr = String::new();
-    channel
-        .stderr()
-        .read_to_string(&mut stderr)
-        .map_err(|e| format!("read stderr: {}", e))?;
-
-    channel.wait_close().ok();
-
-    let exit_status = channel.exit_status().unwrap_or(0);
-    if exit_status != 0 {
-        let err = if stderr.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        if err.is_empty() {
-            return Err(format!("command failed with exit code {}", exit_status));
-        }
-        return Err(err);
-    }
-
-    Ok(stdout)
-}
-
 fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
     let command = format!("docker {}", args);
     match run_command(session, &command) {
@@ -72,20 +30,6 @@ fn run_docker_command(session: &Session, args: &str) -> Result<String, String> {
         Err(e) => {
             if is_permission_error(&e) {
                 Err(DOCKER_PERMISSION_DENIED.to_string())
-            } else {
-                Err(e)
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn is_docker_installed(session: &Session) -> Result<bool, String> {
-    match run_command(session, "command -v docker") {
-        Ok(out) => Ok(!out.trim().is_empty()),
-        Err(e) => {
-            if e.contains("not found") || e.contains("No such file") {
-                Ok(false)
             } else {
                 Err(e)
             }
@@ -114,6 +58,11 @@ pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String>
         }
     };
 
+    Ok(parse_docker_ps(&output))
+}
+
+/// Parse `docker ps --format '{{.ID}}|{{.Names}}|...'` output, one container per line.
+fn parse_docker_ps(output: &str) -> Vec<Container> {
     let mut containers = Vec::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('|').collect();
@@ -121,7 +70,7 @@ pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String>
             let status = parts[3].to_string();
             let running = status.to_lowercase().starts_with("up");
             containers.push(Container {
-                id: parts.get(0).unwrap_or(&"").to_string(),
+                id: parts.first().unwrap_or(&"").to_string(),
                 name: parts.get(1).unwrap_or(&"").to_string(),
                 image: parts.get(2).unwrap_or(&"").to_string(),
                 status: status.clone(),
@@ -133,7 +82,7 @@ pub fn docker_ps(session: &Session, all: bool) -> Result<Vec<Container>, String>
         }
     }
 
-    Ok(containers)
+    containers
 }
 
 pub fn docker_start(session: &Session, container_id: &str) -> Result<(), String> {
@@ -151,10 +100,6 @@ pub fn docker_restart(session: &Session, container_id: &str) -> Result<(), Strin
     Ok(())
 }
 
-pub fn docker_logs(session: &Session, container_id: &str, tail: usize) -> Result<String, String> {
-    run_docker_command(session, &format!("logs --tail {} {}", tail, container_id))
-}
-
 pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<String, String> {
     // Use docker inspect to check the container's configured shell/cmd
     // Much faster than docker exec which spawns a process inside the container
@@ -167,5 +112,43 @@ pub fn docker_inspect_shell(session: &Session, container_id: &str) -> Result<Str
         Ok("bash".to_string())
     } else {
         Ok("sh".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PS: &str = include_str!("fixtures/docker_ps.txt");
+
+    #[test]
+    fn parses_ps_lines_and_running_flag() {
+        let c = parse_docker_ps(PS);
+        assert_eq!(c.len(), 3);
+
+        assert_eq!(c[0].id, "abc123");
+        assert_eq!(c[0].name, "web");
+        assert_eq!(c[0].image, "nginx:latest");
+        assert_eq!(c[0].status, "Up 3 hours");
+        assert_eq!(c[0].state, "Up 3 hours");
+        assert_eq!(c[0].ports, "0.0.0.0:80->80/tcp");
+        assert_eq!(c[0].created, "2026-06-01 10:00:00 +0000 UTC");
+        assert!(c[0].running);
+
+        assert_eq!(c[1].name, "db");
+        assert_eq!(c[1].ports, "");
+        assert!(!c[1].running);
+
+        // Four fields is enough; missing ports/created become empty, "up" is case-insensitive.
+        assert_eq!(c[2].name, "worker");
+        assert_eq!(c[2].ports, "");
+        assert_eq!(c[2].created, "");
+        assert!(c[2].running);
+    }
+
+    #[test]
+    fn skips_short_lines_and_empty_output() {
+        assert!(parse_docker_ps("").is_empty());
+        assert!(parse_docker_ps("a|b|c\n").is_empty());
     }
 }

@@ -63,7 +63,7 @@
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
           <TerminalTab
-            v-for="tab in store.tabs.filter(t => t.type !== 'mongodb')"
+            v-for="tab in sshTabs"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :sessionId="tab.id"
@@ -72,7 +72,7 @@
             class="w-full h-full absolute top-0 left-0"
           />
           <MongodbPanel
-            v-for="tab in store.tabs.filter(t => t.type === 'mongodb')"
+            v-for="tab in mongoTabs"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :hostId="tab.hostId"
@@ -104,54 +104,17 @@
           <!-- Panel tabs -->
           <div class="flex border-b border-[#3c3c3c]">
             <button
-              @click="rightPanelTab = 'sftp'"
+              v-for="tab in PANEL_TABS"
+              :key="tab.id"
+              @click="rightPanelTab = tab.id"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'sftp'
+              :class="rightPanelTab === tab.id
                 ? 'text-[#007acc]'
                 : 'text-[#858585] hover:text-[#cccccc]'"
             >
-              SFTP
+              {{ tab.label }}
               <span
-                v-if="rightPanelTab === 'sftp'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'tunnels'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'tunnels'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Tunnels
-              <span
-                v-if="rightPanelTab === 'tunnels'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'docker'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'docker'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Docker
-              <span
-                v-if="rightPanelTab === 'docker'"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
-              />
-            </button>
-            <button
-              @click="rightPanelTab = 'security'"
-              class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
-              :class="rightPanelTab === 'security'
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
-            >
-              Security
-              <span
-                v-if="rightPanelTab === 'security'"
+                v-if="rightPanelTab === tab.id"
                 class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
               />
             </button>
@@ -244,16 +207,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, onMounted, onUnmounted, defineAsyncComponent, computed } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
-import { invoke } from '@tauri-apps/api/core'
+import { toast } from '../utils/toast.js'
+import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
-const emit = defineEmits(['update-available'])
+defineEmits(['update-available'])
 
 const SftpPanel = defineAsyncComponent(() => import('../components/SftpPanel.vue'))
 const PortForwardPanel = defineAsyncComponent(() => import('../components/PortForwardPanel.vue'))
@@ -265,22 +229,24 @@ const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityP
 const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
 
 const store = useConnectionStore()
+const sshTabs = computed(() => store.tabs.filter(t => t.type !== 'mongodb'))
+const mongoTabs = computed(() => store.tabs.filter(t => t.type === 'mongodb'))
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')
+const PANEL_TABS = [
+  { id: 'sftp', label: 'SFTP' },
+  { id: 'tunnels', label: 'Tunnels' },
+  { id: 'docker', label: 'Docker' },
+  { id: 'security', label: 'Security' },
+]
 const showForwardModal = ref(false)
 const forwardPrefill = ref(null)
 const editForward = ref(null)
 const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
 
-const confirmDialog = ref({
-  show: false,
-  title: '',
-  message: '',
-  danger: false,
-  onConfirm: () => {},
-})
+const { confirmDialog, openConfirm } = useConfirmDialog()
 
 const promptDialog = ref({
   show: false,
@@ -289,19 +255,6 @@ const promptDialog = ref({
   placeholder: '',
   type: 'text',
 })
-
-function openConfirm(options) {
-  confirmDialog.value = {
-    show: true,
-    title: options.title || 'Confirm',
-    message: options.message || '',
-    danger: options.danger || false,
-    onConfirm: () => {
-      confirmDialog.value.show = false
-      options.onConfirm()
-    },
-  }
-}
 
 function confirmDisconnect(sessionId, name) {
   const tab = store.tabs.find(t => t.id === sessionId)
@@ -331,17 +284,17 @@ async function onForwardSaved({ id, forwardData }) {
   try {
     if (id) {
       await store.updatePortForward(id, forwardData)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward updated', type: 'success' } }))
+      toast('Port forward updated', 'success')
     } else {
       await store.addPortForward(forwardData)
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Port forward added', type: 'success' } }))
+      toast('Port forward added', 'success')
     }
     showForwardModal.value = false
     forwardPrefill.value = null
     editForward.value = null
     window.dispatchEvent(new CustomEvent('port-forward-added', { detail: { hostId: forwardData.host_id } }))
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to save: ' + err, type: 'error' } }))
+    toast('Failed to save: ' + err, 'error')
   }
 }
 

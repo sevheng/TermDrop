@@ -1,0 +1,4 @@
+abc123|web|nginx:latest|Up 3 hours|0.0.0.0:80->80/tcp|2026-06-01 10:00:00 +0000 UTC
+def456|db|mongo:7|Exited (0) 2 days ago||2026-05-30 09:00:00 +0000 UTC
+ghi789|worker|app:1.0|up 5 minutes
+short|line

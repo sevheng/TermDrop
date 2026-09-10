@@ -1,9 +1,5 @@
 <template>
-  <div
-    v-if="show"
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-  >
-    <div class="bg-[#252526] rounded-lg p-5 w-[28rem] max-w-[90vw] border border-[#3c3c3c] shadow-xl max-h-[80vh] flex flex-col">
+  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] max-w-[90vw] shadow-xl max-h-[80vh] flex flex-col">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-base font-semibold text-[#cccccc]">Keyboard Shortcuts</h3>
         <button @click="onClose" class="text-[#6e6e6e] hover:text-[#cccccc]">×</button>
@@ -49,12 +45,12 @@
           Close
         </button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
-const props = defineProps({
+import ModalShell from './ModalShell.vue'
+defineProps({
   show: Boolean,
 })
 

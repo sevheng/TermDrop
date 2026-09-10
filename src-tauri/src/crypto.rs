@@ -109,7 +109,7 @@ fn load_or_create_fallback_key(base_dir: &Path) -> Result<[u8; 32], String> {
 
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&key);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(key);
     std::fs::write(&key_path, b64).map_err(|e| format!("write fallback key file: {}", e))?;
 
     #[cfg(unix)]

@@ -19,10 +19,10 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { listen } from '@tauri-apps/api/event'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
 
 const toasts = ref([])
-let unlistenError = null
+const listeners = useListenerGroup()
 let timerMap = new Map()
 
 function toastClass(type) {
@@ -63,7 +63,7 @@ function onAppToast(event) {
 }
 
 onMounted(async () => {
-  unlistenError = await listen('ssh-error', (event) => {
+  await listeners.listen('ssh-error', (event) => {
     const payload = event.payload
     let message = 'SSH error'
     if (typeof payload === 'object' && payload.error) {
@@ -78,7 +78,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (unlistenError) unlistenError()
   window.removeEventListener('app-toast', onAppToast)
   timerMap.forEach(t => clearTimeout(t))
   timerMap.clear()

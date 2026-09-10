@@ -1,0 +1,19 @@
+# global defaults
+Host *
+    ServerAliveInterval 60
+
+Host prod prod-alias
+    HostName 10.0.0.5
+    User deploy
+    Port 2222
+    IdentityFile ~/.ssh/id_prod
+
+host staging
+  hostname staging.example.com
+
+Host wild*
+    HostName ignored.example.com
+
+Host mixed wild? concrete
+    User ops
+    IdentityFile /abs/key

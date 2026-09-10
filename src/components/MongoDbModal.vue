@@ -1,9 +1,5 @@
 <template>
-  <div
-    v-if="show"
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-  >
-    <div class="bg-[#252526] rounded-lg p-6 w-[28rem] border border-[#3c3c3c] shadow-xl max-h-[90vh] overflow-y-auto">
+  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl max-h-[90vh] overflow-y-auto">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
         {{ isEditing ? 'Edit MongoDB' : 'Add MongoDB' }}
       </h3>
@@ -29,130 +25,17 @@
         <!-- Remote Connection -->
         <div class="border border-[#3c3c3c] rounded-lg p-4 space-y-3">
           <h4 class="text-xs font-semibold text-[#cccccc] uppercase tracking-wider">Remote Connection</h4>
-
-          <div>
-            <label class="block text-xs text-[#858585] mb-1.5">
-              Connection String <span class="text-[#f44336]">*</span>
-            </label>
-            <input
-              v-model="form.remoteUri"
-              type="text"
-              placeholder="mongodb:// or mongodb+srv://"
-              :class="inputClass('remoteUri')"
-              @input="syncRemoteFormFromUri"
-              @blur="validateField('remoteUri')"
-              @keydown.enter="onSave"
-            />
-            <p v-if="errors.remoteUri" class="text-xs text-[#f44336] mt-1">{{ errors.remoteUri }}</p>
-          </div>
-
-          <div class="flex gap-3">
-            <div class="flex-[2]">
-              <label class="block text-xs text-[#858585] mb-1.5">
-                Host <span v-if="!isRemoteSrv" class="text-[#f44336]">*</span>
-              </label>
-              <input
-                v-model="form.remoteHost"
-                type="text"
-                placeholder="host or IP"
-                :class="inputClass('remoteHost')"
-                @input="rebuildRemoteUri"
-                @blur="validateField('remoteHost')"
-                @keydown.enter="onSave"
-              />
-              <p v-if="errors.remoteHost" class="text-xs text-[#f44336] mt-1">{{ errors.remoteHost }}</p>
-            </div>
-            <div class="flex-1">
-              <label class="block text-xs text-[#858585] mb-1.5">
-                Port <span v-if="!isRemoteSrv" class="text-[#f44336]">*</span>
-              </label>
-              <input
-                v-model.number="form.remotePort"
-                type="number"
-                placeholder="27017"
-                :class="inputClass('remotePort')"
-                @input="rebuildRemoteUri"
-                @blur="validateField('remotePort')"
-                @keydown.enter="onSave"
-              />
-              <p v-if="errors.remotePort" class="text-xs text-[#f44336] mt-1">{{ errors.remotePort }}</p>
-            </div>
-          </div>
-
-          <div class="flex gap-3">
-            <div class="flex-1">
-              <label class="block text-xs text-[#858585] mb-1.5">Username</label>
-              <input
-                v-model="form.remoteUsername"
-                type="text"
-                placeholder="user"
-                :class="inputClass('remoteUsername')"
-                @input="rebuildRemoteUri"
-                @keydown.enter="onSave"
-              />
-            </div>
-            <div class="flex-1">
-              <label class="block text-xs text-[#858585] mb-1.5">Password</label>
-              <div class="relative">
-                <input
-                  v-model="form.remotePassword"
-                  :type="showRemotePassword ? 'text' : 'password'"
-                  placeholder="password"
-                  :class="[inputClass('remotePassword'), 'pr-8']"
-                  @input="rebuildRemoteUri"
-                  @keydown.enter="onSave"
-                />
-                <button
-                  type="button"
-                  @click="showRemotePassword = !showRemotePassword"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-[#6e6e6e] hover:text-[#cccccc]"
-                >
-                  <component :is="showRemotePassword ? EyeOff : Eye" :size="14" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="flex gap-3">
-            <div class="flex-1">
-              <label class="block text-xs text-[#858585] mb-1.5">
-                Database
-              </label>
-              <input
-                v-model="form.remoteDatabase"
-                type="text"
-                placeholder="database"
-                :class="inputClass('remoteDatabase')"
-                @input="rebuildRemoteUri"
-                @blur="validateField('remoteDatabase')"
-                @keydown.enter="onSave"
-              />
-              <p v-if="errors.remoteDatabase" class="text-xs text-[#f44336] mt-1">{{ errors.remoteDatabase }}</p>
-            </div>
-            <div class="flex-1">
-              <label class="block text-xs text-[#858585] mb-1.5">Auth Source</label>
-              <input
-                v-model="form.remoteAuthSource"
-                type="text"
-                placeholder="admin"
-                :class="inputClass('remoteAuthSource')"
-                @input="rebuildRemoteUri"
-                @keydown.enter="onSave"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-xs text-[#858585] mb-1.5">Connection Options</label>
-            <input
-              v-model="form.remoteOptions"
-              type="text"
-              placeholder="retryWrites=true&replicaSet=rs0"
-              :class="inputClass('remoteOptions')"
-              @input="rebuildRemoteUri"
-              @keydown.enter="onSave"
-            />
-          </div>
+          <MongoConnectionFields
+            v-model="remoteFields"
+            :errors="remoteErrors"
+            :is-srv="isRemoteSrv"
+            host-placeholder="host or IP"
+            options-placeholder="retryWrites=true&replicaSet=rs0"
+            @uri-input="syncFormFromUri('remote')"
+            @field-input="rebuildUri('remote')"
+            @validate="validateField('remote' + capitalize($event))"
+            @save="onSave"
+          />
         </div>
 
         <!-- Local Connection -->
@@ -166,129 +49,17 @@
           </div>
 
           <template v-if="form.hasLocal">
-            <div>
-              <label class="block text-xs text-[#858585] mb-1.5">
-                Connection String <span class="text-[#f44336]">*</span>
-              </label>
-              <input
-                v-model="form.localUri"
-                type="text"
-                placeholder="mongodb:// or mongodb+srv://"
-                :class="inputClass('localUri')"
-                @input="syncLocalFormFromUri"
-                @blur="validateField('localUri')"
-                @keydown.enter="onSave"
-              />
-              <p v-if="errors.localUri" class="text-xs text-[#f44336] mt-1">{{ errors.localUri }}</p>
-            </div>
-
-            <div class="flex gap-3">
-              <div class="flex-[2]">
-                <label class="block text-xs text-[#858585] mb-1.5">
-                  Host <span v-if="!isLocalSrv" class="text-[#f44336]">*</span>
-                </label>
-                <input
-                  v-model="form.localHost"
-                  type="text"
-                  placeholder="localhost"
-                  :class="inputClass('localHost')"
-                  @input="rebuildLocalUri"
-                  @blur="validateField('localHost')"
-                  @keydown.enter="onSave"
-                />
-                <p v-if="errors.localHost" class="text-xs text-[#f44336] mt-1">{{ errors.localHost }}</p>
-              </div>
-              <div class="flex-1">
-                <label class="block text-xs text-[#858585] mb-1.5">
-                  Port <span v-if="!isLocalSrv" class="text-[#f44336]">*</span>
-                </label>
-                <input
-                  v-model.number="form.localPort"
-                  type="number"
-                  placeholder="27017"
-                  :class="inputClass('localPort')"
-                  @input="rebuildLocalUri"
-                  @blur="validateField('localPort')"
-                  @keydown.enter="onSave"
-                />
-                <p v-if="errors.localPort" class="text-xs text-[#f44336] mt-1">{{ errors.localPort }}</p>
-              </div>
-            </div>
-
-            <div class="flex gap-3">
-              <div class="flex-1">
-                <label class="block text-xs text-[#858585] mb-1.5">Username</label>
-                <input
-                  v-model="form.localUsername"
-                  type="text"
-                  placeholder="user"
-                  :class="inputClass('localUsername')"
-                  @input="rebuildLocalUri"
-                  @keydown.enter="onSave"
-                />
-              </div>
-              <div class="flex-1">
-                <label class="block text-xs text-[#858585] mb-1.5">Password</label>
-                <div class="relative">
-                  <input
-                    v-model="form.localPassword"
-                    :type="showLocalPassword ? 'text' : 'password'"
-                    placeholder="password"
-                    :class="[inputClass('localPassword'), 'pr-8']"
-                    @input="rebuildLocalUri"
-                    @keydown.enter="onSave"
-                  />
-                  <button
-                    type="button"
-                    @click="showLocalPassword = !showLocalPassword"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 text-[#6e6e6e] hover:text-[#cccccc]"
-                  >
-                    <component :is="showLocalPassword ? EyeOff : Eye" :size="14" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="flex gap-3">
-              <div class="flex-1">
-                <label class="block text-xs text-[#858585] mb-1.5">
-                  Database
-                </label>
-                <input
-                  v-model="form.localDatabase"
-                  type="text"
-                  placeholder="database"
-                  :class="inputClass('localDatabase')"
-                  @input="rebuildLocalUri"
-                  @blur="validateField('localDatabase')"
-                  @keydown.enter="onSave"
-                />
-                <p v-if="errors.localDatabase" class="text-xs text-[#f44336] mt-1">{{ errors.localDatabase }}</p>
-              </div>
-              <div class="flex-1">
-                <label class="block text-xs text-[#858585] mb-1.5">Auth Source</label>
-                <input
-                  v-model="form.localAuthSource"
-                  type="text"
-                  placeholder="admin"
-                  :class="inputClass('localAuthSource')"
-                  @input="rebuildLocalUri"
-                  @keydown.enter="onSave"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label class="block text-xs text-[#858585] mb-1.5">Connection Options</label>
-              <input
-                v-model="form.localOptions"
-                type="text"
-                placeholder="retryWrites=true"
-                :class="inputClass('localOptions')"
-                @input="rebuildLocalUri"
-                @keydown.enter="onSave"
-              />
-            </div>
+            <MongoConnectionFields
+              v-model="localFields"
+              :errors="localErrors"
+              :is-srv="isLocalSrv"
+              host-placeholder="localhost"
+              options-placeholder="retryWrites=true"
+              @uri-input="syncFormFromUri('local')"
+              @field-input="rebuildUri('local')"
+              @validate="validateField('local' + capitalize($event))"
+              @save="onSave"
+            />
           </template>
 
           <p v-else class="text-[10px] text-[#6e6e6e]">
@@ -315,14 +86,15 @@
           {{ loading ? 'Saving...' : (isEditing ? 'Save' : 'Add') }}
         </button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue'
-import { Loader2, Eye, EyeOff } from 'lucide-vue-next'
+import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
+import { Loader2 } from 'lucide-vue-next'
 import { parseMongoUri, buildMongoUri, parseUriToForm } from '../composables/useMongoUri.js'
+import ModalShell from './ModalShell.vue'
+import MongoConnectionFields from './MongoConnectionFields.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -335,8 +107,6 @@ const isEditing = computed(() => !!props.host)
 
 const nameInput = ref(null)
 const loading = ref(false)
-const showRemotePassword = ref(false)
-const showLocalPassword = ref(false)
 
 const defaultForm = () => ({
   name: '',
@@ -362,19 +132,45 @@ const defaultForm = () => ({
 const form = ref(defaultForm())
 const errors = ref({})
 
-const isRemoteSrv = computed(() =>
-  form.value.remoteUri.trim().startsWith('mongodb+srv://') ||
-  /^mongodb:\/\/[^/]*,/.test(form.value.remoteUri.trim())
-)
-const isLocalSrv = computed(() =>
-  form.value.localUri.trim().startsWith('mongodb+srv://') ||
-  /^mongodb:\/\/[^/]*,/.test(form.value.localUri.trim())
-)
+/** SRV seedlist or multi-host URIs have no single host/port to require. */
+function isSrvLikeUri(uri) {
+  const trimmed = uri.trim()
+  return trimmed.startsWith('mongodb+srv://') || /^mongodb:\/\/[^/]*,/.test(trimmed)
+}
+const isRemoteSrv = computed(() => isSrvLikeUri(form.value.remoteUri))
+const isLocalSrv = computed(() => isSrvLikeUri(form.value.localUri))
+
+const FIELD_KEYS = ['uri', 'host', 'port', 'username', 'password', 'database', 'authSource', 'options']
+
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/** Two-way view of one side's flat form keys (remoteUri, remoteHost, ...) as one object. */
+function sideFields(prefix) {
+  return computed({
+    get: () => Object.fromEntries(FIELD_KEYS.map(key => [key, form.value[prefix + capitalize(key)]])),
+    set: (value) => {
+      for (const key of FIELD_KEYS) {
+        form.value[prefix + capitalize(key)] = value[key]
+      }
+    },
+  })
+}
+
+function sideErrors(prefix) {
+  return computed(() =>
+    Object.fromEntries(FIELD_KEYS.map(key => [key, errors.value[prefix + capitalize(key)]])),
+  )
+}
+
+const remoteFields = sideFields('remote')
+const localFields = sideFields('local')
+const remoteErrors = sideErrors('remote')
+const localErrors = sideErrors('local')
 
 function resetForm() {
   errors.value = {}
-  showRemotePassword.value = false
-  showLocalPassword.value = false
 
   if (props.host) {
     const remote = parseMongoUri(props.host.mongo_uri)
@@ -508,67 +304,40 @@ function validateAll() {
   return Object.keys(errors.value).length === 0
 }
 
-let syncingFromRemoteUri = false
-function syncRemoteFormFromUri() {
-  const parsed = parseUriToForm(form.value.remoteUri)
+// While a side's fields are being filled from its URI, ignore rebuild requests
+// so the URI the user typed is not rewritten under them.
+const syncingFromUri = { remote: false, local: false }
+
+/** Fill one side's structured fields from its connection string. */
+function syncFormFromUri(prefix) {
+  const parsed = parseUriToForm(form.value[prefix + 'Uri'])
   if (!parsed) return
 
-  syncingFromRemoteUri = true
-  form.value.remoteHost = parsed.host
-  form.value.remotePort = parsed.port
-  form.value.remoteUsername = parsed.username
-  form.value.remotePassword = parsed.password
-  form.value.remoteDatabase = parsed.database
-  form.value.remoteAuthSource = parsed.authSource
-  form.value.remoteOptions = parsed.options
+  syncingFromUri[prefix] = true
+  form.value[prefix + 'Host'] = parsed.host
+  form.value[prefix + 'Port'] = parsed.port
+  form.value[prefix + 'Username'] = parsed.username
+  form.value[prefix + 'Password'] = parsed.password
+  form.value[prefix + 'Database'] = parsed.database
+  form.value[prefix + 'AuthSource'] = parsed.authSource
+  form.value[prefix + 'Options'] = parsed.options
   nextTick(() => {
-    syncingFromRemoteUri = false
+    syncingFromUri[prefix] = false
   })
 }
 
-function rebuildRemoteUri() {
-  if (syncingFromRemoteUri) return
-  form.value.remoteUri = buildMongoUri({
+/** Rebuild one side's connection string from its structured fields. */
+function rebuildUri(prefix) {
+  if (syncingFromUri[prefix]) return
+  form.value[prefix + 'Uri'] = buildMongoUri({
     scheme: 'mongodb',
-    host: form.value.remoteHost,
-    port: form.value.remotePort,
-    username: form.value.remoteUsername,
-    password: form.value.remotePassword,
-    database: form.value.remoteDatabase,
-    authSource: form.value.remoteAuthSource,
-    options: form.value.remoteOptions,
-  })
-}
-
-let syncingFromLocalUri = false
-function syncLocalFormFromUri() {
-  const parsed = parseUriToForm(form.value.localUri)
-  if (!parsed) return
-
-  syncingFromLocalUri = true
-  form.value.localHost = parsed.host
-  form.value.localPort = parsed.port
-  form.value.localUsername = parsed.username
-  form.value.localPassword = parsed.password
-  form.value.localDatabase = parsed.database
-  form.value.localAuthSource = parsed.authSource
-  form.value.localOptions = parsed.options
-  nextTick(() => {
-    syncingFromLocalUri = false
-  })
-}
-
-function rebuildLocalUri() {
-  if (syncingFromLocalUri) return
-  form.value.localUri = buildMongoUri({
-    scheme: 'mongodb',
-    host: form.value.localHost,
-    port: form.value.localPort,
-    username: form.value.localUsername,
-    password: form.value.localPassword,
-    database: form.value.localDatabase,
-    authSource: form.value.localAuthSource,
-    options: form.value.localOptions,
+    host: form.value[prefix + 'Host'],
+    port: form.value[prefix + 'Port'],
+    username: form.value[prefix + 'Username'],
+    password: form.value[prefix + 'Password'],
+    database: form.value[prefix + 'Database'],
+    authSource: form.value[prefix + 'AuthSource'],
+    options: form.value[prefix + 'Options'],
   })
 }
 
@@ -603,5 +372,9 @@ watch(() => props.show, (visible) => {
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>

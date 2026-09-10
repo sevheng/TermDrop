@@ -65,6 +65,7 @@
 
 <script setup>
 import { Database, Table, ChevronRight, Loader2 } from 'lucide-vue-next'
+import { isSelected as isSelectedIn, dbSelectionState as dbSelectionStateIn } from '../utils/mongoSelection.js'
 
 const props = defineProps({
   databases: { type: Array, required: true },
@@ -77,13 +78,10 @@ const props = defineProps({
 defineEmits(['toggle-db', 'toggle-db-selection', 'toggle-collection'])
 
 function isSelected(db, coll) {
-  return props.selectedCollections.get(db)?.has(coll) || false
+  return isSelectedIn(props.selectedCollections, db, coll)
 }
 
 function dbSelectionState(db) {
-  const selected = props.selectedCollections.get(db.name)
-  if (!selected || selected.size === 0) return 'none'
-  if (db.collections.length > 0 && selected.size === db.collections.length) return 'all'
-  return 'some'
+  return dbSelectionStateIn(props.selectedCollections, db)
 }
 </script>

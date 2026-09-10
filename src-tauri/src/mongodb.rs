@@ -41,6 +41,132 @@ fn is_retryable_error(stderr: &str) -> bool {
     .any(|&s| lower.contains(s))
 }
 
+/// Emits the `mongodb-sync-*` events for one operation. Each method
+/// reproduces the exact payload shape the frontend expects on that path.
+struct ProgressEmitter<'a> {
+    window: &'a Window,
+    op_id: &'a str,
+    db: &'a str,
+}
+
+impl ProgressEmitter<'_> {
+    /// Pulse while a CLI tool runs: no collection, estimated percent.
+    fn pulse(&self, stage: &str, percent: u64) {
+        let _ = self.window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "opId": self.op_id,
+                "db": self.db,
+                "collection": "",
+                "stage": stage,
+                "synced": 0,
+                "total": 1,
+                "percent": percent,
+            }),
+        );
+    }
+
+    /// Terminal event once a CLI tool has finished.
+    fn done(&self) {
+        let _ = self.window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "opId": self.op_id,
+                "db": self.db,
+                "collection": "",
+                "stage": "done",
+                "synced": 1,
+                "total": 1,
+                "percent": 100,
+            }),
+        );
+    }
+
+    /// Per-collection progress from the driver streaming fallback.
+    fn collection(&self, collection: &str, stage: &str, synced: u64, total: u64) {
+        let _ = self.window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "opId": self.op_id,
+                "db": self.db,
+                "collection": collection,
+                "stage": stage,
+                "synced": synced,
+                "total": total,
+            }),
+        );
+    }
+
+    fn cancelled(&self) {
+        let _ = self.window.emit(
+            "mongodb-sync-cancelled",
+            serde_json::json!({"opId": self.op_id, "db": self.db}),
+        );
+    }
+}
+
+/// Normalize a URI for the CLI tools: add authSource when needed and strip
+/// the database path, which mongodump/mongorestore reject alongside --db.
+fn prepare_cli_uri(uri: &str) -> String {
+    strip_mongo_uri_database(&normalize_mongo_uri(uri))
+}
+
+/// `--archive=<path>` plus `--gzip` when the path ends in `.gz`.
+fn push_archive_args(cmd: &mut std::process::Command, path: &str) {
+    cmd.arg(format!("--archive={}", path));
+    if path.ends_with(".gz") {
+        cmd.arg("--gzip");
+    }
+}
+
+/// One `--nsInclude=<db>.<collection>` per collection.
+fn push_ns_includes(cmd: &mut std::process::Command, db: &str, collections: &[String]) {
+    for coll in collections {
+        cmd.arg(format!("--nsInclude={}.{}", db, coll));
+    }
+}
+
+/// Run one CLI tool invocation on the blocking pool with retry, then emit
+/// the terminal "done" event. `panic_label` names the task if it panics.
+#[allow(clippy::too_many_arguments)]
+async fn run_cli_op<F>(
+    panic_label: &str,
+    tool: &'static str,
+    stage: &'static str,
+    window: Window,
+    cancelled: Arc<AtomicBool>,
+    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
+    op_id: String,
+    progress_db: String,
+    build_cmd: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<std::process::Command, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        run_with_retry(
+            tool,
+            stage,
+            3,
+            &window,
+            &cancelled,
+            &mongo_ops,
+            &op_id,
+            &progress_db,
+            build_cmd,
+        )?;
+        ProgressEmitter {
+            window: &window,
+            op_id: &op_id,
+            db: &progress_db,
+        }
+        .done();
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{} task panicked: {}", panic_label, e))?
+}
+
 fn run_with_retry<F>(
     label: &str,
     stage: &str,
@@ -58,22 +184,9 @@ where
     let start = Instant::now();
     let mut last_emit = Instant::now();
 
-    let emit_progress = |st: &str, percent: u64| {
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": op_id,
-                "db": db,
-                "collection": "",
-                "stage": st,
-                "synced": 0,
-                "total": 1,
-                "percent": percent,
-            }),
-        );
-    };
+    let progress = ProgressEmitter { window, op_id, db };
 
-    emit_progress(stage, 0);
+    progress.pulse(stage, 0);
 
     'attempt: for attempt in 0..max_retries {
         let mut cmd = build_cmd()?;
@@ -89,7 +202,9 @@ where
         let stderr_lines_clone = Arc::clone(&stderr_lines);
         let stderr_thread = std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
+            // Stop at the first read error; `flatten()` would spin forever on a
+            // persistently failing pipe.
+            for line in reader.lines().map_while(Result::ok) {
                 stderr_lines_clone.lock().unwrap().push(line);
             }
         });
@@ -104,7 +219,7 @@ where
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stderr_thread.join();
-                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                progress.cancelled();
                 return Err("cancelled".into());
             }
 
@@ -132,7 +247,7 @@ where
                         .collect::<Vec<_>>()
                         .join("\n");
                     if is_retryable_error(&err) && attempt < max_retries - 1 {
-                        emit_progress("retrying", 0);
+                        progress.pulse("retrying", 0);
                         let mut cancelled_during_sleep = false;
                         for _ in 0..10 {
                             if cancelled.load(Ordering::Relaxed) {
@@ -142,7 +257,7 @@ where
                             std::thread::sleep(Duration::from_millis(100));
                         }
                         if cancelled_during_sleep {
-                            let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                            progress.cancelled();
                             return Err("cancelled".into());
                         }
                         continue 'attempt;
@@ -155,7 +270,7 @@ where
                         let elapsed_ms = start.elapsed().as_millis() as u64;
                         // Monotonic pulse: grows toward 95% so the bar never loops back.
                         let pulse = std::cmp::min(95, elapsed_ms / 100);
-                        emit_progress(stage, pulse);
+                        progress.pulse(stage, pulse);
                         last_emit = Instant::now();
                     }
                     std::thread::sleep(Duration::from_millis(100));
@@ -184,7 +299,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
         if let Some(exe_dir) = exe_path.parent() {
             // Same directory as executable (Windows, Linux AppImage/standalone,
             // and cargo's target/debug or target/release directories)
-            let bundled = exe_dir.join(&name);
+            let bundled = exe_dir.join(name);
             if bundled.exists() {
                 return Ok(bundled);
             }
@@ -192,7 +307,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Cargo sometimes places test/run binaries in target/<profile>/deps/;
             // the profile directory (e.g. target/debug) is the parent.
             if let Some(profile_dir) = exe_dir.parent() {
-                let bundled = profile_dir.join(&name);
+                let bundled = profile_dir.join(name);
                 if bundled.exists() {
                     return Ok(bundled);
                 }
@@ -210,7 +325,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Linux .deb/AppImage: usr/bin/ -> usr/lib/TermDrop/
             #[cfg(target_os = "linux")]
             {
-                let linux_bundle = exe_dir.join("../lib/TermDrop").join(&name);
+                let linux_bundle = exe_dir.join("../lib/TermDrop").join(name);
                 if linux_bundle.exists() {
                     return Ok(linux_bundle);
                 }
@@ -368,7 +483,6 @@ pub async fn sync_collections(
     .await
     {
         Ok(()) => {
-            let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": &op_id, "db": db}));
             return Ok(());
         }
         Err(e) => {
@@ -464,9 +578,7 @@ async fn try_cli_sync(
                 }
 
                 // Only restore selected collections
-                for coll in &collections {
-                    restore_cmd.arg(format!("--nsInclude={}.{}", db, coll));
-                }
+                push_ns_includes(&mut restore_cmd, &db, &collections);
 
                 Ok(restore_cmd)
             },
@@ -503,24 +615,19 @@ async fn driver_sync(
 
     let remote_db = remote_client.database(db);
     let local_db = local_client.database(db);
+    let progress = ProgressEmitter {
+        window: &window,
+        op_id,
+        db,
+    };
 
     for collection_name in &collections {
         if cancelled.load(Ordering::Relaxed) {
-            let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+            progress.cancelled();
             return Err("cancelled".into());
         }
 
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": op_id,
-                "db": db,
-                "collection": collection_name,
-                "stage": "count",
-                "synced": 0,
-                "total": 0,
-            }),
-        );
+        progress.collection(collection_name, "count", 0, 0);
 
         let remote_coll = remote_db.collection::<mongodb::bson::Document>(collection_name);
         let local_coll = local_db.collection::<mongodb::bson::Document>(collection_name);
@@ -551,7 +658,7 @@ async fn driver_sync(
             .map_err(|e| format!("cursor {}: {}", collection_name, e))?
         {
             if cancelled.load(Ordering::Relaxed) {
-                let _ = window.emit("mongodb-sync-cancelled", serde_json::json!({"opId": op_id, "db": db}));
+                progress.cancelled();
                 return Err("cancelled".into());
             }
 
@@ -568,17 +675,7 @@ async fn driver_sync(
 
             // Emit progress every 500ms or on batch boundary
             if last_emit.elapsed() >= Duration::from_millis(500) {
-                let _ = window.emit(
-                    "mongodb-sync-progress",
-                    serde_json::json!({
-                        "opId": op_id,
-                        "db": db,
-                        "collection": collection_name,
-                        "stage": "copy",
-                        "synced": synced,
-                        "total": total,
-                    }),
-                );
+                progress.collection(collection_name, "copy", synced, total);
                 last_emit = std::time::Instant::now();
             }
         }
@@ -590,20 +687,9 @@ async fn driver_sync(
                 .map_err(|e| format!("insert {}: {}", collection_name, e))?;
         }
 
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": op_id,
-                "db": db,
-                "collection": collection_name,
-                "stage": "done",
-                "synced": synced,
-                "total": total,
-            }),
-        );
+        progress.collection(collection_name, "done", synced, total);
     }
 
-    let _ = window.emit("mongodb-sync-done", serde_json::json!({"opId": op_id, "db": db}));
     Ok(())
 }
 
@@ -619,62 +705,41 @@ pub async fn dump_collections(
     output_dir: &str,
     is_archive: bool,
 ) -> Result<(), String> {
-    let remote_uri = normalize_mongo_uri(remote_uri);
-    let remote_uri = strip_mongo_uri_database(&remote_uri);
+    let remote_uri = prepare_cli_uri(remote_uri);
     let db = db.to_string();
     let output_dir = output_dir.to_string();
+    let cmd_db = db.clone();
 
-    tokio::task::spawn_blocking(move || {
-        run_with_retry(
-            "mongodump",
-            "dump",
-            3,
-            &window,
-            &cancelled,
-            &mongo_ops,
-            &op_id,
-            &db,
-            || {
-                let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
-                cmd.arg(format!("--uri={}", &remote_uri))
-                    .arg(format!("--db={}", db));
+    run_cli_op(
+        "dump",
+        "mongodump",
+        "dump",
+        window,
+        cancelled,
+        mongo_ops,
+        op_id,
+        db,
+        move || {
+            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
+            cmd.arg(format!("--uri={}", &remote_uri))
+                .arg(format!("--db={}", cmd_db));
 
-                if is_archive {
-                    cmd.arg(format!("--archive={}", output_dir));
-                    if output_dir.ends_with(".gz") {
-                        cmd.arg("--gzip");
-                    }
-                } else {
-                    cmd.arg("--gzip").arg(format!("--out={}", output_dir));
-                }
+            if is_archive {
+                push_archive_args(&mut cmd, &output_dir);
+            } else {
+                cmd.arg("--gzip").arg(format!("--out={}", output_dir));
+            }
 
-                // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
-                if collections.len() == 1 {
-                    cmd.arg("-c").arg(&collections[0]);
-                }
-                // For multiple collections, dump the whole DB (mongorestore will filter)
+            // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
+            if collections.len() == 1 {
+                cmd.arg("-c").arg(&collections[0]);
+            }
+            // For multiple collections, dump the whole DB (mongorestore will filter)
 
-                Ok(cmd)
-            },
-        )?;
-
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": &op_id,
-                "db": &db,
-                "collection": "",
-                "stage": "done",
-                "synced": 1,
-                "total": 1,
-                "percent": 100,
-            }),
-        );
-
-        Ok(())
-    })
+            Ok(cmd)
+        },
+    )
     .await
-    .map_err(|e| format!("dump task panicked: {}", e))?
 }
 
 /// Restore selected collections from a local directory or archive to remote using mongorestore.
@@ -689,17 +754,22 @@ pub async fn restore_collections(
     input_dir: &str,
     is_archive: bool,
 ) -> Result<(), String> {
-    let remote_uri = normalize_mongo_uri(remote_uri);
-    let remote_uri = strip_mongo_uri_database(&remote_uri);
+    let remote_uri = prepare_cli_uri(remote_uri);
     let db = db.to_string();
     let input_dir = input_dir.to_string();
     let has_db = !db.is_empty();
     let has_collections = !collections.is_empty();
-    let progress_db = if has_db { db.clone() } else { "all".to_string() };
+    let progress_db = if has_db {
+        db.clone()
+    } else {
+        "all".to_string()
+    };
 
     // A "direct DB folder" contains BSON files directly (e.g. /dump/mydb/*.bson.gz).
     // A "dump root" contains DB subfolders (e.g. /dump/<db>/*.bson.gz).
-    let is_direct_db = !is_archive && has_db && !collect_bson_collections(std::path::Path::new(&input_dir)).is_empty();
+    let is_direct_db = !is_archive
+        && has_db
+        && !collect_bson_collections(std::path::Path::new(&input_dir)).is_empty();
     let restore_dir = input_dir.clone();
 
     tracing::debug!(
@@ -726,74 +796,50 @@ pub async fn restore_collections(
         tracing::debug!(restore_dir = %restore_dir, contents = ?contents, "restore folder contents");
     }
 
-    tokio::task::spawn_blocking(move || {
-        run_with_retry(
-            "mongorestore",
-            "restore",
-            3,
-            &window,
-            &cancelled,
-            &mongo_ops,
-            &op_id,
-            &progress_db,
-            || {
-                let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-                cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
+    let cmd_db = db.clone();
+    run_cli_op(
+        "restore",
+        "mongorestore",
+        "restore",
+        window,
+        cancelled,
+        mongo_ops,
+        op_id,
+        progress_db,
+        move || {
+            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
+            cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
 
-                if is_archive {
-                    cmd.arg(format!("--archive={}", &input_dir));
-                    if input_dir.ends_with(".gz") {
-                        cmd.arg("--gzip");
-                    }
+            if is_archive {
+                push_archive_args(&mut cmd, &input_dir);
+            } else {
+                // Dump folders produced by this app are gzip-compressed.
+                cmd.arg("--gzip").arg(&restore_dir);
+            }
+
+            if is_direct_db {
+                // Path is a single DB dump; --db tells mongorestore the target DB.
+                cmd.arg(format!("--db={}", cmd_db));
+                push_ns_includes(&mut cmd, &cmd_db, &collections);
+            } else if has_db {
+                // Path is a dump root; filter with --nsInclude instead of deprecated --db.
+                if has_collections {
+                    push_ns_includes(&mut cmd, &cmd_db, &collections);
                 } else {
-                    // Dump folders produced by this app are gzip-compressed.
-                    cmd.arg("--gzip").arg(&restore_dir);
+                    cmd.arg(format!("--nsInclude={}.*", cmd_db));
                 }
+            }
 
-                if is_direct_db {
-                    // Path is a single DB dump; --db tells mongorestore the target DB.
-                    cmd.arg(format!("--db={}", db));
-                    for coll in &collections {
-                        cmd.arg(format!("--nsInclude={}.{}", db, coll));
-                    }
-                } else if has_db {
-                    // Path is a dump root; filter with --nsInclude instead of deprecated --db.
-                    if has_collections {
-                        for coll in &collections {
-                            cmd.arg(format!("--nsInclude={}.{}", db, coll));
-                        }
-                    } else {
-                        cmd.arg(format!("--nsInclude={}.*", db));
-                    }
-                }
+            tracing::debug!(
+                program = %cmd.get_program().to_string_lossy(),
+                args = ?cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                "mongorestore command"
+            );
 
-                tracing::debug!(
-                    program = %cmd.get_program().to_string_lossy(),
-                    args = ?cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "mongorestore command"
-                );
-
-                Ok(cmd)
-            },
-        )?;
-
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": &op_id,
-                "db": &progress_db,
-                "collection": "",
-                "stage": "done",
-                "synced": 1,
-                "total": 1,
-                "percent": 100,
-            }),
-        );
-
-        Ok(())
-    })
+            Ok(cmd)
+        },
+    )
     .await
-    .map_err(|e| format!("restore task panicked: {}", e))?
 }
 
 /// Restore selected namespaces from a single archive file to remote using mongorestore.
@@ -807,56 +853,31 @@ pub async fn restore_archive(
     includes: Vec<String>,
     input_path: &str,
 ) -> Result<(), String> {
-    let remote_uri = normalize_mongo_uri(remote_uri);
-    let remote_uri = strip_mongo_uri_database(&remote_uri);
+    let remote_uri = prepare_cli_uri(remote_uri);
     let input_path = input_path.to_string();
-    let includes = includes.clone();
 
-    tokio::task::spawn_blocking(move || {
-        run_with_retry(
-            "mongorestore",
-            "restore",
-            3,
-            &window,
-            &cancelled,
-            &mongo_ops,
-            &op_id,
-            "archive",
-            || {
-                let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-                cmd.arg(format!("--uri={}", &remote_uri))
-                    .arg("--drop")
-                    .arg(format!("--archive={}", &input_path));
+    run_cli_op(
+        "restore archive",
+        "mongorestore",
+        "restore",
+        window,
+        cancelled,
+        mongo_ops,
+        op_id,
+        "archive".to_string(),
+        move || {
+            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
+            cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
+            push_archive_args(&mut cmd, &input_path);
 
-                if input_path.ends_with(".gz") {
-                    cmd.arg("--gzip");
-                }
+            for ns in &includes {
+                cmd.arg(format!("--nsInclude={}", ns));
+            }
 
-                for ns in &includes {
-                    cmd.arg(format!("--nsInclude={}", ns));
-                }
-
-                Ok(cmd)
-            },
-        )?;
-
-        let _ = window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": &op_id,
-                "db": "archive",
-                "collection": "",
-                "stage": "done",
-                "synced": 1,
-                "total": 1,
-                "percent": 100,
-            }),
-        );
-
-        Ok(())
-    })
+            Ok(cmd)
+        },
+    )
     .await
-    .map_err(|e| format!("restore archive task panicked: {}", e))?
 }
 
 #[derive(serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -913,7 +934,10 @@ pub fn scan_restore_folder(path: String) -> Result<Vec<RestoreSourceDb>, String>
 
     // Otherwise look for DB subfolders.
     let mut dbs = Vec::new();
-    for e in std::fs::read_dir(root).map_err(|e| e.to_string())?.flatten() {
+    for e in std::fs::read_dir(root)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             let collections = collect_bson_collections(&e.path());
             if !collections.is_empty() {
@@ -982,17 +1006,65 @@ mod tests {
     }
 
     #[test]
+    fn prepare_cli_uri_normalizes_then_strips_database() {
+        assert_eq!(
+            prepare_cli_uri("mongodb://root:example@localhost:27017/termdrop_test"),
+            "mongodb://root:example@localhost:27017/?authSource=admin"
+        );
+        assert_eq!(
+            prepare_cli_uri("mongodb://localhost/db"),
+            "mongodb://localhost/"
+        );
+    }
+
+    fn args(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn archive_args_add_gzip_only_for_gz_paths() {
+        let mut cmd = std::process::Command::new("x");
+        push_archive_args(&mut cmd, "/tmp/dump.gz");
+        assert_eq!(args(&cmd), vec!["--archive=/tmp/dump.gz", "--gzip"]);
+
+        let mut cmd = std::process::Command::new("x");
+        push_archive_args(&mut cmd, "/tmp/dump.archive");
+        assert_eq!(args(&cmd), vec!["--archive=/tmp/dump.archive"]);
+    }
+
+    #[test]
+    fn ns_includes_one_per_collection() {
+        let mut cmd = std::process::Command::new("x");
+        push_ns_includes(&mut cmd, "app", &["users".to_string(), "logs".to_string()]);
+        assert_eq!(
+            args(&cmd),
+            vec!["--nsInclude=app.users", "--nsInclude=app.logs"]
+        );
+        let mut cmd = std::process::Command::new("x");
+        push_ns_includes(&mut cmd, "app", &[]);
+        assert!(args(&cmd).is_empty());
+    }
+
+    #[test]
     fn test_strip_mongo_uri_database() {
         assert_eq!(
-            strip_mongo_uri_database("mongodb://root:example@localhost:27017/admin?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb://root:example@localhost:27017/admin?retryWrites=true"
+            ),
             "mongodb://root:example@localhost:27017/?retryWrites=true"
         );
         assert_eq!(
-            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/admin?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb+srv://user:pass@cluster.example.com/admin?retryWrites=true"
+            ),
             "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
         );
         assert_eq!(
-            strip_mongo_uri_database("mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"),
+            strip_mongo_uri_database(
+                "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
+            ),
             "mongodb+srv://user:pass@cluster.example.com/?retryWrites=true"
         );
         assert_eq!(

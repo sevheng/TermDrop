@@ -1,6 +1,5 @@
 <template>
-  <div v-if="show" class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]">
-    <div class="bg-[#252526] rounded-lg p-6 w-[420px] border border-[#3c3c3c] shadow-2xl">
+  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-6 w-[420px] shadow-2xl">
       <div class="flex items-center gap-2 mb-3">
         <span class="text-2xl">🎉</span>
         <h3 class="text-lg font-semibold text-[#cccccc]">Update Available</h3>
@@ -36,12 +35,13 @@
           :disabled="downloading"
         >{{ downloading ? 'Installing...' : 'Download & Install' }}</button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
 import { ref } from 'vue'
+import { toast } from '../utils/toast.js'
+import ModalShell from './ModalShell.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -63,9 +63,7 @@ async function install() {
     await props.downloadAndInstall((p) => { progress.value = p })
     emit('installed')
   } catch (err) {
-    window.dispatchEvent(new CustomEvent('app-toast', {
-      detail: { message: 'Update failed: ' + err, type: 'error' }
-    }))
+    toast('Update failed: ' + err, 'error')
     downloading.value = false
   }
 }

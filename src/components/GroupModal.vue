@@ -1,9 +1,5 @@
 <template>
-  <div
-    v-if="show"
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-  >
-    <div class="bg-[#252526] rounded-lg p-6 w-80 border border-[#3c3c3c] shadow-xl">
+  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-80 shadow-xl">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
         {{ isRename ? 'Rename Group' : 'New Group' }}
       </h3>
@@ -40,12 +36,12 @@
           {{ isRename ? 'Rename' : 'Create' }}
         </button>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
+import ModalShell from './ModalShell.vue'
 
 const props = defineProps({
   show: Boolean,

@@ -9,7 +9,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick, onUnmounted } from 'vue'
 
 const props = defineProps({
   items: { type: Array, required: true },
@@ -31,6 +31,10 @@ function measure() {
 onMounted(() => {
   nextTick(measure)
   window.addEventListener('resize', measure)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', measure)
 })
 
 watch(() => props.items, () => nextTick(measure))

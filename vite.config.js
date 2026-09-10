@@ -11,7 +11,13 @@ export default defineConfig(async () => ({
     rollupOptions: {
       output: {
         manualChunks: {
-          xterm: ["@xterm/xterm", "@xterm/addon-fit", "@xterm/addon-search"],
+          xterm: [
+            "@xterm/xterm",
+            "@xterm/addon-fit",
+            "@xterm/addon-search",
+            "@xterm/addon-canvas",
+            "@xterm/addon-web-links",
+          ],
           vendor: ["vue", "pinia", "lucide-vue-next"],
         },
       },

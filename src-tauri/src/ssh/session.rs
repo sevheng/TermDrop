@@ -13,6 +13,27 @@ pub fn expand_key_path(key_path: &str) -> std::path::PathBuf {
     }
 }
 
+/// Repeat a non-blocking ssh2 call until it stops returning WouldBlock,
+/// sleeping 10ms between attempts. Any other error is prefixed with `label`.
+pub(crate) fn retry_would_block<T>(
+    label: &str,
+    mut op: impl FnMut() -> Result<T, ssh2::Error>,
+) -> Result<T, String> {
+    loop {
+        match op() {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                return Err(format!("{}: {}", label, io_err));
+            }
+        }
+    }
+}
+
 /// Create a TCP connection, perform SSH handshake, and authenticate.
 /// Returns a ready-to-use `Session` in **non-blocking** mode.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -61,50 +82,16 @@ pub fn create_session(
     session.set_blocking(false);
 
     // Retry handshake in non-blocking mode
-    loop {
-        match session.handshake() {
-            Ok(()) => break,
-            Err(e) => {
-                let io_err: std::io::Error = e.into();
-                if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                return Err(format!("handshake: {}", io_err));
-            }
-        }
-    }
+    retry_would_block("handshake", || session.handshake())?;
 
     // Retry auth in non-blocking mode
     if let Some(key_path) = key_path {
         let expanded = expand_key_path(key_path);
-        loop {
-            match session.userauth_pubkey_file(username, None, &expanded, None) {
-                Ok(()) => break,
-                Err(e) => {
-                    let io_err: std::io::Error = e.into();
-                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    return Err(format!("key auth: {}", io_err));
-                }
-            }
-        }
+        retry_would_block("key auth", || {
+            session.userauth_pubkey_file(username, None, &expanded, None)
+        })?;
     } else if let Some(password) = password {
-        loop {
-            match session.userauth_password(username, password) {
-                Ok(()) => break,
-                Err(e) => {
-                    let io_err: std::io::Error = e.into();
-                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    return Err(format!("auth: {}", io_err));
-                }
-            }
-        }
+        retry_would_block("auth", || session.userauth_password(username, password))?;
     } else {
         return Err("no credentials provided".to_string());
     }

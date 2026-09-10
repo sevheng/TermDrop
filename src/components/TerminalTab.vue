@@ -311,19 +311,18 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { SearchAddon } from '@xterm/addon-search'
-import { CanvasAddon } from '@xterm/addon-canvas'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { listen } from '@tauri-apps/api/event'
-import { invoke, Channel } from '@tauri-apps/api/core'
+import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
+import { formatBytes } from '../utils/format.js'
+import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
+import { useContextMenu } from '../composables/useContextMenu.js'
+import { useListenerGroup } from '../composables/useListenerGroup.js'
+import { createTerminalInstance, loadTerminalFontSize } from '../composables/useXtermInstance.js'
+import { useHostStatusPolling } from '../composables/useHostStatusPolling.js'
 
 const props = defineProps({
   sessionId: {
@@ -345,14 +344,10 @@ const store = useConnectionStore()
 const terminalContainer = ref(null)
 const contextMenuEl = ref(null)
 const searchInput = ref(null)
+let terminal = null // createTerminalInstance() result
 let term = null
 let fitAddon = null
 let searchAddon = null
-let canvasAddon = null
-let webLinksAddon = null
-let resizeObserver = null
-let statusInterval = null
-let hasBeenInitialized = false
 
 const isDisconnected = ref(false)
 
@@ -366,18 +361,13 @@ const dockerPane = ref({
   following: false,
 })
 const dockerPaneContainer = ref(null)
+let dockerTerminal = null // createTerminalInstance() result
 let dockerTerm = null
 let dockerFitAddon = null
-let dockerCanvasAddon = null
-let dockerWebLinksAddon = null
-let dockerPaneResizeObserver = null
-let unlistenPtyData = null
-let unlistenPtyError = null
-let unlistenPtyConnected = null
-let unlistenPtyDisconnected = null
+const ptyListeners = useListenerGroup()
 let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
-const contextMenu = ref({ show: false, x: 0, y: 0 })
+const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl)
 const contextMenuForward = ref(null) // { port, label } or null
 const terminalBgClass = ref('bg-gray-900')
 
@@ -386,16 +376,21 @@ const searchQuery = ref('')
 const searchCaseSensitive = ref(false)
 
 const statusExpanded = ref(false)
-const status = ref({ load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' })
-const statusLoading = ref(false)
-const statusError = ref('')
-
 const sysTab = ref('processes')
-const processes = ref([])
-const network = ref(null)
-const diskInfo = ref(null)
-const sysLoading = ref(false)
-let sysPollInterval = null
+const {
+  status,
+  statusLoading,
+  statusError,
+  startStatusPolling,
+  stopStatusPolling,
+  resetStatus,
+  processes,
+  network,
+  diskInfo,
+  sysLoading,
+  startSysPolling,
+  stopSysPolling,
+} = useHostStatusPolling({ hostId: () => props.hostId, isDisconnected, store })
 
 const visiblePorts = computed(() => network.value?.ports?.slice(0, 8) ?? [])
 const visibleInterfaces = computed(() => network.value?.interfaces?.filter(i => i.name !== 'lo').slice(0, 4) ?? [])
@@ -507,26 +502,7 @@ async function showContextMenu(event) {
   event.preventDefault()
   const selection = term ? term.getSelection() : ''
   contextMenuForward.value = detectForwardInfo(selection)
-  contextMenu.value = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-  }
-  await nextTick()
-  const el = contextMenuEl.value
-  if (el) {
-    const rect = el.getBoundingClientRect()
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    let x = contextMenu.value.x
-    let y = contextMenu.value.y
-    if (x + rect.width > vw) x = vw - rect.width - 8
-    if (y + rect.height > vh) y = vh - rect.height - 8
-    if (x < 8) x = 8
-    if (y < 8) y = 8
-    contextMenu.value.x = x
-    contextMenu.value.y = y
-  }
+  await openContextMenu(event)
 }
 
 function createForwardFromSelection() {
@@ -577,7 +553,7 @@ function startResizeDockerPane(e) {
   document.addEventListener('mouseup', onUp)
 }
 
-async function openDockerPane({ type, containerId, containerName, command }) {
+async function openDockerPane({ type, containerName, command }) {
   // Close any existing pane first
   await closeDockerPane()
 
@@ -592,30 +568,10 @@ async function openDockerPane({ type, containerId, containerName, command }) {
 
   await nextTick()
 
-  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
-  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
-
-  dockerTerm = new Terminal({
-    cursorBlink: true,
-    fontSize,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: TERMINAL_THEME,
-  })
-
-  dockerFitAddon = new FitAddon()
-  dockerCanvasAddon = new CanvasAddon()
-  dockerWebLinksAddon = new WebLinksAddon((event, uri) => {
-    event.preventDefault()
-    openUrl(uri).catch((err) => {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
-    })
-  })
-  dockerTerm.loadAddon(dockerFitAddon)
-  dockerTerm.loadAddon(dockerCanvasAddon)
-  dockerTerm.loadAddon(dockerWebLinksAddon)
-
-  dockerTerm.open(dockerPaneContainer.value)
-  dockerFitAddon.fit()
+  const fontSize = await loadTerminalFontSize()
+  dockerTerminal = createTerminalInstance(dockerPaneContainer.value, { fontSize })
+  dockerTerm = dockerTerminal.term
+  dockerFitAddon = dockerTerminal.fitAddon
 
   // Batch keystrokes
   let dockerKeyBuffer = ''
@@ -644,21 +600,21 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   // Listen for PTY data
-  unlistenPtyData = await listen('exec-pty-data', (event) => {
+  await ptyListeners.listen('exec-pty-data', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
       dockerTerm.write(payload.data)
     }
   })
 
-  unlistenPtyError = await listen('exec-pty-error', (event) => {
+  await ptyListeners.listen('exec-pty-error', (event) => {
     const payload = event.payload
     if (typeof payload === 'object' && payload.pty_session_id === ptySessionId) {
       dockerTerm.writeln(`\r\n\x1b[31mError: ${payload.error}\x1b[0m`)
     }
   })
 
-  unlistenPtyConnected = await listen('exec-pty-connected', (event) => {
+  await ptyListeners.listen('exec-pty-connected', (event) => {
     if (event.payload === ptySessionId) {
       setTimeout(() => {
         if (dockerFitAddon) dockerFitAddon.fit()
@@ -666,7 +622,7 @@ async function openDockerPane({ type, containerId, containerName, command }) {
     }
   })
 
-  unlistenPtyDisconnected = await listen('exec-pty-disconnected', (event) => {
+  await ptyListeners.listen('exec-pty-disconnected', (event) => {
     if (event.payload === ptySessionId) {
       dockerPane.value.following = false
       // Auto-close exec panes when the shell exits
@@ -677,29 +633,10 @@ async function openDockerPane({ type, containerId, containerName, command }) {
   })
 
   // Observe resize
-  if (!dockerPaneResizeObserver) {
-    dockerPaneResizeObserver = new ResizeObserver(() => {
-      if (dockerFitAddon) {
-        dockerFitAddon.fit()
-      }
-    })
-  }
-  if (dockerPaneContainer.value) {
-    dockerPaneResizeObserver.observe(dockerPaneContainer.value)
-  }
+  dockerTerminal.observeResize(dockerPaneContainer.value)
 
   // Binary data channel for Docker exec PTY
-  const dockerDataChannel = new Channel()
-  dockerDataChannel.onmessage = (message) => {
-    if (message instanceof Uint8Array) {
-      dockerTerm.write(message)
-    } else if (Array.isArray(message)) {
-      dockerTerm.write(new Uint8Array(message))
-    } else if (typeof message === 'string') {
-      dockerTerm.write(message)
-    }
-  }
-  invoke('open_exec_pty_data_channel', { ptySessionId, channel: dockerDataChannel }).catch(() => {})
+  dockerTerminal.openDataChannel('open_exec_pty_data_channel', { ptySessionId })
 
   // Start the PTY session
   try {
@@ -720,34 +657,20 @@ async function closeDockerPane() {
     await invoke('exec_pty_disconnect', { ptySessionId: dockerPane.value.ptySessionId }).catch(() => {})
   }
 
-  if (dockerPaneResizeObserver) {
-    dockerPaneResizeObserver.disconnect()
-    dockerPaneResizeObserver = null
-  }
+  ptyListeners.dispose()
 
-  if (unlistenPtyData) { unlistenPtyData(); unlistenPtyData = null }
-  if (unlistenPtyError) { unlistenPtyError(); unlistenPtyError = null }
-  if (unlistenPtyConnected) { unlistenPtyConnected(); unlistenPtyConnected = null }
-  if (unlistenPtyDisconnected) { unlistenPtyDisconnected(); unlistenPtyDisconnected = null }
-
-  if (dockerTerm) {
-    dockerTerm.dispose()
-    dockerTerm = null
+  if (dockerTerminal) {
+    dockerTerminal.dispose()
+    dockerTerminal = null
   }
+  dockerTerm = null
   dockerFitAddon = null
-  dockerCanvasAddon = null
 
   dockerPane.value.show = false
   dockerPane.value.ptySessionId = null
   dockerPane.value.title = ''
   dockerPane.value.type = null
   dockerPane.value.following = false
-}
-
-function shellEscape(s) {
-  if (!s) return "''"
-  if (/^[a-zA-Z0-9._~\-\/:@]+$/.test(s)) return s
-  return "'" + s.replace(/'/g, "'\"'\"'") + "'"
 }
 
 async function toggleFollow() {
@@ -767,20 +690,6 @@ function onDockerPaneOpen(event) {
   }
 }
 
-function formatBytes(bytes) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
-}
-
-function formatRate(bytesPerSec) {
-  const abs = Math.abs(bytesPerSec)
-  if (abs < 1024) return bytesPerSec.toFixed(0) + ' B/s'
-  if (abs < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s'
-  return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
-}
-
 function showTooltip(event, text) {
   tooltip.value = {
     show: true,
@@ -792,91 +701,6 @@ function showTooltip(event, text) {
 
 function hideTooltip() {
   tooltip.value.show = false
-}
-
-async function fetchSystemStatus() {
-  if (!props.hostId || isDisconnected.value) return
-  statusLoading.value = true
-  try {
-    const result = await invoke('get_system_stats', { hostId: props.hostId })
-
-    // Compute network rates
-    let netDown = ''
-    let netUp = ''
-    if (result.netdev) {
-      let rxTotal = 0
-      let txTotal = 0
-      for (const line of result.netdev.split('\n')) {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 3) {
-          const iface = parts[0].replace(':', '')
-          if (iface === 'lo') continue
-          const rx = parseInt(parts[1]) || 0
-          const tx = parseInt(parts[2]) || 0
-          rxTotal += rx
-          txTotal += tx
-        }
-      }
-      const now = Date.now()
-      const prev = store.getNetStats(props.hostId)
-      if (prev.time > 0 && prev.rx > 0 && prev.tx > 0) {
-        const elapsed = (now - prev.time) / 1000
-        if (elapsed > 0) {
-          const rxRate = (rxTotal - prev.rx) / elapsed
-          const txRate = (txTotal - prev.tx) / elapsed
-          netDown = formatRate(rxRate)
-          netUp = formatRate(txRate)
-        }
-      } else {
-        // First fetch: show cumulative totals instead of dash
-        netDown = formatBytes(rxTotal)
-        netUp = formatBytes(txTotal)
-      }
-      store.setNetStats(props.hostId, { rx: rxTotal, tx: txTotal, time: now })
-    }
-
-    const osParts = [result.os, result.kernel, result.arch].filter(Boolean)
-    const data = {
-      load: result.load || '',
-      ram: result.ram || '',
-      disk: result.disk || '',
-      uptime: result.uptime || '',
-      os: osParts.join(' · '),
-      cores: result.cores || '',
-      netDown,
-      netUp,
-    }
-    status.value = data
-    store.setSystemStatus(props.hostId, data)
-    statusError.value = ''
-  } catch (err) {
-    console.warn('get_system_stats failed:', err)
-    statusError.value = String(err).replace(/^Error: /, '')
-  } finally {
-    statusLoading.value = false
-  }
-}
-
-function startStatusPolling() {
-  if (statusInterval) clearInterval(statusInterval)
-  if (!props.hostId) return
-  // Don't poll when page is hidden
-  if (document.hidden) return
-  // Read from cache immediately
-  const cached = store.getSystemStatus(props.hostId)
-  if (cached) {
-    status.value = cached
-  }
-  // Fetch immediately, then every 5s
-  fetchSystemStatus()
-  statusInterval = setInterval(fetchSystemStatus, 5000)
-}
-
-function stopStatusPolling() {
-  if (statusInterval) {
-    clearInterval(statusInterval)
-    statusInterval = null
-  }
 }
 
 function onVisibilityChange() {
@@ -891,72 +715,14 @@ function onVisibilityChange() {
   }
 }
 
-async function fetchPanelData(includeDisk = false) {
-  if (!props.hostId) return
-  try {
-    const panel = await invoke('get_system_panel', { hostId: props.hostId })
-    processes.value = panel.processes || []
-    network.value = panel.network || null
-    if (includeDisk) {
-      diskInfo.value = panel.disk || null
-    }
-  } catch (err) {
-    console.error('get_system_panel failed:', err)
-  }
-}
-
-async function loadSystemData() {
-  if (!props.hostId) return
-  sysLoading.value = true
-  await fetchPanelData(true)
-  sysLoading.value = false
-}
-
-function startSysPolling() {
-  if (sysPollInterval) clearInterval(sysPollInterval)
-  if (!props.hostId) return
-  loadSystemData()
-  sysPollInterval = setInterval(() => {
-    fetchPanelData(false)
-  }, 3000)
-}
-
-function stopSysPolling() {
-  if (sysPollInterval) {
-    clearInterval(sysPollInterval)
-    sysPollInterval = null
-  }
-}
-
 async function initTerminal() {
-  const fontSizeSetting = await invoke('get_setting', { key: 'font_size' })
-  const fontSize = fontSizeSetting ? parseInt(fontSizeSetting) : 14
-  const themeSetting = await invoke('get_setting', { key: 'theme' })
+  const fontSize = await loadTerminalFontSize()
   terminalBgClass.value = 'bg-[#1e1e1e]'
 
-  term = new Terminal({
-    cursorBlink: true,
-    fontSize,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: TERMINAL_THEME,
-  })
-
-  fitAddon = new FitAddon()
-  searchAddon = new SearchAddon()
-  canvasAddon = new CanvasAddon()
-  webLinksAddon = new WebLinksAddon((event, uri) => {
-    event.preventDefault()
-    openUrl(uri).catch((err) => {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Failed to open link: ' + err, type: 'error' } }))
-    })
-  })
-  term.loadAddon(fitAddon)
-  term.loadAddon(searchAddon)
-  term.loadAddon(canvasAddon)
-  term.loadAddon(webLinksAddon)
-
-  term.open(terminalContainer.value)
-  fitAddon.fit()
+  terminal = createTerminalInstance(terminalContainer.value, { fontSize, search: true })
+  term = terminal.term
+  fitAddon = terminal.fitAddon
+  searchAddon = terminal.searchAddon
 
   // Fit after flex layout settles
   requestAnimationFrame(() => {
@@ -1008,8 +774,7 @@ async function initTerminal() {
     onDisconnected: () => {
       isDisconnected.value = true
       stopStatusPolling()
-      status.value = { load: '', ram: '', disk: '', uptime: '', os: '', cores: '', netDown: '', netUp: '' }
-      statusError.value = ''
+      resetStatus()
       closeDockerPane()
     },
     onReconnected: () => {
@@ -1030,18 +795,7 @@ async function initTerminal() {
   })
 
   // Binary data channel for raw SSH output (bypasses JSON events)
-  const dataChannel = new Channel()
-  dataChannel.onmessage = (message) => {
-    // Handle various possible data formats from Tauri Channel
-    if (message instanceof Uint8Array) {
-      term.write(message)
-    } else if (Array.isArray(message)) {
-      term.write(new Uint8Array(message))
-    } else if (typeof message === 'string') {
-      term.write(message)
-    }
-  }
-  invoke('open_data_channel', { sessionId: props.sessionId, channel: dataChannel }).catch(() => {})
+  terminal.openDataChannel('open_data_channel', { sessionId: props.sessionId })
 
   // Smart input buffer: immediate for typing, chunked for paste
   let inputBuffer = ''
@@ -1102,39 +856,27 @@ async function initTerminal() {
 }
 
 function startActiveOperations() {
-  if (!term) return
+  if (!terminal) return
   // Handle resize
-  if (!resizeObserver) {
-    resizeObserver = new ResizeObserver(() => {
-      if (fitAddon) {
-        fitAddon.fit()
-      }
-    })
-  }
-  if (terminalContainer.value) {
-    resizeObserver.observe(terminalContainer.value)
-  }
+  terminal.observeResize(terminalContainer.value)
 }
 
 function stopActiveOperations() {
   stopStatusPolling()
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
+  if (terminal) terminal.unobserveResize()
 }
 
 function disposeTerminal() {
   stopActiveOperations()
   stopSysPolling()
   store.unregisterTerminal(props.sessionId)
-  if (term) {
-    term.dispose()
-    term = null
+  if (terminal) {
+    terminal.dispose()
+    terminal = null
   }
+  term = null
   fitAddon = null
   searchAddon = null
-  canvasAddon = null
   window.removeEventListener('terminal-settings-changed', onSettingsChanged)
   window.removeEventListener('click', onWindowClick)
   window.removeEventListener('contextmenu', onWindowContextMenu, true)
@@ -1156,7 +898,6 @@ async function reconnect() {
 
 onMounted(async () => {
   await initTerminal()
-  hasBeenInitialized = true
   startActiveOperations()
   // Fix race condition: if tab is already active when terminal finishes init,
   // the isActive watcher already fired early (term was null). Start polling now.
@@ -1194,16 +935,12 @@ watch(() => props.isActive, (active) => {
         if (dockerTerm) dockerTerm.refresh(0, dockerTerm.rows - 1)
       })
     })
-    if (terminalContainer.value && resizeObserver) {
-      resizeObserver.observe(terminalContainer.value)
-    }
+    if (terminal) terminal.observeResize(terminalContainer.value)
     startStatusPolling()
   } else {
     if (term) term.blur()
     stopStatusPolling()
-    if (resizeObserver) {
-      resizeObserver.disconnect()
-    }
+    if (terminal) terminal.unobserveResize()
   }
 }, { immediate: true })
 
