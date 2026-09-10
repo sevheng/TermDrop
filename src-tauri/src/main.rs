@@ -163,6 +163,17 @@ fn load_mongo_uri(
 /// intact and the migration retries next launch — losing the password would be
 /// far worse than leaving it where it already is.
 fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
+    migrate_mongo_credentials_with(conn, |account, secret| {
+        crypto::store_secret(account, secret)
+    });
+}
+
+/// The migration proper, with secret storage injected so the ordering guarantee
+/// can be tested without touching the real keyring.
+fn migrate_mongo_credentials_with(
+    conn: &rusqlite::Connection,
+    mut store: impl FnMut(&str, &str) -> Result<(), String>,
+) -> usize {
     let rows = match db::all_mongo_uris(conn) {
         Ok(rows) => rows,
         Err(e) => {
@@ -170,7 +181,7 @@ fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
                 "could not read hosts for MongoDB credential migration: {}",
                 e
             );
-            return;
+            return 0;
         }
     };
 
@@ -185,7 +196,7 @@ fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
                 continue;
             };
 
-            if let Err(e) = crypto::store_secret(&mongo_account(id, side), &password) {
+            if let Err(e) = store(&mongo_account(id, side), &password) {
                 tracing::warn!(
                     host_id = id,
                     side = side.as_str(),
@@ -213,6 +224,8 @@ fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
             tracing::warn!("could not vacuum after migration: {}", e);
         }
     }
+
+    migrated
 }
 
 /// Register `op_id` so mongodb_cancel can reach it, run `f`, then unregister.
@@ -1757,6 +1770,106 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mongo_host(name: &str, remote: Option<&str>, local: Option<&str>) -> db::NewHost {
+        db::NewHost {
+            name: name.to_string(),
+            host: String::new(),
+            port: 0,
+            username: String::new(),
+            auth_type: "password".to_string(),
+            key_path: None,
+            group: None,
+            favorite: None,
+            mongo_uri: remote.map(String::from),
+            mongo_local_uri: local.map(String::from),
+        }
+    }
+
+    #[test]
+    fn migration_moves_passwords_out_and_is_idempotent() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_db(&conn).unwrap();
+        let id = db::add_host(
+            &conn,
+            &mongo_host(
+                "m",
+                Some("mongodb://u:hunter2@remote:27017"),
+                Some("mongodb://u:swordfish@local:27017"),
+            ),
+        )
+        .unwrap();
+
+        let mut stored: Vec<(String, String)> = Vec::new();
+        let count = migrate_mongo_credentials_with(&conn, |a, s| {
+            stored.push((a.to_string(), s.to_string()));
+            Ok(())
+        });
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            stored,
+            vec![
+                (format!("mongo-remote-{}", id), "hunter2".to_string()),
+                (format!("mongo-local-{}", id), "swordfish".to_string()),
+            ]
+        );
+
+        let host = db::get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(host.mongo_uri.unwrap(), "mongodb://u@remote:27017");
+        assert_eq!(host.mongo_local_uri.unwrap(), "mongodb://u@local:27017");
+
+        // Running again finds nothing left to move.
+        let second = migrate_mongo_credentials_with(&conn, |_, _| {
+            panic!("nothing should be stored on a second run")
+        });
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn migration_keeps_the_plaintext_when_the_secret_cannot_be_stored() {
+        // The ordering matters: if the row were rewritten first and the keyring
+        // then failed, the password would be gone for good. Leaving it in place
+        // means the migration simply retries on the next launch.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_db(&conn).unwrap();
+        let id = db::add_host(
+            &conn,
+            &mongo_host("m", Some("mongodb://u:hunter2@remote:27017"), None),
+        )
+        .unwrap();
+
+        let count =
+            migrate_mongo_credentials_with(&conn, |_, _| Err("keyring unavailable".to_string()));
+
+        assert_eq!(count, 0);
+        let host = db::get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(
+            host.mongo_uri.unwrap(),
+            "mongodb://u:hunter2@remote:27017",
+            "the password must survive a failed store"
+        );
+    }
+
+    #[test]
+    fn migration_ignores_uris_that_carry_no_password() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_db(&conn).unwrap();
+        db::add_host(
+            &conn,
+            &mongo_host("a", Some("mongodb://remote:27017"), None),
+        )
+        .unwrap();
+        db::add_host(
+            &conn,
+            &mongo_host("b", Some("mongodb://user@remote:27017"), None),
+        )
+        .unwrap();
+
+        let count =
+            migrate_mongo_credentials_with(&conn, |_, _| panic!("there is no password to store"));
+        assert_eq!(count, 0);
+    }
 
     fn host(auth_type: &str, key_path: Option<&str>) -> db::Host {
         db::Host {
