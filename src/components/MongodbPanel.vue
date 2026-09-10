@@ -149,6 +149,14 @@
         <input type="checkbox" v-model="dropFirst" class="accent-[#007acc]" />
         Drop existing collections before sync
       </label>
+      <label
+        v-if="hasLocalUri"
+        class="flex items-center gap-1.5 text-[11px] text-[#cccccc] cursor-pointer"
+        title="mongodump/mongorestore copy indexes; the fallback copies documents only."
+      >
+        <input type="checkbox" v-model="allowDriverFallback" class="accent-[#007acc]" />
+        Allow document-only copy if the MongoDB tools fail
+      </label>
 
       <div v-if="syncing" class="space-y-1">
         <div class="flex items-center justify-between text-[10px] text-[#6e6e6e]">
@@ -403,6 +411,11 @@ const selectedCollections = ref(new Map())
 const syncing = ref(false)
 const currentAction = ref('') // 'sync' | 'dump-folder' | 'dump-archive' | 'restore-folder' | 'restore-archive'
 const dropFirst = ref(false)
+// mongodump/mongorestore preserve indexes; the driver fallback does not. Keeping
+// this on preserves the previous behaviour of degrading rather than failing.
+const allowDriverFallback = ref(true)
+// Databases that fell back to a document-only copy during the current sync.
+const degradedDbs = ref(new Set())
 const isRemoteToLocal = ref(true) // true = Remote→Local, false = Local→Remote
 const currentOpId = ref('')
 const aborting = ref(false)
@@ -430,6 +443,7 @@ function resetOperationState() {
 
 /** Mark an operation as running with a fresh op id for cancellation. */
 function beginOperation(action) {
+  degradedDbs.value = new Set()
   syncing.value = true
   currentAction.value = action
   currentOpId.value = crypto.randomUUID()
@@ -589,9 +603,15 @@ async function startSync() {
         db: entry.db,
         collections: entry.collections,
         dropFirst: dropFirst.value,
+        allowDriverFallback: allowDriverFallback.value,
         opId: currentOpId.value,
       })
-      toast(`Synced ${entry.db}: ${entry.collections.join(', ')}`, 'success')
+      toast(
+        degradedDbs.value.has(entry.db)
+          ? `Synced ${entry.db}: ${entry.collections.join(', ')} — documents only, indexes not copied`
+          : `Synced ${entry.db}: ${entry.collections.join(', ')}`,
+        degradedDbs.value.has(entry.db) ? 'warning' : 'success',
+      )
     } catch (err) {
       if (handleOperationError(err, `Cancelled ${entry.db}`, `Sync failed for ${entry.db}`)) break
     }
@@ -857,6 +877,13 @@ onMounted(async () => {
         ? p.percent
         : (p.total > 0 ? Math.round((p.synced / p.total) * 100) : 0),
     }
+  })
+
+  await listeners.listen('mongodb-sync-warning', (event) => {
+    const p = event.payload
+    if (currentOpId.value && p.opId && p.opId !== currentOpId.value) return
+    if (p.db) degradedDbs.value.add(p.db)
+    toast(p.message || 'MongoDB sync degraded to a document-only copy', 'warning')
   })
 
   await listeners.listen('mongodb-sync-cancelled', (event) => {

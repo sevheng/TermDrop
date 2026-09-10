@@ -1315,6 +1315,7 @@ async fn mongodb_sync(
     db: String,
     collections: Vec<String>,
     drop_first: bool,
+    allow_driver_fallback: bool,
 ) -> Result<(), String> {
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::sync_collections(
@@ -1327,6 +1328,7 @@ async fn mongodb_sync(
             &db,
             collections,
             drop_first,
+            allow_driver_fallback,
         )
     })
     .await

@@ -119,6 +119,19 @@ impl ProgressEmitter<'_> {
         );
     }
 
+    /// The CLI fast path failed and the driver fallback is about to run, which
+    /// copies documents only. The user has to be told before it happens.
+    fn degraded(&self, message: &str) {
+        let _ = self.window.emit(
+            "mongodb-sync-warning",
+            serde_json::json!({
+                "opId": self.op_id,
+                "db": self.db,
+                "message": message,
+            }),
+        );
+    }
+
     fn cancelled(&self) {
         let _ = self.window.emit(
             "mongodb-sync-cancelled",
@@ -831,6 +844,7 @@ pub async fn sync_collections(
     db: &str,
     collections: Vec<String>,
     drop_first: bool,
+    allow_driver_fallback: bool,
 ) -> Result<(), String> {
     let remote_uri = normalize_mongo_uri(remote_uri);
     let local_uri = normalize_mongo_uri(local_uri);
@@ -861,10 +875,30 @@ pub async fn sync_collections(
                 // try_cli_sync already emitted mongodb-sync-cancelled
                 return Err(e);
             }
+            let reason = redact_uris_in_text(&e);
             tracing::warn!(
                 "CLI sync failed ({}), falling back to a document-only driver copy",
-                redact_uris_in_text(&e)
+                reason
             );
+
+            if !allow_driver_fallback {
+                return Err(format!(
+                    "mongodump/mongorestore failed and the document-only fallback is \
+disabled: {}",
+                    reason
+                ));
+            }
+
+            ProgressEmitter {
+                window: &window,
+                op_id: &op_id,
+                db,
+            }
+            .degraded(&format!(
+                "mongodump/mongorestore could not run ({}). Falling back to a \
+document-only copy: indexes, collection options and validators will not be copied.",
+                reason
+            ));
         }
     }
 
@@ -1062,8 +1096,46 @@ async fn driver_sync(
                 .map_err(|e| format!("insert {}: {}", collection_name, e))?;
         }
 
+        // mongorestore recreates indexes after the documents; do the same so the
+        // fallback is merely slower rather than lossy.
+        progress.collection(collection_name, "indexes", synced, total);
+        copy_indexes(&remote_coll, &local_coll, collection_name).await?;
+
         progress.collection(collection_name, "done", synced, total);
     }
+
+    Ok(())
+}
+
+/// Recreate the source collection's indexes on the destination.
+///
+/// The `_id` index always exists on both sides and cannot be created again, so
+/// it is skipped. A failure here is reported: a silently un-indexed collection
+/// is exactly the problem this function exists to fix.
+async fn copy_indexes(
+    remote_coll: &mongodb::Collection<mongodb::bson::Document>,
+    local_coll: &mongodb::Collection<mongodb::bson::Document>,
+    collection_name: &str,
+) -> Result<(), String> {
+    let specs: Vec<_> = remote_coll
+        .list_indexes()
+        .await
+        .map_err(|e| format!("list indexes for {}: {}", collection_name, e))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|e| format!("read indexes for {}: {}", collection_name, e))?
+        .into_iter()
+        .filter(|ix| ix.keys != mongodb::bson::doc! { "_id": 1 })
+        .collect();
+
+    if specs.is_empty() {
+        return Ok(());
+    }
+
+    local_coll
+        .create_indexes(specs)
+        .await
+        .map_err(|e| format!("create indexes for {}: {}", collection_name, e))?;
 
     Ok(())
 }
