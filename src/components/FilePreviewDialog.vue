@@ -96,7 +96,7 @@
         <!-- Text with line numbers and search -->
         <div v-else class="flex h-full overflow-auto font-mono text-xs leading-5">
           <!-- Line numbers -->
-          <div class="shrink-0 bg-canvas text-ink-3 text-right select-none px-2 py-3 border-r border-line" style="min-width: 3rem;">
+          <div class="shrink-0 bg-canvas text-ink-3 text-right tabular-nums select-none px-2 py-3 border-r border-line" style="min-width: 3rem;">
             <div v-for="n in lineCount" :key="n" class="px-1">{{ n }}</div>
           </div>
           <!-- Content -->

@@ -41,7 +41,7 @@
         <!-- Line numbers -->
         <div
           ref="editorLineNumbersRef"
-          class="shrink-0 bg-canvas text-ink-3 text-right select-none px-2 py-3 border-r border-line overflow-hidden"
+          class="shrink-0 bg-canvas text-ink-3 text-right tabular-nums select-none px-2 py-3 border-r border-line overflow-hidden"
           style="min-width: 2.5rem;"
         >
           <div v-for="n in editorLineCount" :key="n" class="text-xs leading-5 font-mono px-1">{{ n }}</div>

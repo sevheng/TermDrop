@@ -12,7 +12,7 @@
       <div v-for="dbInfo in databases" :key="dbInfo.index" class="border-b border-line/30">
         <div
           class="w-full flex items-center gap-1.5 px-2 py-1 text-xs cursor-pointer hover:bg-raised"
-          :class="dbInfo.index === activeDb ? 'bg-active text-ink' : 'text-ink'"
+          :class="dbInfo.index === activeDb ? 'bg-selected text-ink' : 'text-ink'"
           @click="$emit('select-db', dbInfo.index)"
         >
           <ChevronRight
@@ -22,7 +22,7 @@
           />
           <Layers :size="12" class="shrink-0 text-redis" />
           <span class="flex-1 truncate">db{{ dbInfo.index }}</span>
-          <span class="text-2xs text-ink-3">{{ dbInfo.keys.toLocaleString() }}</span>
+          <span class="text-2xs text-ink-3 tabular-nums">{{ dbInfo.keys.toLocaleString() }}</span>
         </div>
 
         <div v-if="dbInfo.index === activeDb" class="pb-1">
@@ -35,13 +35,13 @@
               v-for="group in groups"
               :key="group.prefix"
               class="w-full flex items-center gap-1.5 pl-7 pr-2 py-1 text-xs text-left hover:bg-raised"
-              :class="group.prefix === activeGroup ? 'text-ink bg-raised' : 'text-ink-2'"
+              :class="group.prefix === activeGroup ? 'text-ink bg-selected' : 'text-ink-2'"
               @click="$emit('select-group', group)"
             >
               <span class="flex-1 truncate" :title="group.binary ? 'binary prefix' : group.prefix">
                 {{ group.binary ? '⟨binary⟩' : group.prefix }}
               </span>
-              <span class="text-2xs text-ink-3">{{ group.count.toLocaleString() }}</span>
+              <span class="text-2xs text-ink-3 tabular-nums">{{ group.count.toLocaleString() }}</span>
             </button>
 
             <!--

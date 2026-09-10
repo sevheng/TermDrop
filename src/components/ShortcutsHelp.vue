@@ -37,7 +37,7 @@
         </section>
       </div>
 
-      <div class="mt-4 pt-3 border-t border-line text-right">
+      <div class="mt-4 pt-3 border-t border-line text-right tabular-nums">
         <button
           @click="onClose"
           class="px-3 py-1.5 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded transition-colors"

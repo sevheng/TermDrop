@@ -51,12 +51,12 @@
         @action="$emit('forward')"
       />
       <table v-else class="w-full text-xs">
-        <thead class="sticky top-0 bg-surface text-ink-2">
+        <thead :class="['sticky top-0', LIST_HEAD]">
           <tr>
-            <th class="text-left font-normal px-3 py-1.5">Key</th>
-            <th class="text-left font-normal px-2 py-1.5 w-24">Type</th>
-            <th class="text-left font-normal px-2 py-1.5 w-28">TTL</th>
-            <th v-if="showMemory" class="text-right font-normal px-3 py-1.5 w-24">Size</th>
+            <th :class="LIST_HEAD_CELL">Key</th>
+            <th :class="[LIST_HEAD_CELL, 'w-24']">Type</th>
+            <th :class="[LIST_HEAD_CELL, 'w-28']">TTL</th>
+            <th v-if="showMemory" :class="[LIST_HEAD_CELL, NUM, 'w-24']">Size</th>
           </tr>
         </thead>
         <tbody>
@@ -64,18 +64,17 @@
             v-for="k in keys"
             :key="k.key_b64"
             @click="$emit('open-key', k)"
-            class="cursor-pointer hover:bg-raised border-t border-line/30"
-            :class="k.key_b64 === activeKeyB64 ? 'bg-active' : ''"
+            :class="rowClass({ selected: k.key_b64 === activeKeyB64 })"
           >
-            <td class="px-3 py-1 font-mono truncate max-w-0 text-ink">
+            <td class="px-2 py-1 text-xs font-mono truncate max-w-0 text-ink" :title="k.key.text">
               <span v-if="k.key.binary" class="text-warn-soft" title="not valid UTF-8">
                 ⟨binary {{ k.key.bytes }} bytes⟩
               </span>
               <span v-else>{{ k.key.text }}</span>
             </td>
-            <td class="px-2 py-1 text-ink-2">{{ formatKeyKind(k.kind) }}</td>
-            <td class="px-2 py-1 text-ink-2">{{ formatTtl(k.ttl_ms) }}</td>
-            <td v-if="showMemory" class="px-3 py-1 text-right text-ink-2">
+            <td :class="LIST_CELL_MUTED">{{ formatKeyKind(k.kind) }}</td>
+            <td :class="[LIST_CELL_MUTED, NUM]">{{ formatTtl(k.ttl_ms) }}</td>
+            <td v-if="showMemory" :class="[LIST_CELL_MUTED, NUM]">
               {{ k.memory_bytes == null ? '—' : formatBytes(k.memory_bytes) }}
             </td>
           </tr>
@@ -132,6 +131,7 @@ import EmptyState from './EmptyState.vue'
 import SelectMenu from './SelectMenu.vue'
 import { formatKeyKind, formatTtl } from '../utils/redisKeys.js'
 import { formatBytes } from '../utils/format.js'
+import { LIST_HEAD, LIST_HEAD_CELL, LIST_CELL_MUTED, NUM, rowClass } from '../utils/listStyles.js'
 
 const TYPES = ['string', 'list', 'set', 'zset', 'hash', 'stream']
 

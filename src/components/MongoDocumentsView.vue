@@ -96,7 +96,7 @@
               <th
                 v-for="col in columns"
                 :key="col"
-                class="text-left font-medium text-ink-2 px-2 py-1 border-b border-line whitespace-nowrap"
+                :class="LIST_HEAD_CELL"
               >
                 {{ col }}
               </th>
@@ -234,6 +234,7 @@ import { toast } from '../utils/toast.js'
 import { prettyPrintDocument, summarizeDocument } from '../utils/bsonDisplay.js'
 import { parseDocuments, deriveColumns, cellText } from '../utils/mongoTable.js'
 import SelectMenu from './SelectMenu.vue'
+import { LIST_HEAD_CELL } from '../utils/listStyles.js'
 import {
   validateJsonInput,
   clampPageSize,

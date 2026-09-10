@@ -61,7 +61,7 @@
           :style="{ width: `${progress?.percent ?? 0}%` }"
         ></div>
       </div>
-      <span class="text-2xs text-ink-2 shrink-0 w-48 truncate text-right">
+      <span class="text-2xs text-ink-2 shrink-0 w-48 truncate text-right tabular-nums">
         {{ progress?.detail || '…' }}
       </span>
       <button

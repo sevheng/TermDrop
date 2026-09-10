@@ -73,17 +73,17 @@
     </div>
 
     <!-- Column headers -->
-    <div class="px-2 py-0.5 border-b border-line flex items-center text-xs text-ink-2 select-none">
+    <div :class="[LIST_HEAD, 'px-2 py-1 border-b border-line flex items-center select-none']">
       <span class="flex-1 min-w-0 cursor-pointer hover:text-ink" @click="setSort('name')">
         Name {{ sortIndicator('name') }}
       </span>
-      <span v-if="showColumns.size" class="w-12 shrink-0 text-right cursor-pointer hover:text-ink" @click="setSort('size')">
+      <span v-if="showColumns.size" :class="[NUM, 'w-12 shrink-0 cursor-pointer hover:text-ink']" @click="setSort('size')">
         Size {{ sortIndicator('size') }}
       </span>
-      <span v-if="showColumns.modified" class="w-14 shrink-0 text-right cursor-pointer hover:text-ink ml-1.5" @click="setSort('modified')">
+      <span v-if="showColumns.modified" class="w-14 shrink-0 text-right tabular-nums cursor-pointer hover:text-ink ml-1.5" @click="setSort('modified')">
         Modified {{ sortIndicator('modified') }}
       </span>
-      <span v-if="showColumns.perms" class="w-16 shrink-0 text-right ml-1.5">Perms</span>
+      <span v-if="showColumns.perms" class="w-16 shrink-0 text-right tabular-nums ml-1.5">Perms</span>
     </div>
 
     <!-- Quick filter -->
@@ -120,7 +120,7 @@
         <div
           v-for="(file, index) in filteredFiles"
           :key="file.path"
-          class="flex items-center px-2 py-0.5 hover:bg-raised cursor-pointer text-sm"
+          class="flex items-center px-2 py-0.5 hover:bg-raised cursor-pointer text-xs"
           :class="[
             file.is_dir ? 'text-accent' : 'text-ink',
             selectedFiles.has(file.path) ? 'bg-selected' : ''
@@ -139,9 +139,9 @@
           <Folder v-if="file.is_dir" :size="12" class="shrink-0 mr-1.5" />
           <FileText v-else :size="12" class="shrink-0 mr-1.5 text-ink-3" />
           <span class="truncate flex-1 min-w-0">{{ file.name }}</span>
-          <span v-if="showColumns.size" class="w-12 shrink-0 text-right text-xs text-ink-3">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
-          <span v-if="showColumns.modified" class="w-14 shrink-0 text-right text-xs text-ink-3 ml-1.5">{{ formatDate(file.modified) }}</span>
-          <span v-if="showColumns.perms" class="w-16 shrink-0 text-right text-xs text-ink-3 ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
+          <span v-if="showColumns.size" class="w-12 shrink-0 text-right tabular-nums text-xs text-ink-3">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
+          <span v-if="showColumns.modified" class="w-14 shrink-0 text-right tabular-nums text-xs text-ink-3 ml-1.5">{{ formatDate(file.modified) }}</span>
+          <span v-if="showColumns.perms" class="w-16 shrink-0 text-right tabular-nums text-xs text-ink-3 ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
         </div>
       </div>
     </div>
@@ -267,6 +267,7 @@ import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useSftpTransfers } from '../composables/useSftpTransfers.js'
+import { LIST_HEAD, NUM } from '../utils/listStyles.js'
 
 const props = defineProps({
   sftpSessionId: {

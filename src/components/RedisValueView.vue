@@ -61,7 +61,7 @@
                 {{ page.kind === 'stream' ? 'ID' : page.kind === 'list' ? '#' : 'Field' }}
               </th>
               <th class="text-left font-normal px-3 py-1.5">Value</th>
-              <th v-if="page.kind === 'zset'" class="text-right font-normal px-3 py-1.5 w-24">
+              <th v-if="page.kind === 'zset'" class="text-right tabular-nums font-normal px-3 py-1.5 w-24">
                 Score
               </th>
             </tr>
@@ -78,7 +78,7 @@
               <td class="px-3 py-1 font-mono text-ink break-all">
                 {{ display(entry.value) }}
               </td>
-              <td v-if="page.kind === 'zset'" class="px-3 py-1 text-right text-ink-2">
+              <td v-if="page.kind === 'zset'" class="px-3 py-1 text-right tabular-nums text-ink-2">
                 {{ entry.score }}
               </td>
             </tr>

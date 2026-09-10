@@ -72,9 +72,9 @@
           <div class="grid grid-cols-12 gap-1 text-ink-3 font-medium border-b border-line pb-0.5 mb-0.5">
             <span class="col-span-1">PID</span>
             <span class="col-span-5">Command</span>
-            <span class="col-span-2 text-right">CPU</span>
-            <span class="col-span-2 text-right">Mem</span>
-            <span class="col-span-2 text-right">Time</span>
+            <span class="col-span-2 text-right tabular-nums">CPU</span>
+            <span class="col-span-2 text-right tabular-nums">Mem</span>
+            <span class="col-span-2 text-right tabular-nums">Time</span>
           </div>
           <div
             v-for="p in processes"
@@ -83,9 +83,9 @@
           >
             <span class="col-span-1 font-mono">{{ p.pid }}</span>
             <span class="col-span-5 truncate">{{ p.command }}</span>
-            <span class="col-span-2 text-right" :class="parseFloat(p.cpu) > 50 ? 'text-bad' : ''">{{ p.cpu }}%</span>
-            <span class="col-span-2 text-right">{{ p.mem }}%</span>
-            <span class="col-span-2 text-right text-ink-2">{{ p.uptime }}</span>
+            <span class="col-span-2 text-right tabular-nums" :class="parseFloat(p.cpu) > 50 ? 'text-bad' : ''">{{ p.cpu }}%</span>
+            <span class="col-span-2 text-right tabular-nums">{{ p.mem }}%</span>
+            <span class="col-span-2 text-right tabular-nums text-ink-2">{{ p.uptime }}</span>
           </div>
         </div>
 
