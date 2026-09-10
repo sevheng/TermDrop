@@ -175,7 +175,11 @@
           />
         </div>
         <div class="flex justify-between text-[10px] text-[#6e6e6e]">
-          <span>{{ syncProgress.synced }} / {{ syncProgress.total }}</span>
+          <!-- `detail` is the CLI tool's own counter: documents for mongodump,
+               byte sizes for mongorestore. The driver fallback has no detail
+               and reports document counts instead. -->
+          <span>{{ syncProgress.detail || `${syncProgress.synced} / ${syncProgress.total}` }}</span>
+          <span>{{ syncProgress.percent }}%</span>
         </div>
       </div>
 
@@ -420,7 +424,7 @@ const isRemoteToLocal = ref(true) // true = Remote→Local, false = Local→Remo
 const currentOpId = ref('')
 const aborting = ref(false)
 
-const EMPTY_PROGRESS = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0 }
+const EMPTY_PROGRESS = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0, detail: '' }
 const syncProgress = ref({ ...EMPTY_PROGRESS })
 
 const restoreConfirm = ref({
@@ -873,6 +877,7 @@ onMounted(async () => {
       stage: p.stage || '',
       synced: p.synced || 0,
       total: p.total || 0,
+      detail: p.detail || '',
       percent: p.percent !== undefined
         ? p.percent
         : (p.total > 0 ? Math.round((p.synced / p.total) * 100) : 0),

@@ -88,6 +88,26 @@ impl ProgressEmitter<'_> {
         );
     }
 
+    /// Real progress parsed from a CLI tool's stderr. `detail` is the tool's
+    /// own "current / total", which is documents for mongodump and byte sizes
+    /// for mongorestore, so it is passed through as text.
+    fn cli(&self, stage: &str, ns: &str, detail: &str, percent: f64) {
+        let collection = ns.split_once('.').map(|(_, c)| c).unwrap_or(ns);
+        let _ = self.window.emit(
+            "mongodb-sync-progress",
+            serde_json::json!({
+                "opId": self.op_id,
+                "db": self.db,
+                "collection": collection,
+                "stage": stage,
+                "synced": 0,
+                "total": 1,
+                "percent": percent.round() as u64,
+                "detail": detail,
+            }),
+        );
+    }
+
     /// Terminal event once a CLI tool has finished.
     fn done(&self) {
         let _ = self.window.emit(
@@ -138,6 +158,122 @@ impl ProgressEmitter<'_> {
             serde_json::json!({"opId": self.op_id, "db": self.db}),
         );
     }
+}
+
+/// A line of mongodump/mongorestore stderr that carries progress.
+///
+/// The tools print a progress bar only after the first three seconds, so short
+/// operations emit nothing but the `Writing`/`Restoring` and `Done` markers and
+/// the caller has to fall back to a time-based estimate.
+#[derive(Debug, PartialEq)]
+enum CliLine {
+    /// `[####....]  db.coll  225947/400000  (56.5%)`
+    ///
+    /// `current`/`total` are documents for mongodump and human-readable byte
+    /// sizes ("2.00MB") for mongorestore, so they stay strings.
+    Progress {
+        ns: String,
+        current: String,
+        total: String,
+        percent: f64,
+    },
+    /// A collection started: `writing db.coll to ...` / `restoring db.coll from ...`
+    Started {
+        ns: String,
+    },
+    /// A collection finished: `done dumping db.coll (...)` / `finished restoring db.coll (...)`
+    Finished {
+        ns: String,
+    },
+    Other,
+}
+
+/// Parse one stderr line from mongodump/mongorestore.
+///
+/// The literal formats these match are pinned by tests using output captured
+/// from the bundled binaries; if a tools upgrade changes them, those tests fail
+/// rather than the progress bar silently reverting to a time-based estimate.
+fn parse_cli_line(line: &str) -> CliLine {
+    // Lines are "<RFC3339>\t<message>". If a redrawn bar ever arrives with
+    // carriage returns, only the last segment is current.
+    let after_ts = line.split_once('\t').map(|(_, m)| m).unwrap_or(line);
+    let msg = after_ts.rsplit('\r').next().unwrap_or(after_ts).trim();
+
+    if let Some(rest) = msg.strip_prefix('[') {
+        // [bar]  ns  current/total  (pct%)
+        let Some((_, tail)) = rest.split_once(']') else {
+            return CliLine::Other;
+        };
+        let mut fields = tail.split_whitespace();
+        let (Some(ns), Some(ratio), Some(pct)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return CliLine::Other;
+        };
+        let Some((current, total)) = ratio.split_once('/') else {
+            return CliLine::Other;
+        };
+        let percent = pct
+            .trim_matches(|c| c == '(' || c == ')' || c == '%')
+            .parse::<f64>()
+            .unwrap_or(0.0);
+        return CliLine::Progress {
+            ns: ns.to_string(),
+            current: current.to_string(),
+            total: total.to_string(),
+            percent,
+        };
+    }
+
+    for (prefix, sep) in [("writing ", " to "), ("restoring ", " from ")] {
+        if let Some(rest) = msg.strip_prefix(prefix) {
+            let ns = rest.split(sep).next().unwrap_or(rest).trim();
+            if !ns.is_empty() {
+                return CliLine::Started { ns: ns.to_string() };
+            }
+        }
+    }
+
+    for prefix in ["done dumping ", "finished restoring "] {
+        if let Some(rest) = msg.strip_prefix(prefix) {
+            let ns = rest.split(" (").next().unwrap_or(rest).trim();
+            if !ns.is_empty() {
+                return CliLine::Finished { ns: ns.to_string() };
+            }
+        }
+    }
+
+    CliLine::Other
+}
+
+/// The most recent real progress seen on a tool's stderr.
+#[derive(Clone, Default)]
+struct CliProgress {
+    ns: String,
+    detail: String,
+    percent: f64,
+    finished: u64,
+}
+
+/// Cap on retained stderr lines. Only the last 30 are ever reported, but a long
+/// operation with verbose output would otherwise grow this without bound.
+const MAX_STDERR_LINES: usize = 200;
+
+/// Scale one collection's percentage across the whole operation.
+///
+/// The tools report progress per collection, so a dump of four collections
+/// would otherwise run 0-100% four times. When the number of collections is not
+/// known, the current collection's own percentage is the best available.
+fn combined_percent(p: &CliProgress, expected_collections: u64) -> f64 {
+    if expected_collections <= 1 {
+        return p.percent.clamp(0.0, 100.0);
+    }
+    let done = p.finished.min(expected_collections) as f64;
+    let current = if p.finished >= expected_collections {
+        0.0
+    } else {
+        p.percent.clamp(0.0, 100.0) / 100.0
+    };
+    (((done + current) / expected_collections as f64) * 100.0).clamp(0.0, 100.0)
 }
 
 /// A temporary YAML file holding the connection string for the CLI tools'
@@ -433,6 +569,7 @@ async fn run_cli_op<F>(
     op_id: String,
     progress_db: String,
     uri: String,
+    expected_collections: u64,
     mut build_cmd: F,
 ) -> Result<(), String>
 where
@@ -449,6 +586,7 @@ where
             tool,
             stage,
             3,
+            expected_collections,
             &window,
             &cancelled,
             &mongo_ops,
@@ -468,10 +606,12 @@ where
     .map_err(|e| format!("{} task panicked: {}", panic_label, e))?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_retry<F>(
     label: &str,
     stage: &str,
     max_retries: u32,
+    expected_collections: u64,
     window: &Window,
     cancelled: &Arc<AtomicBool>,
     mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
@@ -484,6 +624,9 @@ where
 {
     let start = Instant::now();
     let mut last_emit = Instant::now();
+    // The bar must never walk backwards, whether the number came from the tool
+    // or from the time-based estimate.
+    let mut highest: f64 = 0.0;
 
     let progress = ProgressEmitter { window, op_id, db };
 
@@ -501,12 +644,51 @@ where
         let stderr = child.stderr.take().unwrap();
         let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let stderr_lines_clone = Arc::clone(&stderr_lines);
+        // Last-writer-wins slot for real progress parsed off stderr.
+        let latest: Arc<Mutex<Option<CliProgress>>> = Arc::new(Mutex::new(None));
+        let latest_clone = Arc::clone(&latest);
         let stderr_thread = std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
+            let mut finished: u64 = 0;
             // Stop at the first read error; `flatten()` would spin forever on a
             // persistently failing pipe.
             for line in reader.lines().map_while(Result::ok) {
-                lock_or_recover(&stderr_lines_clone).push(line);
+                // Record real progress in a slot the poll loop reads on its own
+                // cadence. Emitting from here would put one IPC message on the
+                // channel per line the tools print.
+                match parse_cli_line(&line) {
+                    CliLine::Progress {
+                        ns,
+                        current,
+                        total,
+                        percent,
+                    } => {
+                        *lock_or_recover(&latest_clone) = Some(CliProgress {
+                            ns,
+                            detail: format!("{} / {}", current, total),
+                            percent,
+                            finished,
+                        });
+                    }
+                    CliLine::Finished { ns } => {
+                        finished += 1;
+                        *lock_or_recover(&latest_clone) = Some(CliProgress {
+                            ns,
+                            detail: String::new(),
+                            percent: 100.0,
+                            finished,
+                        });
+                    }
+                    CliLine::Started { .. } | CliLine::Other => {}
+                }
+
+                // Only the last 30 lines are ever read back, but this used to
+                // grow without bound for the life of the operation.
+                let mut lines = lock_or_recover(&stderr_lines_clone);
+                if lines.len() >= MAX_STDERR_LINES {
+                    lines.remove(0);
+                }
+                lines.push(line);
             }
         });
 
@@ -575,10 +757,23 @@ where
                 Ok(None) => {
                     set_mongo_child(mongo_ops, op_id, child);
                     if last_emit.elapsed() >= Duration::from_millis(500) {
-                        let elapsed_ms = start.elapsed().as_millis() as u64;
-                        // Monotonic pulse: grows toward 95% so the bar never loops back.
-                        let pulse = std::cmp::min(95, elapsed_ms / 100);
-                        progress.pulse(stage, pulse);
+                        match lock_or_recover(&latest).clone() {
+                            // Real progress from the tool itself.
+                            Some(p) => {
+                                let percent = combined_percent(&p, expected_collections);
+                                highest = highest.max(percent);
+                                progress.cli(stage, &p.ns, &p.detail, highest);
+                            }
+                            // The tools print no bar for the first three seconds,
+                            // so estimate until one arrives. Never let the estimate
+                            // walk back past real progress already shown.
+                            None => {
+                                let elapsed_ms = start.elapsed().as_millis() as u64;
+                                let pulse = std::cmp::min(95, elapsed_ms / 100) as f64;
+                                highest = highest.max(pulse);
+                                progress.pulse(stage, highest as u64);
+                            }
+                        }
                         last_emit = Instant::now();
                     }
                     std::thread::sleep(Duration::from_millis(100));
@@ -947,6 +1142,9 @@ async fn try_cli_sync(
             "mongodump",
             "sync",
             3,
+            // The dump is unfiltered (mongorestore filters), so the tool walks
+            // the whole database and its collection count is not known here.
+            0,
             &window,
             &cancelled,
             &mongo_ops,
@@ -970,6 +1168,7 @@ async fn try_cli_sync(
             "mongorestore",
             "sync",
             3,
+            collections.len() as u64,
             &window,
             &cancelled,
             &mongo_ops,
@@ -1161,6 +1360,13 @@ pub async fn dump_collections(
         dump_filter(&[], &collections)?
     };
 
+    // How many collections the tool will walk, for whole-operation progress.
+    let expected_collections = match &filter {
+        DumpFilter::Only(_) => 1,
+        DumpFilter::Exclude(_) => collections.len() as u64,
+        DumpFilter::None => 0,
+    };
+
     let remote_uri = prepare_cli_uri(remote_uri);
     let db = db.to_string();
     let output_dir = output_dir.to_string();
@@ -1176,6 +1382,7 @@ pub async fn dump_collections(
         op_id,
         db,
         remote_uri,
+        expected_collections,
         move |config_arg| {
             Ok(build_dump_cmd(
                 resolve_mongo_tool("mongodump")?,
@@ -1256,6 +1463,7 @@ pub async fn restore_collections(
         op_id,
         progress_db,
         remote_uri,
+        collections.len() as u64,
         move |config_arg| {
             let cmd = build_restore_cmd(
                 resolve_mongo_tool("mongorestore")?,
@@ -1308,6 +1516,7 @@ pub async fn restore_archive(
         op_id,
         "archive".to_string(),
         remote_uri,
+        includes.len() as u64,
         move |config_arg| {
             Ok(build_restore_archive_cmd(
                 resolve_mongo_tool("mongorestore")?,
@@ -1627,6 +1836,116 @@ uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
     fn redact_leaves_text_without_uris_alone() {
         let plain = "mongorestore failed: no such file or directory";
         assert_eq!(redact_uris_in_text(plain), plain);
+    }
+
+    // The literal lines below were captured from the bundled v100.9.4 binaries.
+    // If a tools upgrade changes these formats, these tests fail rather than the
+    // progress bar quietly falling back to a time-based estimate.
+
+    #[test]
+    fn parses_a_mongodump_progress_bar() {
+        let line = "2026-09-10T15:35:49.986+0700\t[#############...........]  bigdb.big4  225947/400000  (56.5%)";
+        assert_eq!(
+            parse_cli_line(line),
+            CliLine::Progress {
+                ns: "bigdb.big4".to_string(),
+                current: "225947".to_string(),
+                total: "400000".to_string(),
+                percent: 56.5,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_a_mongorestore_progress_bar_reporting_bytes() {
+        // mongorestore reports byte sizes, not document counts, so the numbers
+        // cannot be parsed as integers.
+        let line = "2026-09-10T15:36:08.404+0700\t[################........]  restoredb.big  2.00MB/2.98MB  (67.3%)";
+        assert_eq!(
+            parse_cli_line(line),
+            CliLine::Progress {
+                ns: "restoredb.big".to_string(),
+                current: "2.00MB".to_string(),
+                total: "2.98MB".to_string(),
+                percent: 67.3,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_collection_start_and_finish_markers() {
+        assert_eq!(
+            parse_cli_line(
+                "2026-09-10T15:35:16.836+0700\twriting bigdb.big to bigout/bigdb/big.bson.gz"
+            ),
+            CliLine::Started {
+                ns: "bigdb.big".to_string()
+            }
+        );
+        assert_eq!(
+            parse_cli_line("2026-09-10T15:36:05.431+0700\trestoring restoredb.big from bigout/bigdb/big.bson.gz"),
+            CliLine::Started { ns: "restoredb.big".to_string() }
+        );
+        assert_eq!(
+            parse_cli_line(
+                "2026-09-10T15:35:18.642+0700\tdone dumping bigdb.big (400000 documents)"
+            ),
+            CliLine::Finished {
+                ns: "bigdb.big".to_string()
+            }
+        );
+        assert_eq!(
+            parse_cli_line("2026-09-10T15:36:09.871+0700\tfinished restoring restoredb.big (400000 documents, 0 failures)"),
+            CliLine::Finished { ns: "restoredb.big".to_string() }
+        );
+    }
+
+    #[test]
+    fn ignores_lines_that_are_not_progress() {
+        assert_eq!(parse_cli_line(""), CliLine::Other);
+        assert_eq!(
+            parse_cli_line("2026-09-10T15:36:05.431+0700\tpreparing collections to restore from"),
+            CliLine::Other
+        );
+        assert_eq!(
+            parse_cli_line("Failed: error connecting to db server"),
+            CliLine::Other
+        );
+    }
+
+    #[test]
+    fn a_redrawn_bar_reports_its_last_segment() {
+        let line = "2026-09-10T15:35:49.986+0700\t[##......]  d.c  1/10  (10.0%)\r[####....]  d.c  5/10  (50.0%)";
+        match parse_cli_line(line) {
+            CliLine::Progress {
+                current, percent, ..
+            } => {
+                assert_eq!(current, "5");
+                assert_eq!(percent, 50.0);
+            }
+            other => panic!("expected progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn combined_percent_spreads_collections_across_the_operation() {
+        let at = |percent: f64, finished: u64| CliProgress {
+            ns: "d.c".to_string(),
+            detail: String::new(),
+            percent,
+            finished,
+        };
+
+        // Unknown count: report the collection's own percentage.
+        assert_eq!(combined_percent(&at(40.0, 0), 0), 40.0);
+        assert_eq!(combined_percent(&at(40.0, 0), 1), 40.0);
+
+        // Four collections: the first at half way is an eighth of the whole.
+        assert_eq!(combined_percent(&at(50.0, 0), 4), 12.5);
+        // Two done, third half way.
+        assert_eq!(combined_percent(&at(50.0, 2), 4), 62.5);
+        // All done stays at 100 rather than overshooting.
+        assert_eq!(combined_percent(&at(100.0, 4), 4), 100.0);
     }
 
     #[test]
