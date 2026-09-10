@@ -1428,6 +1428,10 @@ fn main() {
         .join("termdrop")
         .join("logs");
     std::fs::create_dir_all(&log_dir).ok();
+
+    // A run killed mid-operation cannot drop its --config guard, so clear any
+    // credential files an earlier process left in the temp directory.
+    mongodb::sweep_stale_config_files();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "termdrop.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()

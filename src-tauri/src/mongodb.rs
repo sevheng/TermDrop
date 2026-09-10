@@ -105,6 +105,106 @@ impl ProgressEmitter<'_> {
     }
 }
 
+/// A temporary YAML file holding the connection string for the CLI tools'
+/// `--config` flag, so the credential never appears in the process command
+/// line where any local user could read it from `ps` or `/proc/<pid>/cmdline`.
+///
+/// Deleted on drop, so success, failure, cancellation and a panic inside the
+/// blocking task all converge on one removal site. Do not unlink it anywhere
+/// else: `run_with_retry` rebuilds the command once per attempt, and the file
+/// has to outlive every attempt.
+struct MongoConfigFile {
+    path: std::path::PathBuf,
+}
+
+impl MongoConfigFile {
+    fn new(uri: &str) -> Result<Self, String> {
+        let path =
+            std::env::temp_dir().join(format!("termdrop-mongo-{}.yaml", uuid::Uuid::new_v4()));
+        let contents = format!("uri: \"{}\"\n", yaml_escape(uri));
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            // Set the mode at creation: a later set_permissions would leave a
+            // window in which the credential is world-readable.
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        // On Windows there are no mode bits. The per-user %TEMP% ACL already
+        // restricts this to the current user; emulating 0600 would mean taking
+        // a windows-sys dependency and hand-rolling an ACL for no real gain.
+
+        let mut file = opts
+            .open(&path)
+            .map_err(|e| format!("create mongo config file: {}", e))?;
+        std::io::Write::write_all(&mut file, contents.as_bytes())
+            .map_err(|e| format!("write mongo config file: {}", e))?;
+
+        Ok(Self { path })
+    }
+
+    fn arg(&self) -> String {
+        format!("--config={}", self.path.to_string_lossy())
+    }
+}
+
+impl Drop for MongoConfigFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// A temp file path removed on drop. Used for the intermediate sync archive,
+/// which previously leaked whenever the task returned early or panicked.
+struct TempPath {
+    path: std::path::PathBuf,
+}
+
+impl TempPath {
+    fn new(file_name: String) -> Self {
+        Self {
+            path: std::env::temp_dir().join(file_name),
+        }
+    }
+}
+
+impl Drop for TempPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Escape a value for a YAML double-quoted scalar.
+fn yaml_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Remove `termdrop-mongo-*.yaml` files left behind by a previous run that was
+/// killed before its guard could drop. Best effort, and only files old enough
+/// that no live operation could still be using them.
+pub fn sweep_stale_config_files() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    let cutoff = std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("termdrop-mongo-") || !name.ends_with(".yaml") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().map(|age| age > cutoff).unwrap_or(false))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Normalize a URI for the CLI tools: add authSource when needed and strip
 /// the database path, which mongodump/mongorestore reject alongside --db.
 fn prepare_cli_uri(uri: &str) -> String {
@@ -233,12 +333,19 @@ async fn run_cli_op<F>(
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
     progress_db: String,
-    build_cmd: F,
+    uri: String,
+    mut build_cmd: F,
 ) -> Result<(), String>
 where
-    F: FnMut() -> Result<std::process::Command, String> + Send + 'static,
+    F: FnMut(&str) -> Result<std::process::Command, String> + Send + 'static,
 {
     tokio::task::spawn_blocking(move || {
+        // Owned out here, not inside build_cmd: run_with_retry rebuilds the
+        // command once per attempt, so creating it there would leak a file per
+        // retry. One guard, dropped when this task ends however it ends.
+        let config = MongoConfigFile::new(&uri)?;
+        let config_arg = config.arg();
+
         run_with_retry(
             tool,
             stage,
@@ -248,7 +355,7 @@ where
             &mongo_ops,
             &op_id,
             &progress_db,
-            build_cmd,
+            move || build_cmd(&config_arg),
         )?;
         ProgressEmitter {
             window: &window,
@@ -706,9 +813,14 @@ async fn try_cli_sync(
     let collections = collections.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        let archive_path =
-            std::env::temp_dir().join(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
-        let archive_path_str = archive_path.to_string_lossy().to_string();
+        let archive = TempPath::new(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
+        let archive_path_str = archive.path.to_string_lossy().to_string();
+
+        // One config file per endpoint, both dropped when this task ends.
+        let remote_config = MongoConfigFile::new(&remote_uri)?;
+        let local_config = MongoConfigFile::new(&local_uri)?;
+        let remote_config_arg = remote_config.arg();
+        let local_config_arg = local_config.arg();
 
         // Step 1: mongodump from remote (dump whole DB; mongorestore will filter collections)
         let dump_result = run_with_retry(
@@ -723,7 +835,7 @@ async fn try_cli_sync(
             || {
                 let mut dump_cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
                 dump_cmd
-                    .arg(format!("--uri={}", remote_uri))
+                    .arg(&remote_config_arg)
                     .arg(format!("--db={}", db))
                     .arg("--gzip")
                     .arg(format!("--archive={}", archive_path_str));
@@ -731,10 +843,7 @@ async fn try_cli_sync(
             },
         );
 
-        if let Err(e) = dump_result {
-            let _ = std::fs::remove_file(&archive_path);
-            return Err(e);
-        }
+        dump_result?;
 
         // Step 2: mongorestore to local
         let restore_result = run_with_retry(
@@ -750,7 +859,7 @@ async fn try_cli_sync(
                 let mut restore_cmd =
                     std::process::Command::new(resolve_mongo_tool("mongorestore")?);
                 restore_cmd
-                    .arg(format!("--uri={}", local_uri))
+                    .arg(&local_config_arg)
                     .arg("--gzip")
                     .arg(format!("--archive={}", archive_path_str));
 
@@ -765,7 +874,6 @@ async fn try_cli_sync(
             },
         );
 
-        let _ = std::fs::remove_file(&archive_path);
         restore_result
     })
     .await
@@ -900,10 +1008,11 @@ pub async fn dump_collections(
         mongo_ops,
         op_id,
         db,
-        move || {
+        remote_uri,
+        move |config_arg| {
             Ok(build_dump_cmd(
                 resolve_mongo_tool("mongodump")?,
-                &format!("--uri={}", &remote_uri),
+                config_arg,
                 &cmd_db,
                 &collections,
                 &output_dir,
@@ -979,10 +1088,11 @@ pub async fn restore_collections(
         mongo_ops,
         op_id,
         progress_db,
-        move || {
+        remote_uri,
+        move |config_arg| {
             let cmd = build_restore_cmd(
                 resolve_mongo_tool("mongorestore")?,
-                &format!("--uri={}", &remote_uri),
+                config_arg,
                 &cmd_db,
                 &collections,
                 if is_archive { &input_dir } else { &restore_dir },
@@ -1030,10 +1140,11 @@ pub async fn restore_archive(
         mongo_ops,
         op_id,
         "archive".to_string(),
-        move || {
+        remote_uri,
+        move |config_arg| {
             Ok(build_restore_archive_cmd(
                 resolve_mongo_tool("mongorestore")?,
-                &format!("--uri={}", &remote_uri),
+                config_arg,
                 &includes,
                 &input_path,
                 drop_first,
@@ -1245,6 +1356,40 @@ mod tests {
         let a = args(&cmd);
         assert!(a.contains(&"--nsInclude=mydb.*".to_string()));
         assert!(!a.contains(&"--db=mydb".to_string()));
+    }
+
+    #[test]
+    fn config_file_holds_the_uri_and_disappears_on_drop() {
+        let uri = "mongodb://admin:p@ss\"w\\rd@localhost:27017/?authSource=admin";
+        let path = {
+            let cfg = MongoConfigFile::new(uri).expect("create config");
+            let text = std::fs::read_to_string(&cfg.path).expect("read config");
+
+            // The tools parse exactly one key; quoting must survive a password
+            // containing a quote and a backslash.
+            assert!(text.starts_with("uri: \""), "unexpected shape: {}", text);
+            assert!(text.contains("admin:p@ss"));
+            assert!(cfg.arg().starts_with("--config="));
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&cfg.path).unwrap().permissions().mode();
+                assert_eq!(
+                    mode & 0o777,
+                    0o600,
+                    "config file must not be readable by others"
+                );
+            }
+
+            cfg.path.clone()
+        };
+        assert!(!path.exists(), "config file outlived its guard");
+    }
+
+    #[test]
+    fn yaml_escape_escapes_backslash_before_quote() {
+        assert_eq!(yaml_escape(r#"a\b"c"#), r#"a\\b\"c"#);
     }
 
     #[test]
