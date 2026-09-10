@@ -27,7 +27,7 @@ describe('design system guard', () => {
     expect(files.length).toBeGreaterThan(20)
   })
 
-  it('no component names a raw Tailwind colour or puts a white label on a bright fill', () => {
+  it('no component leaks a palette colour, a white label on a bright fill, or a bracket type size', () => {
     const failures = []
     for (const file of files) {
       const findings = findBannedClasses(readFileSync(file, 'utf8'))
@@ -59,6 +59,16 @@ describe('findBannedClasses', () => {
     expect(findBannedClasses('<p class="text-ink-2 bg-surface border-line">')).toEqual([])
     expect(findBannedClasses('<p class="text-accent">')).toEqual([])
     expect(findBannedClasses('<span class="bg-good w-2 h-2 rounded-full">')).toEqual([])
+  })
+
+  it('catches a bracket font size, which carries no line-height', () => {
+    const hits = findBannedClasses('<p class="text-[10px]">')
+    expect(hits.map(h => h.rule)).toContain('arbitrary-type-size')
+  })
+
+  it('allows the named scale tiers', () => {
+    expect(findBannedClasses('<p class="text-2xs">')).toEqual([])
+    expect(findBannedClasses('<p class="text-xs">')).toEqual([])
   })
 
   it('does not confuse a token that merely contains a hue name', () => {

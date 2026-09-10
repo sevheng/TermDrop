@@ -106,7 +106,7 @@
       </div>
       <div v-else-if="listError" class="flex flex-col items-center justify-center gap-2 py-6 px-3 text-center">
         <p class="text-xs text-bad">Could not list this directory</p>
-        <p class="text-[10px] text-ink-2 break-words" :title="listError">{{ listError }}</p>
+        <p class="text-2xs text-ink-2 break-words" :title="listError">{{ listError }}</p>
         <button
           @click="loadFiles"
           class="mt-1 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
@@ -208,7 +208,7 @@
 
     <!-- Transfer progress -->
     <div v-if="transfers.length > 0" class="border-t border-line bg-canvas">
-      <div class="px-2 py-1 text-[10px] text-ink-3 font-medium uppercase tracking-wider border-b border-line/50">
+      <div class="px-2 py-1 text-2xs text-ink-3 font-medium uppercase tracking-wider border-b border-line/50">
         Transfers ({{ transfers.length }})
       </div>
       <div class="p-2 space-y-2 max-h-32 overflow-y-auto">
@@ -224,7 +224,7 @@
               </template>
             </span>
           </div>
-          <div class="flex items-center justify-between text-[10px] text-ink-3 mb-1">
+          <div class="flex items-center justify-between text-2xs text-ink-3 mb-1">
             <span v-if="t.total === 0 && !t.done">Preparing archive...</span>
             <span v-else>{{ formatSize(t.bytes) }} / {{ formatSize(t.total) }}</span>
             <span v-if="!t.done && t.speed > 0" class="text-good">{{ formatSpeed(t.speed) }}</span>

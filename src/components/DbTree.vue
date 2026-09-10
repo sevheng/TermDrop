@@ -36,7 +36,7 @@
           <span class="flex-1 truncate" @click.self="$emit('toggle-db', db.name)">{{ db.name }}</span>
           <!-- Collections load lazily, so an unexpanded database has no count to
                report; printing "0 cols" claimed it was empty. -->
-          <span v-if="db.collections.length > 0" class="text-[10px] text-ink-3">
+          <span v-if="db.collections.length > 0" class="text-2xs text-ink-3">
             {{ db.collections.length }} cols
           </span>
         </div>
@@ -45,7 +45,7 @@
           <label
             v-for="coll in db.collections"
             :key="coll"
-            class="group flex items-center gap-1.5 text-[11px] text-ink hover:bg-raised px-1 py-0.5 rounded"
+            class="group flex items-center gap-1.5 text-xs text-ink hover:bg-raised px-1 py-0.5 rounded"
             :class="[
               selectable || browsable ? 'cursor-pointer' : '',
               isActive(db.name, coll) ? 'bg-selected hover:bg-selected' : '',
@@ -68,7 +68,7 @@
               {{ coll }}
             </span>
           </label>
-          <div v-if="db.collections.length === 0" class="text-[10px] text-ink-3 px-1">
+          <div v-if="db.collections.length === 0" class="text-2xs text-ink-3 px-1">
             No collections
           </div>
         </div>

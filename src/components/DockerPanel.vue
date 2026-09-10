@@ -10,7 +10,7 @@
         >
           <RefreshCw :size="12" />
         </button>
-        <label class="flex items-center gap-1 text-[10px] text-ink-2 cursor-pointer select-none">
+        <label class="flex items-center gap-1 text-2xs text-ink-2 cursor-pointer select-none">
           <input
             v-model="showAll"
             type="checkbox"
@@ -20,7 +20,7 @@
           Show all
         </label>
       </div>
-      <span class="text-[10px] text-ink-3">{{ containers.length }} containers</span>
+      <span class="text-2xs text-ink-3">{{ containers.length }} containers</span>
     </div>
 
     <!-- Container list -->
@@ -31,7 +31,7 @@
       <div v-else-if="dockerNotInstalled" class="flex flex-col items-center justify-center py-8 px-4 text-center">
         <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
         <p class="text-xs text-ink mb-1">Docker is not installed</p>
-        <p class="text-[10px] text-ink-2 mb-3">This host does not have Docker available</p>
+        <p class="text-2xs text-ink-2 mb-3">This host does not have Docker available</p>
         <button
           v-if="!installing"
           @click="installDocker"
@@ -39,35 +39,35 @@
         >
           Install Docker
         </button>
-        <div v-else class="flex items-center gap-2 text-[10px] text-ink-2">
+        <div v-else class="flex items-center gap-2 text-2xs text-ink-2">
           <Loader2 :size="14" class="animate-spin" />
           <span>Installing Docker... this may take a minute</span>
         </div>
-        <p class="text-[10px] text-ink-3 mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
+        <p class="text-2xs text-ink-3 mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
       </div>
       <div v-else-if="daemonNotRunning" class="flex flex-col items-center justify-center py-8 px-4 text-center">
         <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
         <p class="text-xs text-ink mb-1">Docker daemon is not running</p>
-        <p class="text-[10px] text-ink-2 mb-2">Docker is installed but the service is stopped</p>
+        <p class="text-2xs text-ink-2 mb-2">Docker is installed but the service is stopped</p>
         <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-[10px] text-ink-3 mb-1">Start it by running in terminal:</p>
-          <code class="text-[10px] text-good font-mono block">sudo systemctl start docker</code>
+          <p class="text-2xs text-ink-3 mb-1">Start it by running in terminal:</p>
+          <code class="text-2xs text-good font-mono block">sudo systemctl start docker</code>
         </div>
       </div>
       <div v-else-if="permissionDenied" class="flex flex-col items-center justify-center py-8 px-4 text-center">
         <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
         <p class="text-xs text-ink mb-1">Docker permission denied</p>
-        <p class="text-[10px] text-ink-2 mb-2">Your user is not in the <code class="text-warn">docker</code> group</p>
+        <p class="text-2xs text-ink-2 mb-2">Your user is not in the <code class="text-warn">docker</code> group</p>
         <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-[10px] text-ink-3 mb-1">Fix by running in terminal:</p>
-          <code class="text-[10px] text-good font-mono block">sudo usermod -aG docker $USER</code>
-          <p class="text-[10px] text-ink-3 mt-1">Then reconnect this session</p>
+          <p class="text-2xs text-ink-3 mb-1">Fix by running in terminal:</p>
+          <code class="text-2xs text-good font-mono block">sudo usermod -aG docker $USER</code>
+          <p class="text-2xs text-ink-3 mt-1">Then reconnect this session</p>
         </div>
       </div>
       <div v-else-if="containers.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
         <Container :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No containers</p>
-        <p class="text-[10px] mt-1">Connect to a host with Docker</p>
+        <p class="text-2xs mt-1">Connect to a host with Docker</p>
       </div>
       <VirtualList
         v-else
@@ -87,9 +87,9 @@
             />
             <!-- Info -->
             <div class="flex-1 min-w-0">
-              <div class="text-[11px] text-ink truncate">{{ c.name }}</div>
-              <div class="text-[10px] text-ink-2 truncate">{{ c.image }}</div>
-              <div class="text-[10px] text-ink-3 truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
+              <div class="text-xs text-ink truncate">{{ c.name }}</div>
+              <div class="text-2xs text-ink-2 truncate">{{ c.image }}</div>
+              <div class="text-2xs text-ink-3 truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
             </div>
             <!-- Actions -->
             <div class="flex items-center gap-0.5 shrink-0">

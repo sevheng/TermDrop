@@ -79,7 +79,7 @@
           <component :is="showPassword ? EyeOff : Eye" :size="14" />
         </button>
       </div>
-      <p v-if="hasStoredSecret" class="text-[10px] text-ink-2 mt-1">
+      <p v-if="hasStoredSecret" class="text-2xs text-ink-2 mt-1">
         A password is stored. Leave blank to keep it.
       </p>
     </div>

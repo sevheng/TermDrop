@@ -13,7 +13,7 @@
         'hover:border-line focus:outline-none focus:ring-1 focus:ring-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed transition-colors',
         block ? 'w-full justify-between' : '',
-        size === 'xs' ? 'text-[10px] px-2 py-0.5' : 'text-xs px-2 py-1.5',
+        size === 'xs' ? 'text-2xs px-2 py-0.5' : 'text-xs px-2 py-1.5',
       ]"
       @click="toggle"
       @keydown="onTriggerKey"
@@ -53,7 +53,7 @@
         :aria-disabled="opt.disabled || undefined"
         :class="[
           'flex items-center gap-2 px-2 cursor-pointer',
-          size === 'xs' ? 'text-[10px] py-1' : 'text-xs py-1.5',
+          size === 'xs' ? 'text-2xs py-1' : 'text-xs py-1.5',
           opt.disabled ? 'text-ink-3 cursor-not-allowed' : 'text-ink',
           i === active && !opt.disabled ? 'bg-raised' : '',
         ]"
@@ -66,7 +66,7 @@
           :class="opt.value === modelValue ? 'text-accent' : 'opacity-0'"
         />
         <span class="truncate flex-1">{{ opt.label }}</span>
-        <span v-if="opt.hint" class="shrink-0 text-ink-3 text-[10px]">{{ opt.hint }}</span>
+        <span v-if="opt.hint" class="shrink-0 text-ink-3 text-2xs">{{ opt.hint }}</span>
       </li>
       <li v-if="options.length === 0" class="px-2 py-1.5 text-xs text-ink-3 italic">
         Nothing to choose

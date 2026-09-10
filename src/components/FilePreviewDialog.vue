@@ -27,30 +27,30 @@
                 v-model="searchQuery"
                 type="text"
                 placeholder="Find..."
-                class="bg-transparent text-[10px] text-ink w-24 focus:outline-none placeholder-ink-3"
+                class="bg-transparent text-2xs text-ink w-24 focus:outline-none placeholder-ink-3"
                 @keydown.esc="searchQuery = ''"
               />
-              <span v-if="searchQuery" class="text-[10px] text-ink-2">
+              <span v-if="searchQuery" class="text-2xs text-ink-2">
                 {{ matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : '0/0' }}
               </span>
               <button
                 v-if="searchQuery && matchCount > 0"
                 @click="prevMatch"
-                class="text-ink-2 hover:text-ink text-[10px] px-0.5"
+                class="text-ink-2 hover:text-ink text-2xs px-0.5"
                 title="Previous"
               >▲</button>
               <button
                 v-if="searchQuery && matchCount > 0"
                 @click="nextMatch"
-                class="text-ink-2 hover:text-ink text-[10px] px-0.5"
+                class="text-ink-2 hover:text-ink text-2xs px-0.5"
                 title="Next"
               >▼</button>
             </div>
           </template>
-          <button @click="$emit('download')" class="text-[10px] text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded" title="Download">
+          <button @click="$emit('download')" class="text-2xs text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded" title="Download">
             ⬇
           </button>
-          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-[10px] text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
+          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-2xs text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
             Edit
           </button>
           <button @click="$emit('close')" class="text-ink-2 hover:text-ink leading-none">×</button>
@@ -94,7 +94,7 @@
         </div>
 
         <!-- Text with line numbers and search -->
-        <div v-else class="flex h-full overflow-auto font-mono text-[11px] leading-5">
+        <div v-else class="flex h-full overflow-auto font-mono text-xs leading-5">
           <!-- Line numbers -->
           <div class="shrink-0 bg-canvas text-ink-3 text-right select-none px-2 py-3 border-r border-line" style="min-width: 3rem;">
             <div v-for="n in lineCount" :key="n" class="px-1">{{ n }}</div>

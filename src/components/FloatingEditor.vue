@@ -18,14 +18,14 @@
       <div class="flex items-center gap-1.5 shrink-0">
         <button
           @click.stop="editorModal.wordWrap = !editorModal.wordWrap"
-          class="text-[10px] px-1.5 py-0.5 rounded"
+          class="text-2xs px-1.5 py-0.5 rounded"
           :class="editorModal.wordWrap ? 'bg-accent-solid text-white' : 'bg-input text-ink-2 hover:text-ink'"
           title="Toggle word wrap"
         >↵ Wrap</button>
         <button
           @click.stop="onEditorSave"
           :disabled="editorModal.saving || !editorModal.dirty"
-          class="text-[11px] px-2.5 py-1 rounded font-medium"
+          class="text-xs px-2.5 py-1 rounded font-medium"
           :class="editorModal.dirty ? 'bg-good-solid hover:bg-good-solid-hover text-white' : 'bg-input text-ink-2 cursor-not-allowed'"
         >
           {{ editorModal.saving ? 'Saving...' : 'Save' }}
@@ -44,7 +44,7 @@
           class="shrink-0 bg-canvas text-ink-3 text-right select-none px-2 py-3 border-r border-line overflow-hidden"
           style="min-width: 2.5rem;"
         >
-          <div v-for="n in editorLineCount" :key="n" class="text-[12px] leading-5 font-mono px-1">{{ n }}</div>
+          <div v-for="n in editorLineCount" :key="n" class="text-xs leading-5 font-mono px-1">{{ n }}</div>
         </div>
         <!-- Textarea -->
         <textarea
@@ -53,13 +53,13 @@
           @input="onEditorInput"
           @keydown="onEditorKeydown"
           @scroll="syncEditorScroll"
-          class="flex-1 bg-canvas text-ink text-[12px] font-mono p-3 resize-none focus:outline-none leading-5"
+          class="flex-1 bg-canvas text-ink text-xs font-mono p-3 resize-none focus:outline-none leading-5"
           :class="editorModal.wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'"
           spellcheck="false"
         ></textarea>
       </template>
     </div>
-    <div class="px-3 py-1.5 border-t border-line text-[10px] text-ink-3 flex justify-between shrink-0">
+    <div class="px-3 py-1.5 border-t border-line text-2xs text-ink-3 flex justify-between shrink-0">
       <span>{{ editorModal.content.length }} chars</span>
       <span v-if="editorModal.dirty" class="text-warn">Unsaved changes</span>
       <span v-else>Saved</span>

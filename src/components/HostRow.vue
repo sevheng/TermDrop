@@ -22,7 +22,7 @@
     <!-- Host info -->
     <div class="min-w-0 flex-1">
       <div class="text-xs text-ink truncate">{{ host.name }}</div>
-      <div class="text-[10px] text-ink-2 truncate">{{ subtitle }}</div>
+      <div class="text-2xs text-ink-2 truncate">{{ subtitle }}</div>
     </div>
 
     <!-- Actions -->

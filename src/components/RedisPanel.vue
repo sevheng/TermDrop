@@ -4,17 +4,17 @@
     <div class="flex items-center gap-2 px-3 py-2 border-b border-line shrink-0">
       <Layers :size="14" class="text-redis shrink-0" />
       <span class="text-xs text-ink font-medium truncate">{{ host?.name }}</span>
-      <span class="text-[11px] text-ink-3 truncate font-mono">{{ displayUri }}</span>
+      <span class="text-xs text-ink-3 truncate font-mono">{{ displayUri }}</span>
       <span
         v-if="serverInfo?.tunnelled"
-        class="text-[10px] px-1.5 py-0.5 rounded bg-active text-syn-cyan shrink-0"
+        class="text-2xs px-1.5 py-0.5 rounded bg-active text-syn-cyan shrink-0"
         :title="`Tunnelled through ${tunnelHostName}`"
       >
         via {{ tunnelHostName }}
       </span>
       <span
         v-if="serverInfo?.mode === 'cluster'"
-        class="text-[10px] px-1.5 py-0.5 rounded bg-warn-bg text-warn-soft shrink-0"
+        class="text-2xs px-1.5 py-0.5 rounded bg-warn-bg text-warn-soft shrink-0"
         title="SCAN sees only this node, so the key list is one node's keyspace and backup is disabled"
       >
         cluster
@@ -22,7 +22,7 @@
 
       <div class="flex-1"></div>
 
-      <span v-if="serverInfo" class="text-[10px] text-ink-3">
+      <span v-if="serverInfo" class="text-2xs text-ink-3">
         Redis {{ serverInfo.version }}
       </span>
       <button
@@ -61,7 +61,7 @@
           :style="{ width: `${progress?.percent ?? 0}%` }"
         ></div>
       </div>
-      <span class="text-[10px] text-ink-2 shrink-0 w-48 truncate text-right">
+      <span class="text-2xs text-ink-2 shrink-0 w-48 truncate text-right">
         {{ progress?.detail || '…' }}
       </span>
       <button

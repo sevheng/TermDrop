@@ -23,7 +23,7 @@
           />
           <div class="flex-1 min-w-0">
             <div class="text-xs text-ink truncate">{{ host.name }}</div>
-            <div class="text-[10px] text-ink-2 truncate">{{ host.username }}@{{ host.host }}:{{ host.port }} · {{ host.auth_type }}</div>
+            <div class="text-2xs text-ink-2 truncate">{{ host.username }}@{{ host.host }}:{{ host.port }} · {{ host.auth_type }}</div>
           </div>
         </div>
       </div>

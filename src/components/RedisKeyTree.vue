@@ -24,11 +24,11 @@
           />
           <Layers :size="12" class="shrink-0 text-redis" />
           <span class="flex-1 truncate">db{{ dbInfo.index }}</span>
-          <span class="text-[10px] text-ink-3">{{ dbInfo.keys.toLocaleString() }}</span>
+          <span class="text-2xs text-ink-3">{{ dbInfo.keys.toLocaleString() }}</span>
         </div>
 
         <div v-if="dbInfo.index === activeDb" class="pb-1">
-          <div v-if="treeLoading" class="flex items-center gap-2 px-6 py-1.5 text-[11px] text-ink-2">
+          <div v-if="treeLoading" class="flex items-center gap-2 px-6 py-1.5 text-xs text-ink-2">
             <Loader2 :size="11" class="animate-spin" />
             Grouping keys…
           </div>
@@ -36,14 +36,14 @@
             <button
               v-for="group in groups"
               :key="group.prefix"
-              class="w-full flex items-center gap-1.5 pl-7 pr-2 py-1 text-[11px] text-left hover:bg-raised"
+              class="w-full flex items-center gap-1.5 pl-7 pr-2 py-1 text-xs text-left hover:bg-raised"
               :class="group.prefix === activeGroup ? 'text-ink bg-raised' : 'text-ink-2'"
               @click="$emit('select-group', group)"
             >
               <span class="flex-1 truncate" :title="group.binary ? 'binary prefix' : group.prefix">
                 {{ group.binary ? '⟨binary⟩' : group.prefix }}
               </span>
-              <span class="text-[10px] text-ink-3">{{ group.count.toLocaleString() }}</span>
+              <span class="text-2xs text-ink-3">{{ group.count.toLocaleString() }}</span>
             </button>
 
             <!--
@@ -51,12 +51,12 @@
               keyspace. Saying so is the whole point: a tree that implied it was
               complete would be quietly wrong on any real server.
             -->
-            <p v-if="truncated" class="pl-7 pr-2 py-1 text-[10px] text-ink-3 italic">
+            <p v-if="truncated" class="pl-7 pr-2 py-1 text-2xs text-ink-3 italic">
               ⋯ partial: grouped the first {{ scanned.toLocaleString() }} keys
             </p>
             <p
               v-else-if="groups.length === 0"
-              class="pl-7 pr-2 py-1 text-[10px] text-ink-3 italic"
+              class="pl-7 pr-2 py-1 text-2xs text-ink-3 italic"
             >
               No keys match
             </p>

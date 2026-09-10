@@ -6,7 +6,7 @@
         <h3 class="text-sm font-semibold text-ink truncate">
           <span class="text-accent-soft">{{ db }}</span>.{{ collection }}
         </h3>
-        <p class="text-[10px] text-ink-3 mt-0.5">
+        <p class="text-2xs text-ink-3 mt-0.5">
           read-only
           <span v-if="stats"> · {{ stats }}</span>
         </p>
@@ -17,7 +17,7 @@
     <div class="px-4 py-3 border-b border-line space-y-2 shrink-0 bg-surface">
       <div class="flex gap-2">
         <div class="flex-1">
-          <label class="block text-[10px] text-ink-2 mb-1">Filter</label>
+          <label class="block text-2xs text-ink-2 mb-1">Filter</label>
           <input
             v-model="filterText"
             spellcheck="false"
@@ -29,7 +29,7 @@
           />
         </div>
         <div class="w-48">
-          <label class="block text-[10px] text-ink-2 mb-1">Sort</label>
+          <label class="block text-2xs text-ink-2 mb-1">Sort</label>
           <input
             v-model="sortText"
             spellcheck="false"
@@ -46,7 +46,7 @@
               v-for="mode in ['table', 'json']"
               :key="mode"
               @click="viewMode = mode"
-              class="px-2 py-1.5 text-[11px] capitalize transition-colors"
+              class="px-2 py-1.5 text-xs capitalize transition-colors"
               :class="viewMode === mode
                 ? 'bg-accent-solid text-white'
                 : 'bg-input text-ink hover:bg-input-hover'"
@@ -66,9 +66,9 @@
 
       <!-- A malformed filter is something you iterate on, so it belongs next to
            the box rather than in a toast that disappears. -->
-      <p v-if="inputError" class="text-[10px] text-bad font-mono">{{ inputError }}</p>
-      <p v-else-if="queryError" class="text-[10px] text-bad font-mono break-all">{{ queryError }}</p>
-      <p v-else class="text-[10px] text-ink-3">
+      <p v-if="inputError" class="text-2xs text-bad font-mono">{{ inputError }}</p>
+      <p v-else-if="queryError" class="text-2xs text-bad font-mono break-all">{{ queryError }}</p>
+      <p v-else class="text-2xs text-ink-3">
         Ctrl/Cmd+Enter to run. A 24-character hex <span class="font-mono">_id</span> is treated as an ObjectId.
       </p>
     </div>
@@ -84,7 +84,7 @@
       </div>
       <!-- Table: fields as columns, so documents can be compared at a glance. -->
       <div v-else-if="viewMode === 'table'" class="overflow-x-auto">
-        <table class="w-full text-[11px] font-mono border-collapse">
+        <table class="w-full text-xs font-mono border-collapse">
           <thead class="sticky top-0 bg-surface">
             <tr>
               <th class="w-4 border-b border-line"></th>
@@ -129,7 +129,7 @@
               <tr v-if="expanded.has(i)">
                 <td :colspan="columns.length + 2" class="p-0">
                   <pre
-                    class="px-3 py-2 text-[11px] text-ink bg-canvas overflow-x-auto whitespace-pre"
+                    class="px-3 py-2 text-xs text-ink bg-canvas overflow-x-auto whitespace-pre"
                   >{{ pretty(doc) }}</pre>
                 </td>
               </tr>
@@ -137,11 +137,11 @@
           </tbody>
         </table>
 
-        <p v-if="hiddenColumns > 0" class="text-[10px] text-ink-2 pt-2">
+        <p v-if="hiddenColumns > 0" class="text-2xs text-ink-2 pt-2">
           {{ hiddenColumns }} more field{{ hiddenColumns === 1 ? '' : 's' }} not shown —
           open a row, or switch to JSON, to see everything.
         </p>
-        <p v-if="truncated" class="text-[10px] text-syn-yellow pt-1">
+        <p v-if="truncated" class="text-2xs text-syn-yellow pt-1">
           Results were cut short because the page exceeded the size limit.
         </p>
       </div>
@@ -153,7 +153,7 @@
           class="border border-line/60 rounded overflow-hidden"
         >
           <div
-            class="flex items-center gap-2 px-2 py-1 text-[11px] font-mono cursor-pointer hover:bg-raised"
+            class="flex items-center gap-2 px-2 py-1 text-xs font-mono cursor-pointer hover:bg-raised"
             @click="toggle(i)"
           >
             <ChevronRight
@@ -172,11 +172,11 @@
           </div>
           <pre
             v-if="expanded.has(i)"
-            class="px-3 py-2 text-[11px] font-mono text-ink bg-canvas overflow-x-auto whitespace-pre"
+            class="px-3 py-2 text-xs font-mono text-ink bg-canvas overflow-x-auto whitespace-pre"
           >{{ pretty(doc) }}</pre>
         </div>
 
-        <p v-if="truncated" class="text-[10px] text-syn-yellow pt-1">
+        <p v-if="truncated" class="text-2xs text-syn-yellow pt-1">
           Results were cut short because the page exceeded the size limit.
         </p>
       </div>
@@ -184,12 +184,12 @@
 
     <!-- Pagination -->
     <div class="flex items-center justify-between px-4 py-2.5 border-t border-line shrink-0 bg-surface">
-      <span class="text-[10px] text-ink-3">
+      <span class="text-2xs text-ink-3">
         {{ rangeLabel }}
         <span v-if="elapsedMs !== null"> · {{ elapsedMs }} ms</span>
       </span>
       <div class="flex items-center gap-2">
-        <label class="text-[10px] text-ink-2">
+        <label class="text-2xs text-ink-2">
           Page size
           <SelectMenu
             size="xs"
@@ -202,14 +202,14 @@
         <button
           @click="runQuery(page - 1)"
           :disabled="loading || page === 0"
-          class="px-2 py-1 text-[11px] rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Prev
         </button>
         <button
           @click="runQuery(page + 1)"
           :disabled="loading || page >= maxPage"
-          class="px-2 py-1 text-[11px] rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Next
         </button>

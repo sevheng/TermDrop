@@ -3,8 +3,8 @@
     <!-- Toolbar -->
     <div class="flex items-center justify-between px-2 py-1 border-b border-line">
       <div class="flex items-center gap-2">
-        <span class="text-[10px] text-ink-3">{{ report?.checks?.length || 0 }} checks</span>
-        <span v-if="timeAgo" class="text-[10px] text-ink-2">· updated {{ timeAgo }}</span>
+        <span class="text-2xs text-ink-3">{{ report?.checks?.length || 0 }} checks</span>
+        <span v-if="timeAgo" class="text-2xs text-ink-2">· updated {{ timeAgo }}</span>
       </div>
       <button
         @click="runAudit(true)"
@@ -22,14 +22,14 @@
       <div v-if="loading" class="flex flex-col items-center justify-center py-12">
         <Loader2 :size="20" class="animate-spin text-ink-2 mb-2" />
         <span class="text-xs text-ink-2">Running security audit...</span>
-        <span class="text-[10px] text-ink-3 mt-1">Switch tabs freely — results will appear here</span>
+        <span class="text-2xs text-ink-3 mt-1">Switch tabs freely — results will appear here</span>
       </div>
 
       <!-- Error -->
       <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-ink-3">
         <ShieldAlert :size="24" class="mb-2 text-bad opacity-50" />
         <p class="text-xs text-bad">Audit failed</p>
-        <p class="text-[10px] mt-1">{{ error }}</p>
+        <p class="text-2xs mt-1">{{ error }}</p>
         <button
           @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
@@ -42,7 +42,7 @@
       <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-ink-3">
         <Shield :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No audit has run for this host</p>
-        <p class="text-[10px] mt-1">The audit runs privileged probes on the server</p>
+        <p class="text-2xs mt-1">The audit runs privileged probes on the server</p>
         <button
           @click="runAudit(true)"
           class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
@@ -62,11 +62,11 @@
             >
               {{ hasScore ? report.score : '—' }}
             </div>
-            <span class="text-[10px] text-ink-2 uppercase tracking-wide">{{ scoreLabel }}</span>
-            <p class="text-[10px] text-ink-2 mt-1">
+            <span class="text-2xs text-ink-2 uppercase tracking-wide">{{ scoreLabel }}</span>
+            <p class="text-2xs text-ink-2 mt-1">
               {{ hasScore ? `${report.passed} of ${report.scored} checks passed` : 'Nothing could be determined' }}
             </p>
-            <p v-if="breakdown" class="text-[10px] text-ink-3 mt-0.5">{{ breakdown }}</p>
+            <p v-if="breakdown" class="text-2xs text-ink-3 mt-0.5">{{ breakdown }}</p>
           </div>
         </div>
 
@@ -85,18 +85,18 @@
             />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class="text-[11px] text-ink">{{ check.name }}</span>
+                <span class="text-xs text-ink">{{ check.name }}</span>
                 <span
-                  class="text-[9px] px-1 py-0 rounded font-medium uppercase"
+                  class="text-2xs px-1 py-0 rounded font-medium uppercase"
                   :class="statusMeta(check.status).badge"
                 >
                   {{ check.status }}
                 </span>
               </div>
-              <p class="text-[10px] text-ink-2 mt-0.5">{{ check.message }}</p>
+              <p class="text-2xs text-ink-2 mt-0.5">{{ check.message }}</p>
               <p
                 v-if="check.detail"
-                class="text-[10px] text-ink-3 mt-0.5 font-mono whitespace-pre-wrap break-words"
+                class="text-2xs text-ink-3 mt-0.5 font-mono whitespace-pre-wrap break-words"
               >{{ check.detail }}</p>
 
               <!-- What to do about it. Collapsed by default so the list stays
@@ -104,7 +104,7 @@
               <template v-if="check.remediation">
                 <button
                   @click="toggle(check.name)"
-                  class="text-[10px] text-accent-soft hover:text-accent-soft-hover mt-1 flex items-center gap-0.5"
+                  class="text-2xs text-accent-soft hover:text-accent-soft-hover mt-1 flex items-center gap-0.5"
                 >
                   <ChevronRight
                     :size="10"
@@ -114,17 +114,17 @@
                   What to do
                 </button>
                 <div v-if="isOpen(check.name)" class="mt-1 mb-0.5">
-                  <p class="text-[10px] text-ink-2 leading-relaxed">
+                  <p class="text-2xs text-ink-2 leading-relaxed">
                     {{ check.remediation.summary }}
                   </p>
                   <template v-if="check.remediation.command">
                     <pre
-                      class="mt-1 px-1.5 py-1 bg-surface border border-line rounded text-[10px] text-ink font-mono whitespace-pre-wrap break-all"
+                      class="mt-1 px-1.5 py-1 bg-surface border border-line rounded text-2xs text-ink font-mono whitespace-pre-wrap break-all"
                     >{{ check.remediation.command }}</pre>
                     <div class="flex items-center gap-2 mt-1">
                       <button
                         @click="copyCommand(check.remediation.command)"
-                        class="text-[10px] text-ink-2 hover:text-ink flex items-center gap-1"
+                        class="text-2xs text-ink-2 hover:text-ink flex items-center gap-1"
                       >
                         <Copy :size="10" />
                         Copy
@@ -132,13 +132,13 @@
                       <button
                         v-if="canSend"
                         @click="sendCommand(check.remediation.command)"
-                        class="text-[10px] text-ink-2 hover:text-ink flex items-center gap-1"
+                        class="text-2xs text-ink-2 hover:text-ink flex items-center gap-1"
                       >
                         <TerminalSquare :size="10" />
                         Send to terminal
                       </button>
                     </div>
-                    <p v-if="canSend" class="text-[9px] text-ink-3 mt-0.5">
+                    <p v-if="canSend" class="text-2xs text-ink-3 mt-0.5">
                       Typed at the prompt without running. Press Enter yourself.
                     </p>
                   </template>

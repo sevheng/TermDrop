@@ -6,7 +6,7 @@
         <Database :size="14" class="text-mongo shrink-0" />
         <span class="text-sm font-medium text-ink truncate">{{ connectionName }}</span>
         <span
-          class="text-[10px] text-ink-2 truncate max-w-[18rem]"
+          class="text-2xs text-ink-2 truncate max-w-[18rem]"
           :title="connectionDisplay"
         >
           {{ connectionDisplay }}
@@ -70,7 +70,7 @@
 
     <!-- Progress, while a backup or restore runs -->
     <div v-if="backup.busy.value" class="px-4 py-2 border-b border-line shrink-0 bg-surface space-y-1">
-      <div class="flex items-center justify-between text-[10px] text-ink-3">
+      <div class="flex items-center justify-between text-2xs text-ink-3">
         <span>{{ backup.progress.value.stage }} {{ backup.progress.value.collection }}</span>
         <button @click="backup.cancel" class="text-bad hover:text-bad underline">
           Cancel
@@ -82,7 +82,7 @@
           :style="{ width: backup.progress.value.percent + '%' }"
         />
       </div>
-      <div class="flex justify-between text-[10px] text-ink-3">
+      <div class="flex justify-between text-2xs text-ink-3">
         <span>
           {{ backup.progress.value.detail
             || `${backup.progress.value.synced} / ${backup.progress.value.total}` }}
@@ -95,10 +95,10 @@
     <div class="flex-1 flex overflow-hidden">
       <div class="w-72 shrink-0 flex flex-col border-r border-line">
         <div class="flex items-center justify-between px-3 py-1.5 border-b border-line shrink-0">
-          <span class="text-[10px] font-medium text-ink-2 uppercase tracking-wider">
+          <span class="text-2xs font-medium text-ink-2 uppercase tracking-wider">
             Databases
           </span>
-          <span v-if="selectedCount > 0" class="text-[10px] text-accent-soft">
+          <span v-if="selectedCount > 0" class="text-2xs text-accent-soft">
             {{ selectedCount }} selected
             <button
               @click="clearSelection"
@@ -136,7 +136,7 @@
         <div v-else class="h-full flex flex-col items-center justify-center text-ink-3">
           <FileSearch :size="22" class="mb-2 opacity-50" />
           <p class="text-xs">Select a collection to view its documents</p>
-          <p class="text-[10px] mt-1 text-ink-3">
+          <p class="text-2xs mt-1 text-ink-3">
             Tick collections to include them in a backup
           </p>
         </div>

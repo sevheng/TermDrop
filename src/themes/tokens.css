@@ -73,6 +73,23 @@
 
   /* type — IBM Plex was drawn for engineering documentation; JetBrains Mono
      replaces Menlo/Monaco, which resolve to Courier New anywhere but macOS */
+
+  /* Type scale. Every tier pairs a size with a line-height, which is the bug
+     this fixes: `text-[10px]` set a size and nothing else, so it inherited
+     preflight's 1.5 and rendered a 15px box — about 7px of the host row.
+     Values here are today's *effective* ones, so declaring the scale changes
+     nothing; the tightening is a later, one-file swap. */
+  --td-text-2xs: 0.625rem;   /* 10 */
+  --td-lh-2xs: 0.9375rem;    /* 15 — the inherited 1.5, preserved for now */
+  --td-text-xs: 0.75rem;     /* 12 */
+  --td-lh-xs: 1rem;          /* 16 */
+  --td-text-sm: 0.875rem;    /* 14 */
+  --td-lh-sm: 1.25rem;       /* 20 */
+  --td-text-base: 1rem;      /* 16 */
+  --td-lh-base: 1.5rem;      /* 24 */
+  --td-text-lg: 1.125rem;    /* 18 */
+  --td-lh-lg: 1.75rem;       /* 28 */
+
   --td-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --td-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 

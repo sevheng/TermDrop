@@ -8,7 +8,7 @@
         placeholder="redis://:password@localhost:6379/0"
         class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 font-mono outline-none focus:ring-1 focus:ring-accent"
       />
-      <p v-if="errors.uri" class="text-[10px] text-bad mt-1">{{ errors.uri }}</p>
+      <p v-if="errors.uri" class="text-2xs text-bad mt-1">{{ errors.uri }}</p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -87,7 +87,7 @@
         :options="tunnelOptions"
         @update:modelValue="$emit('update:tunnelHostId', $event === '' ? null : Number($event))"
       />
-      <p class="text-[10px] text-ink-3 mt-1">
+      <p class="text-2xs text-ink-3 mt-1">
         For a Redis that only listens on a private network. The host and port above are
         resolved from the SSH host, not from this machine.
       </p>
@@ -96,7 +96,7 @@
         naming the real host can never verify. SSH already encrypts the hop, so
         the answer is plain redis:// rather than switching verification off.
       -->
-      <p v-if="tls && tunnelHostId != null" class="text-[10px] text-bad mt-1">
+      <p v-if="tls && tunnelHostId != null" class="text-2xs text-bad mt-1">
         A TLS connection cannot be tunnelled: the certificate names the real host, but through
         a tunnel only 127.0.0.1 is visible. The SSH tunnel already encrypts this hop — turn TLS
         off, or connect directly.

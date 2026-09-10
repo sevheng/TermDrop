@@ -8,7 +8,7 @@
     <template v-else>
       <div class="px-3 py-2 border-b border-line shrink-0">
         <p class="font-mono text-xs text-ink break-all">{{ keyLabel }}</p>
-        <div class="flex items-center gap-3 mt-1 text-[10px] text-ink-2">
+        <div class="flex items-center gap-3 mt-1 text-2xs text-ink-2">
           <span>{{ formatKeyKind(page?.kind) }}</span>
           <span>{{ formatTtl(page?.ttl_ms) }}</span>
           <span v-if="page?.encoding">{{ page.encoding }}</span>
@@ -31,7 +31,7 @@
         <p class="text-xs">
           {{ page?.kind === 'none' ? 'This key no longer exists.' : 'TermDrop cannot display this type.' }}
         </p>
-        <p v-if="page?.kind && page.kind !== 'none'" class="text-[10px] mt-1">
+        <p v-if="page?.kind && page.kind !== 'none'" class="text-2xs mt-1">
           {{ page.kind }} — usually a Redis module type.
         </p>
       </div>
@@ -45,7 +45,7 @@
         -->
         <p
           v-if="truncatedNote"
-          class="sticky top-0 z-10 px-3 py-1.5 text-[10px] text-warn-soft bg-warn-bg border-b border-warn-line"
+          class="sticky top-0 z-10 px-3 py-1.5 text-2xs text-warn-soft bg-warn-bg border-b border-warn-line"
         >
           {{ truncatedNote }}
         </p>
@@ -91,7 +91,7 @@
 
       <div
         v-if="isViewableKind(page?.kind) && page.kind !== 'string'"
-        class="flex items-center justify-between px-3 py-1.5 border-t border-line text-[11px] text-ink-2 shrink-0"
+        class="flex items-center justify-between px-3 py-1.5 border-t border-line text-xs text-ink-2 shrink-0"
       >
         <span>{{ page.entries.length }} shown</span>
         <button

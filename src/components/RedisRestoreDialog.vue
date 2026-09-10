@@ -43,7 +43,7 @@
       />
       <span class="text-xs text-ink">
         Overwrite keys that already exist
-        <span class="block text-[10px] text-ink-2">
+        <span class="block text-2xs text-ink-2">
           Without this, a key that is already there is left alone and counted as skipped.
         </span>
       </span>
@@ -58,7 +58,7 @@
       />
       <span class="text-xs text-ink">
         Empty the database first
-        <span class="block text-[10px] text-bad">
+        <span class="block text-2xs text-bad">
           Deletes every key in db{{ state.targetDb }} before restoring. This cannot be undone.
         </span>
       </span>

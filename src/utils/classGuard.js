@@ -36,6 +36,14 @@ export const BANNED = [
     why: 'a bright tone cannot carry a white or black label (accent + white is 2.79:1)',
     fix: 'use the -solid variant for fills: bg-accent-solid, bg-good-solid, …',
   },
+  {
+    name: 'arbitrary-type-size',
+    // A bracket size sets a size and nothing else, so it inherits preflight's
+    // 1.5 line-height. That is where the host row lost ~7px per host.
+    pattern: /\btext-\[\d+px\]/g,
+    why: 'sets a font size with no paired line-height, so leading falls back to 1.5',
+    fix: 'use a scale tier: text-2xs, text-xs, text-sm, text-base, text-lg',
+  },
 ]
 
 /**

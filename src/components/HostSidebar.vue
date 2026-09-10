@@ -117,7 +117,7 @@
       <template v-else>
         <!-- Favorites section -->
         <div v-if="favoriteHosts.length > 0 && !searchQuery.trim()" class="mb-1">
-          <div class="px-2 py-0.5 text-[10px] font-semibold text-ink-3 uppercase tracking-wider dark:text-ink-3 flex items-center gap-1">
+          <div class="px-2 py-0.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider dark:text-ink-3 flex items-center gap-1">
             <Star :size="10" class="text-warn" />
             Favorites
           </div>
@@ -150,11 +150,11 @@
               @dragleave="dragOverGroup = null"
               @drop="onGroupDrop($event, groupName)"
             >
-              <span class="flex items-center gap-1 text-[10px] font-semibold text-ink-2">
+              <span class="flex items-center gap-1 text-2xs font-semibold text-ink-2">
                 <component :is="collapsedGroups.has(groupName) ? Folder : FolderOpen" :size="10" />
                 {{ groupName || 'Ungrouped' }}
               </span>
-              <span class="text-[10px] text-ink-3">{{ groupHosts.length }}</span>
+              <span class="text-2xs text-ink-3">{{ groupHosts.length }}</span>
             </div>
             <div v-show="!collapsedGroups.has(groupName)" class="pl-1">
               <HostRow
@@ -203,7 +203,7 @@
           Delete
         </button>
         <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-line my-0.5"></div>
-        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-[10px] text-ink-3">Move to</div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-2xs text-ink-3">Move to</div>
         <button
           v-for="g in allGroupNames"
           :key="g"

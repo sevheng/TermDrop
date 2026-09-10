@@ -15,7 +15,7 @@
       ></div>
       <!-- Header -->
       <div class="flex items-center justify-between px-2 py-1 border-b border-line shrink-0">
-        <span class="text-[10px] text-ink flex items-center gap-1.5">
+        <span class="text-2xs text-ink flex items-center gap-1.5">
           <FileText v-if="dockerPane.type === 'logs'" :size="10" />
           <TerminalIcon v-else :size="10" />
           {{ dockerPane.title }}
@@ -24,7 +24,7 @@
           <button
             v-if="dockerPane.type === 'logs'"
             @click="toggleFollow"
-            class="text-[10px] px-2 py-0.5 rounded font-medium transition-colors"
+            class="text-2xs px-2 py-0.5 rounded font-medium transition-colors"
             :class="dockerPane.following
               ? 'bg-good/20 text-good hover:bg-good/30'
               : 'bg-input text-ink-2 hover:bg-input-hover hover:text-ink'"
@@ -54,7 +54,7 @@
           v-for="t in ['processes', 'network', 'disk']"
           :key="t"
           @click="sysTab = t"
-          class="px-2 py-0.5 text-[10px] font-medium capitalize transition-colors"
+          class="px-2 py-0.5 text-2xs font-medium capitalize transition-colors"
           :class="sysTab === t ? 'text-accent' : 'text-ink-2 hover:text-ink'"
         >
           {{ t }}
@@ -68,7 +68,7 @@
         </div>
 
         <!-- Processes -->
-        <div v-else-if="sysTab === 'processes'" class="text-[10px]">
+        <div v-else-if="sysTab === 'processes'" class="text-2xs">
           <div class="grid grid-cols-12 gap-1 text-ink-3 font-medium border-b border-line pb-0.5 mb-0.5">
             <span class="col-span-1">PID</span>
             <span class="col-span-5">Command</span>
@@ -90,7 +90,7 @@
         </div>
 
         <!-- Network -->
-        <div v-else-if="sysTab === 'network'" class="text-[10px]">
+        <div v-else-if="sysTab === 'network'" class="text-2xs">
           <div class="mb-1">
             <span class="text-ink-2">Established:</span>
             <span class="text-ink ml-1">{{ network?.established_count || 0 }}</span>
@@ -122,7 +122,7 @@
         </div>
 
         <!-- Disk -->
-        <div v-else-if="sysTab === 'disk'" class="text-[10px]">
+        <div v-else-if="sysTab === 'disk'" class="text-2xs">
           <div v-if="diskInfo?.mounts?.length" class="mb-1">
             <div class="text-ink-3 font-medium mb-0.5">Filesystems</div>
             <div
@@ -161,12 +161,12 @@
       <div class="flex items-center justify-between px-2 py-0.5">
         <div class="flex items-center gap-3 overflow-x-auto">
           <!-- Disconnected -->
-          <div v-if="isDisconnected" class="flex items-center gap-1 text-[10px] text-bad whitespace-nowrap">
+          <div v-if="isDisconnected" class="flex items-center gap-1 text-2xs text-bad whitespace-nowrap">
             <span class="w-1.5 h-1.5 rounded-full bg-bad animate-pulse" />
             <span class="font-medium">Disconnected</span>
           </div>
           <!-- Loading -->
-          <div v-else-if="statusLoading && !status.load" class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+          <div v-else-if="statusLoading && !status.load" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
             <Loader2 :size="10" class="animate-spin" />
             <span>Loading stats…</span>
           </div>
@@ -174,44 +174,44 @@
           <template v-else>
             <div
               v-if="status.os"
-              class="flex items-center gap-1 text-[10px] text-ink-2 max-w-[140px] cursor-default"
+              class="flex items-center gap-1 text-2xs text-ink-2 max-w-[140px] cursor-default"
               @mouseenter="showTooltip($event, status.os)"
               @mouseleave="hideTooltip"
             >
               <Monitor :size="10" class="text-syn-teal shrink-0" />
               <span class="truncate">{{ status.os }}</span>
             </div>
-            <div v-if="status.load" class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div v-if="status.load" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <Cpu :size="10" class="text-syn-blue" />
               <span class="font-medium">CPU:</span>
               <span>{{ status.load }}<span v-if="status.cores"> / {{ status.cores }} cores</span></span>
             </div>
-            <div v-if="status.ram" class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div v-if="status.ram" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <MemoryStick :size="10" class="text-good" />
               <span class="font-medium">RAM:</span>
               <span>{{ status.ram }}</span>
             </div>
-            <div v-if="status.disk" class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div v-if="status.disk" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <HardDrive :size="10" class="text-warn" />
               <span class="font-medium">Disk:</span>
               <span>{{ status.disk }}</span>
             </div>
-            <div v-if="status.uptime" class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div v-if="status.uptime" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <Clock :size="10" class="text-syn-purple" />
               <span class="font-medium">Up:</span>
               <span>{{ status.uptime }}</span>
             </div>
-            <div class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <ArrowDown :size="10" class="text-good" />
               <span>{{ status.netDown || '—' }}</span>
             </div>
-            <div class="flex items-center gap-1 text-[10px] text-ink-2 whitespace-nowrap">
+            <div class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
               <ArrowUp :size="10" class="text-syn-blue" />
               <span>{{ status.netUp || '—' }}</span>
             </div>
           </template>
           <!-- Error -->
-          <div v-if="statusError" class="flex items-center gap-1 text-[10px] text-bad whitespace-nowrap" :title="statusError">
+          <div v-if="statusError" class="flex items-center gap-1 text-2xs text-bad whitespace-nowrap" :title="statusError">
             <span class="w-1.5 h-1.5 rounded-full bg-bad" />
             <span class="truncate max-w-[200px]">{{ statusError }}</span>
           </div>

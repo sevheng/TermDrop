@@ -44,7 +44,7 @@
       >
         <Search :size="20" class="mb-2 opacity-50" />
         <p class="text-xs">No keys on this page</p>
-        <p v-if="!done" class="text-[10px] mt-1">
+        <p v-if="!done" class="text-2xs mt-1">
           SCAN returns pages, not results — there may be more further on.
         </p>
       </div>
@@ -83,7 +83,7 @@
 
     <!-- Paging -->
     <div
-      class="flex items-center justify-between px-3 py-1.5 border-t border-line text-[11px] text-ink-2 shrink-0"
+      class="flex items-center justify-between px-3 py-1.5 border-t border-line text-xs text-ink-2 shrink-0"
     >
       <span>{{ summary }}</span>
       <div class="flex items-center gap-2">

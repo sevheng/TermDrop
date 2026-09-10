@@ -10,6 +10,14 @@ export default {
       // Every colour the UI uses, by role. The values live in
       // src/themes/tokens.css as RGB channels so `<alpha-value>` works and
       // utilities like `bg-surface/50` resolve.
+      fontSize: {
+        // Backed by CSS vars so the whole scale tightens from one file.
+        '2xs':  ['var(--td-text-2xs)',  { lineHeight: 'var(--td-lh-2xs)' }],
+        'xs':   ['var(--td-text-xs)',   { lineHeight: 'var(--td-lh-xs)' }],
+        'sm':   ['var(--td-text-sm)',   { lineHeight: 'var(--td-lh-sm)' }],
+        'base': ['var(--td-text-base)', { lineHeight: 'var(--td-lh-base)' }],
+        'lg':   ['var(--td-text-lg)',   { lineHeight: 'var(--td-lh-lg)' }],
+      },
       fontFamily: {
         sans: 'var(--td-font-ui)',
         mono: 'var(--td-font-mono)',
