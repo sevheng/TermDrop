@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
 
 ### Added
+- **The interface has been tidied throughout.** Every list, table and empty state now shares one treatment instead of fifteen, numbers line up in columns, and the host list fits more on screen without dropping anything.
+  - **Empty states tell you what to do.** They now distinguish "nothing here yet" from "nothing matched your filter" from "still loading" — and offer the button that fixes it. The opening screen offers to add your first host instead of only telling you to pick one
+  - **The host list shows more.** Favourited hosts show their star without hovering, the host whose tab is open is marked, Redis and MongoDB hosts are colour-coded, and hosts you have connected to before show when you last did
+  - **The keyboard works.** Focus is visible everywhere it lands, and dialogs keep Tab inside them and close on Escape
+
 - **Dropdowns are drawn by the app now.** The native control could not be themed — its list was a separate platform surface that ignored the app's colours entirely, and on Linux its text was close to unreadable. The replacement matches the rest of the interface in both themes and keeps the keyboard behaviour: arrows and Home/End to move, Enter to choose, Escape to dismiss, and type a few letters to jump.
 
 - **A light theme, and a way to choose it.** Settings now has an Appearance control beside the font size, previewed live as you pick it. The terminal follows the app, so a light window no longer frames a black terminal.
