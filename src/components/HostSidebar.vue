@@ -85,7 +85,15 @@
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto py-1 px-1" @contextmenu.prevent="showEmptyMenu">
+    <div
+      ref="listEl"
+      class="flex-1 overflow-y-auto py-1 px-1"
+      role="listbox"
+      aria-label="Hosts"
+      tabindex="0"
+      @contextmenu.prevent="showEmptyMenu"
+      @keydown="onListKey"
+    >
       <!-- Empty state -->
       <!-- "None yet" wants an add button; "none matching" wants the search
            cleared. Pointing at the + three icons away served neither. -->
@@ -108,6 +116,7 @@
           :key="host.id"
           :host="host"
           :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
           @connect="connectHost(host.id)"
           @edit="editHost(host)"
           @delete="deleteHost(host)"
@@ -129,6 +138,7 @@
             :key="'fav-' + host.id"
             :host="host"
             :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
             @connect="connectHost(host.id)"
             @edit="editHost(host)"
             @delete="deleteHost(host)"
@@ -138,32 +148,33 @@
         </div>
 
         <!-- Grouped hosts -->
-        <template v-for="(groupHosts, groupName) in groupedHosts" :key="groupName">
+        <template v-for="group in groupedHosts" :key="group.name">
           <div class="mb-1">
             <div
               class="flex items-center justify-between border-l-2 pl-2 pr-2 py-0.5 rounded-r cursor-pointer select-none hover:bg-raised"
               :class="[
-                groupAccentClass(groupName),
-                dragOverGroup === groupName ? 'ring-1 ring-accent' : '',
+                groupAccentClass(group.name),
+                dragOverGroup === group.name ? 'ring-1 ring-accent' : '',
               ]"
-              @click="toggleGroup(groupName)"
-              @contextmenu.prevent.stop="showGroupMenu($event, groupName)"
-              @dragover.prevent="dragOverGroup = groupName"
+              @click="toggleGroup(group.name)"
+              @contextmenu.prevent.stop="showGroupMenu($event, group.name)"
+              @dragover.prevent="dragOverGroup = group.name"
               @dragleave="dragOverGroup = null"
-              @drop="onGroupDrop($event, groupName)"
+              @drop="onGroupDrop($event, group.name)"
             >
               <span class="flex items-center gap-1 text-2xs font-semibold text-ink-2">
-                <component :is="collapsedGroups.has(groupName) ? Folder : FolderOpen" :size="10" />
-                {{ groupName || 'Ungrouped' }}
+                <component :is="collapsedGroups.has(group.name) ? Folder : FolderOpen" :size="10" />
+                {{ group.name || 'Ungrouped' }}
               </span>
-              <span class="text-2xs text-ink-3">{{ groupHosts.length }}</span>
+              <span class="text-2xs text-ink-3">{{ group.hosts.length }}</span>
             </div>
-            <div v-show="!collapsedGroups.has(groupName)" class="pl-1">
+            <div v-show="!collapsedGroups.has(group.name)" class="pl-1">
               <HostRow
-                v-for="host in groupHosts"
+                v-for="host in group.hosts"
                 :key="host.id"
                 :host="host"
                 :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
                 @connect="connectHost(host.id)"
                 @edit="editHost(host)"
                 @delete="deleteHost(host)"
@@ -296,7 +307,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
+import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Plus, Server, Database, Layers, Search, Upload, Download, FileTerminal,
@@ -319,6 +330,8 @@ import { splitRedisUri } from '../utils/redisUri.js'
 import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
 import { groupAccentClass } from '../utils/groupAccent.js'
 import { hostRowState } from '../utils/hostRowState.js'
+import { filterHosts, groupHosts, groupNames } from '../utils/hostGrouping.js'
+import { visibleRows, nextRow, firstRow, lastRow, pageRow, navIntent } from '../utils/listNav.js'
 import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
@@ -354,22 +367,18 @@ const groupModalMode = ref('create')
 const sshImportRef = ref(null)
 const showImportMenu = ref(false)
 const importMenuRef = ref(null)
+const listEl = ref(null)
+const focusedHostId = ref(null)
+
 const showAddMenu = ref(false)
 const addMenuRef = ref(null)
 const groupModalCurrentName = ref('')
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
 
-const filteredHosts = computed(() => {
-  const q = debouncedQuery.value.trim().toLowerCase()
-  if (!q) return store.hosts
-  return store.hosts.filter(h =>
-    h.name.toLowerCase().includes(q) ||
-    h.host.toLowerCase().includes(q) ||
-    h.username.toLowerCase().includes(q) ||
-    (h.group && h.group.toLowerCase().includes(q))
-  )
-})
+// Now also matches a datastore host by its address: those rows have empty
+// host/username columns, so they used to be findable only by name.
+const filteredHosts = computed(() => filterHosts(store.hosts, debouncedQuery.value))
 
 const nonFavoriteHosts = computed(() => filteredHosts.value.filter(h => !h.favorite))
 
@@ -382,42 +391,12 @@ const favoriteHosts = computed(() => {
   return filteredHosts.value.filter(h => h.favorite)
 })
 
-const allGroupNames = computed(() => {
-  const groups = new Set()
-  for (const h of store.hosts) {
-    groups.add(h.group || '')
-  }
-  for (const g of customGroups.value) {
-    groups.add(g)
-  }
-  return [...groups].sort((a, b) => {
-    if (!a) return 1
-    if (!b) return -1
-    return a.localeCompare(b)
-  })
-})
+const allGroupNames = computed(() => groupNames(store.hosts, customGroups.value))
 
-const groupedHosts = computed(() => {
-  const groups = {}
-  for (const host of nonFavoriteHosts.value) {
-    const g = host.group || ''
-    if (!groups[g]) groups[g] = []
-    groups[g].push(host)
-  }
-  for (const g of customGroups.value) {
-    if (!(g in groups)) groups[g] = []
-  }
-  const sorted = {}
-  const keys = Object.keys(groups).sort((a, b) => {
-    if (!a) return 1
-    if (!b) return -1
-    return a.localeCompare(b)
-  })
-  for (const k of keys) {
-    sorted[k] = groups[k]
-  }
-  return sorted
-})
+// An array, not an object: v-for over an object hoists integer-like keys, so
+// groups named "2" and "10" ignored the comparator and rendered as 2, 10.
+const groupedHosts = computed(() => groupHosts(nonFavoriteHosts.value, customGroups.value))
+
 
 
 function toggleView() {
@@ -435,6 +414,67 @@ function rowState(hostId) {
     { tabs: store.tabs, activeTabId: store.activeTabId, connectingHostId: store.connectingHostId },
     hostId,
   )
+}
+
+/**
+ * Arrow-key navigation of the host list.
+ *
+ * Bound on the container rather than on each row: a row is `draggable`, and a
+ * keydown on a draggable element interacts badly with Space. The logic itself
+ * is in utils/listNav.js so it can be tested without a DOM.
+ */
+function navRows() {
+  return viewMode.value === 'flat'
+    ? displayHosts.value.map(host => ({ kind: 'host', host }))
+    : visibleRows(groupedHosts.value, collapsedGroups.value)
+}
+
+function focusedIndex(rows) {
+  return rows.findIndex(r => r.kind === 'host' && r.host.id === focusedHostId.value)
+}
+
+function onListKey(e) {
+  const rows = navRows()
+  if (rows.length === 0) return
+
+  const i = focusedIndex(rows)
+  const intent = navIntent(e.key)
+  if (!intent) return
+
+  if (intent.type === 'activate') {
+    const row = rows[i]
+    if (row?.kind === 'host') {
+      e.preventDefault()
+      activateHost(row.host)
+    }
+    return
+  }
+  if (intent.type === 'delete') {
+    const row = rows[i]
+    if (row?.kind === 'host') {
+      e.preventDefault()
+      deleteHost(row.host)
+    }
+    return
+  }
+
+  let next = i
+  if (intent.type === 'move') next = nextRow(rows, i, intent.dir)
+  else if (intent.type === 'first') next = firstRow(rows)
+  else if (intent.type === 'last') next = lastRow(rows)
+  else if (intent.type === 'page') next = pageRow(rows, i, intent.dir, 10)
+  else return
+
+  if (next >= 0 && rows[next]?.kind === 'host') {
+    e.preventDefault()
+    focusedHostId.value = rows[next].host.id
+    // The row is not itself focusable, so bring it into view by hand.
+    nextTick(() => {
+      listEl.value
+        ?.querySelector(`[data-host-id="${rows[next].host.id}"]`)
+        ?.scrollIntoView({ block: 'nearest' })
+    })
+  }
 }
 
 function toggleGroup(name) {

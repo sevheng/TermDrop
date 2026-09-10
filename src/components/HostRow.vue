@@ -3,8 +3,14 @@
     class="group relative flex items-center gap-2 h-8 pl-2 pr-1 rounded-sm cursor-pointer"
     :class="[
       state.active ? 'bg-selected' : 'hover:bg-raised',
+      // Keyboard focus is a third state: not selected, but where the arrows
+      // have got to. Without it, arrowing moves nothing you can see.
+      focused && !state.active ? 'ring-1 ring-inset ring-accent' : '',
       state.connecting ? 'opacity-60' : '',
     ]"
+    :data-host-id="host.id"
+    role="option"
+    :aria-selected="state.active"
     draggable="true"
     @dragstart="onDragStart"
     @dragend="$emit('drag-end')"
@@ -90,6 +96,8 @@ const props = defineProps({
     type: Object,
     default: () => ({ connected: false, active: false, connecting: false, tabCount: 0 }),
   },
+  /** Where arrow-key navigation currently is. */
+  focused: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
