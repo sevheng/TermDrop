@@ -1,3 +1,16 @@
+/* Bundled, not fetched: a desktop app must not wait on a font CDN to draw
+   its first frame, and TermDrop is frequently used on machines with no
+   general internet access. Only the weights the UI actually uses, and only
+   the Latin subsets — the Cyrillic, Greek and Vietnamese cuts would ship in
+   the installer whether or not a glyph from them is ever drawn. latin-ext
+   covers accented host and group names. */
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
+@import '@fontsource/ibm-plex-sans/latin-ext-400.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+
 @import '../themes/tokens.css';
 @import '../themes/base.css';
 

@@ -71,4 +71,10 @@
   --td-syn-yellow: 227 192 139;
   --td-syn-teal: 111 211 190;
   --td-syn-purple: 211 162 216;
+
+  /* Type. IBM Plex was drawn for engineering documentation and holds up at
+     the small sizes this UI is mostly made of; JetBrains Mono replaces
+     Menlo/Monaco, which resolve to Courier New anywhere but macOS. */
+  --td-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --td-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }

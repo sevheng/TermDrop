@@ -9,7 +9,11 @@ import { TERMINAL_THEME } from '../themes/index.js'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 
-export const TERMINAL_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace'
+// Menlo and Monaco are macOS-only, so the old stack fell through to Courier
+// New on Linux and Windows — the two platforms most of these sessions run on.
+// JetBrains Mono ships with the app, so this resolves the same everywhere.
+export const TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
 const DEFAULT_FONT_SIZE = 14
 
 /** The saved terminal font size, or the default when unset. */

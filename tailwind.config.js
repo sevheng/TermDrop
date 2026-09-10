@@ -10,6 +10,10 @@ export default {
       // Every colour the UI uses, by role. The values live in
       // src/themes/tokens.css as RGB channels so `<alpha-value>` works and
       // utilities like `bg-surface/50` resolve.
+      fontFamily: {
+        sans: 'var(--td-font-ui)',
+        mono: 'var(--td-font-mono)',
+      },
       colors: {
         'canvas': 'rgb(var(--td-canvas) / <alpha-value>)',
         'surface': 'rgb(var(--td-surface) / <alpha-value>)',

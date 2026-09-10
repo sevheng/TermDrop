@@ -9,6 +9,12 @@
 body {
   background-color: rgb(var(--td-canvas));
   color: rgb(var(--td-ink));
+  font-family: var(--td-font-ui);
+}
+
+/* Tailwind's font-mono utility, and anything that opts in explicitly. */
+code, kbd, samp, pre, .font-mono {
+  font-family: var(--td-font-mono);
 }
 
 ::-webkit-scrollbar {
