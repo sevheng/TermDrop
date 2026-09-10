@@ -53,12 +53,12 @@ pub struct AppState {
     security_report_fetching: FetchLocks,
     forward_manager: port_forward::ForwardManager,
     pub mongo_ops: Arc<Mutex<HashMap<String, MongoOpHandle>>>,
-    /// One driver client per `host_id:side`, so browsing a database does not
-    /// open a fresh connection pool and topology monitor per call.
+    /// One driver client per host, so browsing a database does not open a fresh
+    /// connection pool and topology monitor per call.
     ///
-    /// Keyed by host and side rather than by URI: a URI key would put a
-    /// credential into a long-lived map and into any Debug output.
-    mongo_clients: Arc<tokio::sync::Mutex<HashMap<String, ::mongodb::Client>>>,
+    /// Keyed by host id, never by URI: a URI key would put a credential into a
+    /// long-lived map and into any Debug output.
+    mongo_clients: Arc<tokio::sync::Mutex<HashMap<i64, ::mongodb::Client>>>,
 }
 
 fn db_err(e: r2d2::Error) -> String {
@@ -90,36 +90,18 @@ fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
     mongodb::lock_or_recover(&state.mongo_ops).remove(op_id);
 }
 
-/// The keyring account holding one side's MongoDB password.
+/// The keyring account holding a host's MongoDB password.
 ///
 /// Non-numeric by construction, so it cannot collide with an SSH host password
-/// in the shared fallback file.
-fn mongo_account(host_id: i64, side: MongoSide) -> String {
-    format!("mongo-{}-{}", side.as_str(), host_id)
+/// in the shared fallback file. The `-remote-` segment is historical, from when
+/// a host had two connections: renaming it would mean migrating every stored
+/// secret, and a keyring failure mid-migration would lose passwords for no
+/// user-visible gain.
+fn mongo_account(host_id: i64) -> String {
+    format!("mongo-remote-{}", host_id)
 }
 
-/// Which of a host's two MongoDB connections is meant.
-#[derive(Clone, Copy, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum MongoSide {
-    Remote,
-    Local,
-}
-
-impl MongoSide {
-    fn as_str(self) -> &'static str {
-        match self {
-            MongoSide::Remote => "remote",
-            MongoSide::Local => "local",
-        }
-    }
-
-    fn is_remote(self) -> bool {
-        self == MongoSide::Remote
-    }
-}
-
-/// The full connection URI for one side of a MongoDB host.
+/// The full connection URI for a MongoDB host.
 ///
 /// The stored URI carries no password; the secret is spliced in here so the
 /// credential never crosses the IPC boundary and the frontend never holds it.
@@ -127,81 +109,66 @@ impl MongoSide {
 /// When the URI names a user but no secret is stored, this reports the same
 /// "keyring retrieve failed" wording the SSH path uses, so one frontend
 /// detector can drive the prompt-and-retry for both.
-fn load_mongo_uri(
-    state: &State<'_, AppState>,
-    host_id: i64,
-    side: MongoSide,
-) -> Result<String, String> {
+fn load_mongo_uri(state: &State<'_, AppState>, host_id: i64) -> Result<String, String> {
     let host = with_db(state, |conn| db::get_host_by_id(conn, host_id))?
         .ok_or_else(|| format!("host {} not found", host_id))?;
 
-    let uri = match side {
-        MongoSide::Remote => host.mongo_uri,
-        MongoSide::Local => host.mongo_local_uri,
-    }
-    .filter(|u| !u.trim().is_empty())
-    .ok_or_else(|| format!("no {} MongoDB connection configured", side.as_str()))?;
+    let uri = host
+        .mongo_uri
+        .filter(|u| !u.trim().is_empty())
+        .ok_or_else(|| "no MongoDB connection configured".to_string())?;
 
     // Already carries a password (a row the migration could not rewrite).
     if mongodb::split_mongo_password(&uri).1.is_some() {
         return Ok(uri);
     }
 
-    match crypto::get_secret(&mongo_account(host_id, side)) {
+    match crypto::get_secret(&mongo_account(host_id)) {
         Ok(password) => Ok(mongodb::with_mongo_password(&uri, &password)),
-        Err(e) if mongodb::uri_expects_password(&uri) => Err(format!(
-            "keyring retrieve failed for the {} MongoDB connection: {}",
-            side.as_str(),
-            e
-        )),
+        Err(e) if mongodb::uri_expects_password(&uri) => {
+            Err(format!("keyring retrieve failed for MongoDB: {}", e))
+        }
         // No user in the URI, so no password is expected.
         Err(_) => Ok(uri),
     }
 }
 
-/// A pooled driver client for one side of a host, created on first use.
+/// A pooled driver client for a host, created on first use.
 ///
 /// `Client` is internally reference-counted, so callers get a cheap clone and
 /// the pool outlives any single command.
 async fn mongo_client(
     state: &State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
 ) -> Result<::mongodb::Client, String> {
-    let key = format!("{}:{}", host_id, side.as_str());
-
-    if let Some(client) = state.mongo_clients.lock().await.get(&key) {
+    if let Some(client) = state.mongo_clients.lock().await.get(&host_id) {
         return Ok(client.clone());
     }
 
-    // Resolve and connect outside the lock is tempting, but two tabs opening at
-    // once would then build two clients; holding it keeps exactly one per key.
-    let uri = load_mongo_uri(state, host_id, side)?;
+    // Resolving outside the lock is tempting, but two tabs opening at once
+    // would then build two clients; holding it keeps exactly one per host.
+    let uri = load_mongo_uri(state, host_id)?;
     let mut clients = state.mongo_clients.lock().await;
-    if let Some(client) = clients.get(&key) {
+    if let Some(client) = clients.get(&host_id) {
         return Ok(client.clone());
     }
     let client = mongodb::build_client(&uri).await?;
-    clients.insert(key, client.clone());
+    clients.insert(host_id, client.clone());
     Ok(client)
 }
 
-/// Drop the pooled clients for a host, closing their connection pools.
+/// Drop the pooled client for a host, closing its connection pool.
 ///
 /// Called when the MongoDB tab closes and when the host is edited — without the
 /// latter, a changed URI would stay invisible until the app restarted.
 async fn forget_mongo_clients(state: &State<'_, AppState>, host_id: i64) {
-    let mut clients = state.mongo_clients.lock().await;
-    for side in [MongoSide::Remote, MongoSide::Local] {
-        clients.remove(&format!("{}:{}", host_id, side.as_str()));
-    }
+    state.mongo_clients.lock().await.remove(&host_id);
 }
 
 /// Await a future with a timeout, for the async driver calls that
 /// `with_timeout` (which wraps a blocking closure) cannot cover.
 ///
-/// Deliberately not applied to sync, dump or restore: those legitimately run
-/// for hours.
+/// Deliberately not applied to dump or restore: those legitimately run for hours.
 async fn with_async_timeout<T>(
     fut: impl std::future::Future<Output = Result<T, String>>,
     secs: u64,
@@ -226,6 +193,82 @@ fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
     });
 }
 
+/// Give every second MongoDB connection its own host.
+///
+/// A host used to carry a "remote" and a "local" URI so the two could be synced.
+/// Sync is gone and a connection is now one URI, but a configured local
+/// connection is still a real connection the user set up — so move it to its own
+/// host rather than discarding it.
+///
+/// Runs before the credential migration, so the moved URI is then treated like
+/// any other and has its password lifted out in the same pass. Idempotent: the
+/// old column is cleared once the new host exists.
+fn split_local_mongo_hosts(conn: &rusqlite::Connection) -> usize {
+    let rows = match db::hosts_with_local_mongo_uri(conn) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("could not read hosts to split local MongoDB URIs: {}", e);
+            return 0;
+        }
+    };
+
+    let mut split = 0usize;
+    for (id, name, local_uri) in rows {
+        let new_host = db::NewHost {
+            name: format!("{} (local)", name),
+            host: String::new(),
+            port: 0,
+            username: String::new(),
+            auth_type: "password".to_string(),
+            key_path: None,
+            group: None,
+            favorite: None,
+            mongo_uri: Some(local_uri),
+            mongo_local_uri: None,
+        };
+
+        let new_id = match db::add_host(conn, &new_host) {
+            Ok(new_id) => new_id,
+            Err(e) => {
+                tracing::warn!(host_id = id, "could not split local MongoDB URI: {}", e);
+                continue;
+            }
+        };
+
+        // Carry the stored password across, storing before deleting so a keyring
+        // failure leaves the old entry rather than losing the secret.
+        let old_account = format!("mongo-local-{}", id);
+        if let Ok(secret) = crypto::get_secret(&old_account) {
+            match crypto::store_secret(&mongo_account(new_id), &secret) {
+                Ok(()) => {
+                    let _ = crypto::delete_secret(&old_account);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        host_id = id,
+                        "could not move the local MongoDB password; leaving it in place: {}",
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Err(e) = db::clear_mongo_local_uri(conn, id) {
+            tracing::warn!(host_id = id, "could not clear the local MongoDB URI: {}", e);
+            continue;
+        }
+        split += 1;
+    }
+
+    if split > 0 {
+        tracing::info!(
+            "moved {} local MongoDB connection(s) to their own host",
+            split
+        );
+    }
+    split
+}
+
 /// The migration proper, with secret storage injected so the ordering guarantee
 /// can be tested without touching the real keyring.
 fn migrate_mongo_credentials_with(
@@ -244,31 +287,25 @@ fn migrate_mongo_credentials_with(
     };
 
     let mut migrated = 0usize;
-    for (id, remote_uri, local_uri) in rows {
-        for (side, uri) in [
-            (MongoSide::Remote, remote_uri),
-            (MongoSide::Local, local_uri),
-        ] {
-            let Some(uri) = uri else { continue };
-            let (stripped, Some(password)) = mongodb::split_mongo_password(&uri) else {
-                continue;
-            };
+    for (id, uri) in rows {
+        let Some(uri) = uri else { continue };
+        let (stripped, Some(password)) = mongodb::split_mongo_password(&uri) else {
+            continue;
+        };
 
-            if let Err(e) = store(&mongo_account(id, side), &password) {
-                tracing::warn!(
-                    host_id = id,
-                    side = side.as_str(),
-                    "could not store MongoDB password, leaving it in the database: {}",
-                    e
-                );
-                continue;
-            }
-            if let Err(e) = db::set_mongo_uri(conn, id, side.is_remote(), &stripped) {
-                tracing::warn!(host_id = id, "could not rewrite MongoDB URI: {}", e);
-                continue;
-            }
-            migrated += 1;
+        if let Err(e) = store(&mongo_account(id), &password) {
+            tracing::warn!(
+                host_id = id,
+                "could not store MongoDB password, leaving it in the database: {}",
+                e
+            );
+            continue;
         }
+        if let Err(e) = db::set_mongo_uri(conn, id, &stripped) {
+            tracing::warn!(host_id = id, "could not rewrite MongoDB URI: {}", e);
+            continue;
+        }
+        migrated += 1;
     }
 
     if migrated > 0 {
@@ -517,8 +554,7 @@ async fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> 
     with_db(&state, |conn| db::delete_host(conn, id))?;
     forget_mongo_clients(&state, id).await;
     crypto::delete_password(id).ok();
-    crypto::delete_secret(&mongo_account(id, MongoSide::Remote)).ok();
-    crypto::delete_secret(&mongo_account(id, MongoSide::Local)).ok();
+    crypto::delete_secret(&mongo_account(id)).ok();
     Ok(())
 }
 
@@ -1507,9 +1543,8 @@ fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result
 async fn mongodb_list_databases(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     with_async_timeout(mongodb::list_databases_with(&client), 30).await
 }
 
@@ -1517,45 +1552,10 @@ async fn mongodb_list_databases(
 async fn mongodb_list_collections(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
     db: String,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     with_async_timeout(mongodb::list_collections_with(&client, &db), 30).await
-}
-
-#[tauri::command]
-async fn mongodb_sync(
-    window: Window,
-    state: State<'_, AppState>,
-    op_id: String,
-    host_id: i64,
-    from: MongoSide,
-    to: MongoSide,
-    db: String,
-    collections: Vec<String>,
-    drop_first: bool,
-    allow_driver_fallback: bool,
-) -> Result<(), String> {
-    // Direction is decided here rather than by the caller picking URIs, so the
-    // two sides cannot be mismatched by a call site forgetting to swap them.
-    let source_uri = load_mongo_uri(&state, host_id, from)?;
-    let dest_uri = load_mongo_uri(&state, host_id, to)?;
-    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
-        mongodb::sync_collections(
-            window,
-            cancelled,
-            mongo_ops,
-            op_id.clone(),
-            &source_uri,
-            &dest_uri,
-            &db,
-            collections,
-            drop_first,
-            allow_driver_fallback,
-        )
-    })
-    .await
 }
 
 #[tauri::command]
@@ -1564,13 +1564,12 @@ async fn mongodb_dump(
     state: State<'_, AppState>,
     op_id: String,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collections: Vec<String>,
     output_dir: String,
     is_archive: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id, side)?;
+    let uri = load_mongo_uri(&state, host_id)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::dump_collections(
             window,
@@ -1593,14 +1592,13 @@ async fn mongodb_restore(
     state: State<'_, AppState>,
     op_id: String,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collections: Vec<String>,
     input_dir: String,
     is_archive: bool,
     drop_first: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id, side)?;
+    let uri = load_mongo_uri(&state, host_id)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_collections(
             window,
@@ -1624,12 +1622,11 @@ async fn mongodb_restore_archive(
     state: State<'_, AppState>,
     op_id: String,
     host_id: i64,
-    side: MongoSide,
     includes: Vec<String>,
     input_path: String,
     drop_first: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id, side)?;
+    let uri = load_mongo_uri(&state, host_id)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_archive(
             window,
@@ -1655,7 +1652,6 @@ async fn mongodb_restore_archive(
 async fn mongodb_find(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collection: String,
     filter: Option<String>,
@@ -1664,7 +1660,7 @@ async fn mongodb_find(
     skip: u64,
     limit: i64,
 ) -> Result<mongodb::FindResult, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
     let sort = parse_optional_doc(sort.as_deref(), "sort")?;
     let projection = parse_optional_doc(projection.as_deref(), "projection")?;
@@ -1690,12 +1686,11 @@ async fn mongodb_find(
 async fn mongodb_count(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collection: String,
     filter: Option<String>,
 ) -> Result<mongodb::CountResult, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
     with_async_timeout(
         mongodb::count_documents(&client, &db, &collection, filter),
@@ -1709,11 +1704,10 @@ async fn mongodb_count(
 async fn mongodb_list_indexes(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collection: String,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     with_async_timeout(mongodb::list_indexes(&client, &db, &collection), 30).await
 }
 
@@ -1722,11 +1716,10 @@ async fn mongodb_list_indexes(
 async fn mongodb_collection_stats(
     state: State<'_, AppState>,
     host_id: i64,
-    side: MongoSide,
     db: String,
     collection: String,
 ) -> Result<String, String> {
-    let client = mongo_client(&state, host_id, side).await?;
+    let client = mongo_client(&state, host_id).await?;
     with_async_timeout(mongodb::collection_stats(&client, &db, &collection), 30).await
 }
 
@@ -1755,23 +1748,23 @@ async fn mongodb_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<
 /// Only ever *sets* a secret. Clearing one is `mongodb_clear_secret`, so an
 /// empty password field in the edit dialog can never silently delete it.
 #[tauri::command]
-fn mongodb_store_secret(host_id: i64, side: MongoSide, password: String) -> Result<(), String> {
+fn mongodb_store_secret(host_id: i64, password: String) -> Result<(), String> {
     if password.is_empty() {
         return Err("refusing to store an empty MongoDB password".to_string());
     }
-    crypto::store_secret(&mongo_account(host_id, side), &password)
+    crypto::store_secret(&mongo_account(host_id), &password)
 }
 
 /// Whether a password is stored, so the UI can say so without revealing it.
 #[tauri::command]
-fn mongodb_has_secret(host_id: i64, side: MongoSide) -> bool {
-    crypto::get_secret(&mongo_account(host_id, side)).is_ok()
+fn mongodb_has_secret(host_id: i64) -> bool {
+    crypto::get_secret(&mongo_account(host_id)).is_ok()
 }
 
 /// Forget the stored password for one side.
 #[tauri::command]
-fn mongodb_clear_secret(host_id: i64, side: MongoSide) -> Result<(), String> {
-    crypto::delete_secret(&mongo_account(host_id, side))
+fn mongodb_clear_secret(host_id: i64) -> Result<(), String> {
+    crypto::delete_secret(&mongo_account(host_id))
 }
 
 #[tauri::command]
@@ -1830,6 +1823,7 @@ fn main() {
         db::init_db(&conn).expect("Failed to initialize database");
         db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
         db::init_settings(&conn).expect("Failed to initialize settings");
+        split_local_mongo_hosts(&conn);
         migrate_mongo_credentials(&conn);
     }
 
@@ -1921,7 +1915,6 @@ fn main() {
             get_system_panel,
             mongodb_list_databases,
             mongodb_list_collections,
-            mongodb_sync,
             mongodb_dump,
             mongodb_restore,
             mongodb_restore_archive,
@@ -1965,11 +1958,7 @@ mod tests {
         db::init_db(&conn).unwrap();
         let id = db::add_host(
             &conn,
-            &mongo_host(
-                "m",
-                Some("mongodb://u:hunter2@remote:27017"),
-                Some("mongodb://u:swordfish@local:27017"),
-            ),
+            &mongo_host("m", Some("mongodb://u:hunter2@remote:27017"), None),
         )
         .unwrap();
 
@@ -1979,18 +1968,11 @@ mod tests {
             Ok(())
         });
 
-        assert_eq!(count, 2);
-        assert_eq!(
-            stored,
-            vec![
-                (format!("mongo-remote-{}", id), "hunter2".to_string()),
-                (format!("mongo-local-{}", id), "swordfish".to_string()),
-            ]
-        );
+        assert_eq!(count, 1);
+        assert_eq!(stored, vec![(mongo_account(id), "hunter2".to_string())]);
 
         let host = db::get_host_by_id(&conn, id).unwrap().unwrap();
         assert_eq!(host.mongo_uri.unwrap(), "mongodb://u@remote:27017");
-        assert_eq!(host.mongo_local_uri.unwrap(), "mongodb://u@local:27017");
 
         // Running again finds nothing left to move.
         let second = migrate_mongo_credentials_with(&conn, |_, _| {
@@ -2042,6 +2024,58 @@ mod tests {
         let count =
             migrate_mongo_credentials_with(&conn, |_, _| panic!("there is no password to store"));
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn a_second_connection_becomes_its_own_host() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_db(&conn).unwrap();
+        let id = db::add_host(
+            &conn,
+            &mongo_host(
+                "prod",
+                Some("mongodb://u@remote:27017"),
+                Some("mongodb://u@local:27017"),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(split_local_mongo_hosts(&conn), 1);
+
+        // The configured connection is kept rather than discarded.
+        let hosts = db::get_hosts(&conn).unwrap();
+        let moved = hosts
+            .iter()
+            .find(|h| h.name == "prod (local)")
+            .expect("the local connection should have become its own host");
+        assert_eq!(moved.mongo_uri.as_deref(), Some("mongodb://u@local:27017"));
+        assert!(moved.mongo_local_uri.is_none());
+
+        // The original keeps its own connection and loses the second one.
+        let original = db::get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(
+            original.mongo_uri.as_deref(),
+            Some("mongodb://u@remote:27017")
+        );
+        assert!(original.mongo_local_uri.is_none());
+
+        // Idempotent: a second launch creates nothing further.
+        assert_eq!(split_local_mongo_hosts(&conn), 0);
+        assert_eq!(db::get_hosts(&conn).unwrap().len(), hosts.len());
+    }
+
+    #[test]
+    fn a_host_without_a_second_connection_is_left_alone() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_db(&conn).unwrap();
+        db::add_host(
+            &conn,
+            &mongo_host("solo", Some("mongodb://remote:27017"), None),
+        )
+        .unwrap();
+
+        assert_eq!(split_local_mongo_hosts(&conn), 0);
+        assert_eq!(db::get_hosts(&conn).unwrap().len(), 1);
     }
 
     fn host(auth_type: &str, key_path: Option<&str>) -> db::Host {

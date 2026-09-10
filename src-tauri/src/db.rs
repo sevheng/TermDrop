@@ -389,28 +389,45 @@ pub struct ExportHost {
     pub mongo_local_uri: Option<String>,
 }
 
-/// One host's stored MongoDB URIs: `(id, remote, local)`.
-pub type MongoUriRow = (i64, Option<String>, Option<String>);
+/// One host's stored MongoDB URI: `(id, uri)`.
+pub type MongoUriRow = (i64, Option<String>);
 
-/// Every host's stored MongoDB URIs, for the credential migration.
+/// Every host's stored MongoDB URI, for the credential migration.
 pub fn all_mongo_uris(conn: &Connection) -> SqlResult<Vec<MongoUriRow>> {
+    let mut stmt = conn.prepare("SELECT id, mongo_uri FROM hosts WHERE mongo_uri IS NOT NULL")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Replace one host's stored MongoDB URI.
+pub fn set_mongo_uri(conn: &Connection, id: i64, uri: &str) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET mongo_uri = ?1 WHERE id = ?2",
+        rusqlite::params![uri, id],
+    )?;
+    Ok(())
+}
+
+/// Hosts that still carry a second MongoDB connection: `(id, name, local_uri)`.
+///
+/// A host used to hold a remote and a local URI so the two could be synced.
+/// These rows are moved to their own host on launch; nothing else reads the
+/// column any more.
+pub fn hosts_with_local_mongo_uri(conn: &Connection) -> SqlResult<Vec<(i64, String, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT id, mongo_uri, mongo_local_uri FROM hosts \
-         WHERE mongo_uri IS NOT NULL OR mongo_local_uri IS NOT NULL",
+        "SELECT id, name, mongo_local_uri FROM hosts \
+         WHERE mongo_local_uri IS NOT NULL AND TRIM(mongo_local_uri) != ''",
     )?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.collect()
 }
 
-/// Replace one host's stored MongoDB URI. `column` is chosen by the caller from
-/// a fixed pair, never from user input.
-pub fn set_mongo_uri(conn: &Connection, id: i64, remote: bool, uri: &str) -> SqlResult<()> {
-    let sql = if remote {
-        "UPDATE hosts SET mongo_uri = ?1 WHERE id = ?2"
-    } else {
-        "UPDATE hosts SET mongo_local_uri = ?1 WHERE id = ?2"
-    };
-    conn.execute(sql, rusqlite::params![uri, id])?;
+/// Forget a host's second MongoDB connection once it has its own host row.
+pub fn clear_mongo_local_uri(conn: &Connection, id: i64) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE hosts SET mongo_local_uri = NULL WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
     Ok(())
 }
 
@@ -500,28 +517,47 @@ mod tests {
     }
 
     #[test]
-    fn mongo_uri_migration_queries_read_and_rewrite_the_right_column() {
+    fn mongo_uri_migration_reads_and_rewrites_the_uri() {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
 
         let mut h = sample("mongo");
         h.mongo_uri = Some("mongodb://u:pw@remote:27017".to_string());
-        h.mongo_local_uri = Some("mongodb://u:pw@local:27017".to_string());
         let id = add_host(&conn, &h).unwrap();
 
-        // A host with no MongoDB URIs at all is not offered to the migration.
+        // A host with no MongoDB URI is not offered to the migration.
         add_host(&conn, &sample("ssh-only")).unwrap();
 
         let rows = all_mongo_uris(&conn).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, id);
 
-        set_mongo_uri(&conn, id, true, "mongodb://u@remote:27017").unwrap();
-        set_mongo_uri(&conn, id, false, "mongodb://u@local:27017").unwrap();
-
+        set_mongo_uri(&conn, id, "mongodb://u@remote:27017").unwrap();
         let after = get_host_by_id(&conn, id).unwrap().unwrap();
         assert_eq!(after.mongo_uri.unwrap(), "mongodb://u@remote:27017");
-        assert_eq!(after.mongo_local_uri.unwrap(), "mongodb://u@local:27017");
+    }
+
+    #[test]
+    fn a_second_connection_is_found_once_and_then_cleared() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let mut h = sample("pair");
+        h.mongo_uri = Some("mongodb://u@remote:27017".to_string());
+        h.mongo_local_uri = Some("mongodb://u@local:27017".to_string());
+        let id = add_host(&conn, &h).unwrap();
+
+        let rows = hosts_with_local_mongo_uri(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, id);
+        assert_eq!(rows[0].2, "mongodb://u@local:27017");
+
+        // Clearing it is what stops the split running twice.
+        clear_mongo_local_uri(&conn, id).unwrap();
+        assert!(hosts_with_local_mongo_uri(&conn).unwrap().is_empty());
+        // The host's own connection is untouched.
+        let after = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(after.mongo_uri.unwrap(), "mongodb://u@remote:27017");
     }
 
     #[test]

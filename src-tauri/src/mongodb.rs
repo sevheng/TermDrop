@@ -124,34 +124,6 @@ impl ProgressEmitter<'_> {
         );
     }
 
-    /// Per-collection progress from the driver streaming fallback.
-    fn collection(&self, collection: &str, stage: &str, synced: u64, total: u64) {
-        let _ = self.window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "collection": collection,
-                "stage": stage,
-                "synced": synced,
-                "total": total,
-            }),
-        );
-    }
-
-    /// The CLI fast path failed and the driver fallback is about to run, which
-    /// copies documents only. The user has to be told before it happens.
-    fn degraded(&self, message: &str) {
-        let _ = self.window.emit(
-            "mongodb-sync-warning",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "message": message,
-            }),
-        );
-    }
-
     fn cancelled(&self) {
         let _ = self.window.emit(
             "mongodb-sync-cancelled",
@@ -322,26 +294,6 @@ impl MongoConfigFile {
 }
 
 impl Drop for MongoConfigFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-/// A temp file path removed on drop. Used for the intermediate sync archive,
-/// which previously leaked whenever the task returned early or panicked.
-struct TempPath {
-    path: std::path::PathBuf,
-}
-
-impl TempPath {
-    fn new(file_name: String) -> Self {
-        Self {
-            path: std::env::temp_dir().join(file_name),
-        }
-    }
-}
-
-impl Drop for TempPath {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
@@ -1325,325 +1277,13 @@ pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String
     Ok(collections)
 }
 
-/// Sync collections from remote to local.
-/// Tries mongodump+mongorestore first, falls back to driver streaming.
-pub async fn sync_collections(
-    window: Window,
-    cancelled: Arc<AtomicBool>,
-    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
-    op_id: String,
-    remote_uri: &str,
-    local_uri: &str,
-    db: &str,
-    collections: Vec<String>,
-    drop_first: bool,
-    allow_driver_fallback: bool,
-) -> Result<(), String> {
-    let remote_uri = normalize_mongo_uri(remote_uri);
-    let local_uri = normalize_mongo_uri(local_uri);
-
-    // CLI tools reject a URI whose database path differs from --db, so strip it.
-    let remote_uri_cli = strip_mongo_uri_database(&remote_uri);
-    let local_uri_cli = strip_mongo_uri_database(&local_uri);
-
-    // Try CLI fast path first
-    match try_cli_sync(
-        window.clone(),
-        cancelled.clone(),
-        mongo_ops.clone(),
-        op_id.clone(),
-        &remote_uri_cli,
-        &local_uri_cli,
-        db,
-        &collections,
-        drop_first,
-    )
-    .await
-    {
-        Ok(()) => {
-            return Ok(());
-        }
-        Err(e) => {
-            if e == "cancelled" {
-                // try_cli_sync already emitted mongodb-sync-cancelled
-                return Err(e);
-            }
-            let reason = redact_uris_in_text(&e);
-            tracing::warn!(
-                "CLI sync failed ({}), falling back to a document-only driver copy",
-                reason
-            );
-
-            if !allow_driver_fallback {
-                return Err(format!(
-                    "mongodump/mongorestore failed and the document-only fallback is \
-disabled: {}",
-                    reason
-                ));
-            }
-
-            ProgressEmitter {
-                window: &window,
-                op_id: &op_id,
-                db,
-            }
-            .degraded(&format!(
-                "mongodump/mongorestore could not run ({}). Falling back to a \
-document-only copy: indexes, collection options and validators will not be copied.",
-                reason
-            ));
-        }
-    }
-
-    // Fallback to driver-based streaming
-    driver_sync(
-        window,
-        cancelled,
-        &op_id,
-        &remote_uri,
-        &local_uri,
-        db,
-        collections,
-        drop_first,
-    )
-    .await
-}
-
-async fn try_cli_sync(
-    window: Window,
-    cancelled: Arc<AtomicBool>,
-    mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
-    op_id: String,
-    remote_uri: &str,
-    local_uri: &str,
-    db: &str,
-    collections: &[String],
-    drop_first: bool,
-) -> Result<(), String> {
-    let remote_uri = remote_uri.to_string();
-    let local_uri = local_uri.to_string();
-    let db = db.to_string();
-    let collections = collections.to_vec();
-
-    tokio::task::spawn_blocking(move || {
-        let archive = TempPath::new(format!("termdrop-sync-{}.gz", uuid::Uuid::new_v4()));
-        let archive_path_str = archive.path.to_string_lossy().to_string();
-
-        // One config file per endpoint, both dropped when this task ends.
-        let remote_config = MongoConfigFile::new(&remote_uri)?;
-        let local_config = MongoConfigFile::new(&local_uri)?;
-        let remote_config_arg = remote_config.arg();
-        let local_config_arg = local_config.arg();
-
-        // Step 1: mongodump from remote (dump whole DB; mongorestore will filter collections)
-        let dump_result = run_with_retry(
-            "mongodump",
-            "sync",
-            3,
-            // The dump is unfiltered (mongorestore filters), so the tool walks
-            // the whole database and its collection count is not known here.
-            0,
-            &window,
-            &cancelled,
-            &mongo_ops,
-            &op_id,
-            &db,
-            || {
-                let mut dump_cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
-                dump_cmd
-                    .arg(&remote_config_arg)
-                    .arg(format!("--db={}", db))
-                    .arg("--gzip")
-                    .arg(format!("--archive={}", archive_path_str));
-                Ok(dump_cmd)
-            },
-        );
-
-        dump_result?;
-
-        // Step 2: mongorestore to local
-        let restore_result = run_with_retry(
-            "mongorestore",
-            "sync",
-            3,
-            collections.len() as u64,
-            &window,
-            &cancelled,
-            &mongo_ops,
-            &op_id,
-            &db,
-            || {
-                let mut restore_cmd =
-                    std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-                restore_cmd
-                    .arg(&local_config_arg)
-                    .arg("--gzip")
-                    .arg(format!("--archive={}", archive_path_str));
-
-                if drop_first {
-                    restore_cmd.arg("--drop");
-                }
-
-                // Only restore selected collections
-                push_ns_includes(&mut restore_cmd, &db, &collections);
-
-                Ok(restore_cmd)
-            },
-        );
-
-        restore_result
-    })
-    .await
-    .map_err(|e| format!("sync task panicked: {}", e))?
-}
-
-async fn driver_sync(
-    window: Window,
-    cancelled: Arc<AtomicBool>,
-    op_id: &str,
-    remote_uri: &str,
-    local_uri: &str,
-    db: &str,
-    collections: Vec<String>,
-    drop_first: bool,
-) -> Result<(), String> {
-    let remote_options = ClientOptions::parse(remote_uri)
-        .await
-        .map_err(|e| format!("parse remote uri: {}", e))?;
-    let remote_client =
-        Client::with_options(remote_options).map_err(|e| format!("remote client: {}", e))?;
-
-    let local_options = ClientOptions::parse(local_uri)
-        .await
-        .map_err(|e| format!("parse local uri: {}", e))?;
-    let local_client =
-        Client::with_options(local_options).map_err(|e| format!("local client: {}", e))?;
-
-    let remote_db = remote_client.database(db);
-    let local_db = local_client.database(db);
-    let progress = ProgressEmitter {
-        window: &window,
-        op_id,
-        db,
-    };
-
-    for collection_name in &collections {
-        if cancelled.load(Ordering::Relaxed) {
-            progress.cancelled();
-            return Err("cancelled".into());
-        }
-
-        progress.collection(collection_name, "count", 0, 0);
-
-        let remote_coll = remote_db.collection::<mongodb::bson::Document>(collection_name);
-        let local_coll = local_db.collection::<mongodb::bson::Document>(collection_name);
-
-        // Get total count for progress
-        let total = remote_coll
-            .count_documents(mongodb::bson::doc! {})
-            .await
-            .map_err(|e| format!("count {}: {}", collection_name, e))?;
-
-        if drop_first {
-            let _ = local_coll.drop().await;
-        }
-
-        let mut cursor = remote_coll
-            .find(mongodb::bson::doc! {})
-            .await
-            .map_err(|e| format!("find {}: {}", collection_name, e))?;
-
-        let mut batch: Vec<mongodb::bson::Document> = Vec::new();
-        const BATCH_SIZE: usize = 1000;
-        let mut synced: u64 = 0;
-        let mut last_emit = std::time::Instant::now();
-
-        while let Some(doc) = cursor
-            .try_next()
-            .await
-            .map_err(|e| format!("cursor {}: {}", collection_name, e))?
-        {
-            if cancelled.load(Ordering::Relaxed) {
-                progress.cancelled();
-                return Err("cancelled".into());
-            }
-
-            batch.push(doc);
-            synced += 1;
-
-            if batch.len() >= BATCH_SIZE {
-                local_coll
-                    .insert_many(&batch)
-                    .await
-                    .map_err(|e| format!("insert {}: {}", collection_name, e))?;
-                batch.clear();
-            }
-
-            // Emit progress every 500ms or on batch boundary
-            if last_emit.elapsed() >= Duration::from_millis(500) {
-                progress.collection(collection_name, "copy", synced, total);
-                last_emit = std::time::Instant::now();
-            }
-        }
-
-        if !batch.is_empty() {
-            local_coll
-                .insert_many(&batch)
-                .await
-                .map_err(|e| format!("insert {}: {}", collection_name, e))?;
-        }
-
-        // mongorestore recreates indexes after the documents; do the same so the
-        // fallback is merely slower rather than lossy.
-        progress.collection(collection_name, "indexes", synced, total);
-        copy_indexes(&remote_coll, &local_coll, collection_name).await?;
-
-        progress.collection(collection_name, "done", synced, total);
-    }
-
-    Ok(())
-}
-
-/// Recreate the source collection's indexes on the destination.
-///
-/// The `_id` index always exists on both sides and cannot be created again, so
-/// it is skipped. A failure here is reported: a silently un-indexed collection
-/// is exactly the problem this function exists to fix.
-async fn copy_indexes(
-    remote_coll: &mongodb::Collection<mongodb::bson::Document>,
-    local_coll: &mongodb::Collection<mongodb::bson::Document>,
-    collection_name: &str,
-) -> Result<(), String> {
-    let specs: Vec<_> = remote_coll
-        .list_indexes()
-        .await
-        .map_err(|e| format!("list indexes for {}: {}", collection_name, e))?
-        .try_collect::<Vec<_>>()
-        .await
-        .map_err(|e| format!("read indexes for {}: {}", collection_name, e))?
-        .into_iter()
-        .filter(|ix| ix.keys != mongodb::bson::doc! { "_id": 1 })
-        .collect();
-
-    if specs.is_empty() {
-        return Ok(());
-    }
-
-    local_coll
-        .create_indexes(specs)
-        .await
-        .map_err(|e| format!("create indexes for {}: {}", collection_name, e))?;
-
-    Ok(())
-}
-
 /// Dump selected collections from remote to a local directory or archive using mongodump.
 pub async fn dump_collections(
     window: Window,
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
-    remote_uri: &str,
+    uri: &str,
     db: &str,
     collections: Vec<String>,
     output_dir: &str,
@@ -1652,7 +1292,7 @@ pub async fn dump_collections(
     // Resolve the filter before the URI is stripped for the CLI: list_collections
     // normalizes the URI itself and must not receive the database-less form.
     let filter = if collections.len() > 1 {
-        let all = list_collections(remote_uri, db).await?;
+        let all = list_collections(uri, db).await?;
         dump_filter(&all, &collections)?
     } else {
         dump_filter(&[], &collections)?
@@ -1665,7 +1305,7 @@ pub async fn dump_collections(
         DumpFilter::None => 0,
     };
 
-    let remote_uri = prepare_cli_uri(remote_uri);
+    let uri = prepare_cli_uri(uri);
     let db = db.to_string();
     let output_dir = output_dir.to_string();
     let cmd_db = db.clone();
@@ -1679,7 +1319,7 @@ pub async fn dump_collections(
         mongo_ops,
         op_id,
         db,
-        remote_uri,
+        uri,
         expected_collections,
         move |config_arg| {
             Ok(build_dump_cmd(
@@ -1701,14 +1341,14 @@ pub async fn restore_collections(
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
-    remote_uri: &str,
+    uri: &str,
     db: &str,
     collections: Vec<String>,
     input_dir: &str,
     is_archive: bool,
     drop_first: bool,
 ) -> Result<(), String> {
-    let remote_uri = prepare_cli_uri(remote_uri);
+    let uri = prepare_cli_uri(uri);
     let db = db.to_string();
     let input_dir = input_dir.to_string();
     let has_db = !db.is_empty();
@@ -1760,7 +1400,7 @@ pub async fn restore_collections(
         mongo_ops,
         op_id,
         progress_db,
-        remote_uri,
+        uri,
         collections.len() as u64,
         move |config_arg| {
             let cmd = build_restore_cmd(
@@ -1796,12 +1436,12 @@ pub async fn restore_archive(
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
-    remote_uri: &str,
+    uri: &str,
     includes: Vec<String>,
     input_path: &str,
     drop_first: bool,
 ) -> Result<(), String> {
-    let remote_uri = prepare_cli_uri(remote_uri);
+    let uri = prepare_cli_uri(uri);
     let input_path = input_path.to_string();
 
     run_cli_op(
@@ -1813,7 +1453,7 @@ pub async fn restore_archive(
         mongo_ops,
         op_id,
         "archive".to_string(),
-        remote_uri,
+        uri,
         includes.len() as u64,
         move |config_arg| {
             Ok(build_restore_archive_cmd(
