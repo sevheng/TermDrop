@@ -143,8 +143,19 @@ async function place() {
   if (!list) return
   const real = menuPlacement(rect, list.scrollHeight, window.innerHeight)
   pos.value = { ...pos.value, top: real.top, maxHeight: real.maxHeight }
-  // Bring the highlighted row into view when opening onto a long list.
-  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+}
+
+/**
+ * Reveal the chosen option. Only when opening.
+ *
+ * This used to live at the end of place(), which also runs on every scroll —
+ * so scrolling the list scrolled it straight back to the selection, and the
+ * menu could not be scrolled at all.
+ */
+function revealSelected() {
+  // Optional call: scrollIntoView is absent in some environments, and
+  // failing to reveal a row must never break opening the menu.
+  listEl.value?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' })
 }
 
 async function openMenu() {
@@ -153,6 +164,7 @@ async function openMenu() {
   const current = indexOfValue(props.options, props.modelValue)
   active.value = current >= 0 ? current : firstEnabledIndex(props.options)
   await place()
+  revealSelected()
   listEl.value?.focus()
 }
 
@@ -203,7 +215,7 @@ function onTypeahead(key) {
 function scrollActiveIntoView() {
   nextTick(() => {
     listEl.value?.querySelector(`#${CSS.escape(listId)}-${active.value}`)
-      ?.scrollIntoView({ block: 'nearest' })
+      ?.scrollIntoView?.({ block: 'nearest' })
   })
 }
 
@@ -274,8 +286,12 @@ function onDocPointerDown(e) {
   closeMenu({ refocus: false })
 }
 
-function onReflow() {
-  if (open.value) place()
+function onReflow(e) {
+  if (!open.value) return
+  // The listener is capturing, so it also sees the menu's own scrolling.
+  // Repositioning then would fight the user for control of the list.
+  if (e?.target && listEl.value?.contains(e.target)) return
+  place()
 }
 
 watch(open, isOpen => {
