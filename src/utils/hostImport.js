@@ -3,6 +3,9 @@
  * Kept out of the components so they can be tested; @vue/test-utils is not
  * installed, so component logic is otherwise untestable.
  */
+import { stripMongoPassword } from './mongoUri.js'
+
+export { stripMongoPassword }
 
 /** The only fields the backend accepts. Anything else is dropped. */
 const HOST_FIELDS = [
@@ -60,6 +63,16 @@ export function normalizeImportHost(raw) {
   host.favorite = host.favorite ? 1 : 0
   for (const field of ['key_path', 'group', 'mongo_uri', 'mongo_local_uri']) {
     host[field] = host[field] == null ? null : String(host[field])
+  }
+  // An export written before credentials moved to the keyring still carries
+  // them. Importing it verbatim would write plaintext passwords straight back
+  // into the database and undo the migration.
+  //
+  // `mongo_local_uri` is still accepted so importing an older file is not
+  // silently lossy: a host that had two connections gets its second one moved
+  // to its own host on the next launch.
+  for (const field of ['mongo_uri', 'mongo_local_uri']) {
+    if (host[field]) host[field] = stripMongoPassword(host[field])
   }
   return host
 }

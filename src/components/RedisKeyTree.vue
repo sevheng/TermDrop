@@ -1,0 +1,91 @@
+<template>
+  <div class="flex-1 overflow-y-auto">
+    <div v-if="loading" class="flex items-center justify-center py-8">
+      <Loader2 :size="16" class="animate-spin text-[#858585]" />
+    </div>
+    <div
+      v-else-if="databases.length === 0"
+      class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]"
+    >
+      <Layers :size="20" class="mb-2 opacity-50" />
+      <p class="text-xs">No keys on this server</p>
+    </div>
+    <div v-else class="py-1">
+      <div v-for="dbInfo in databases" :key="dbInfo.index" class="border-b border-[#3c3c3c]/30">
+        <div
+          class="w-full flex items-center gap-1.5 px-2 py-1 text-xs cursor-pointer hover:bg-[#2a2d2e]"
+          :class="dbInfo.index === activeDb ? 'bg-[#37373d] text-[#cccccc]' : 'text-[#cccccc]'"
+          @click="$emit('select-db', dbInfo.index)"
+        >
+          <ChevronRight
+            :size="12"
+            class="transition-transform shrink-0"
+            :class="dbInfo.index === activeDb ? 'rotate-90' : ''"
+          />
+          <Layers :size="12" class="shrink-0 text-[#d82c20]" />
+          <span class="flex-1 truncate">db{{ dbInfo.index }}</span>
+          <span class="text-[10px] text-[#6e6e6e]">{{ dbInfo.keys.toLocaleString() }}</span>
+        </div>
+
+        <div v-if="dbInfo.index === activeDb" class="pb-1">
+          <div v-if="treeLoading" class="flex items-center gap-2 px-6 py-1.5 text-[11px] text-[#858585]">
+            <Loader2 :size="11" class="animate-spin" />
+            Grouping keys…
+          </div>
+          <template v-else>
+            <button
+              v-for="group in groups"
+              :key="group.prefix"
+              class="w-full flex items-center gap-1.5 pl-7 pr-2 py-1 text-[11px] text-left hover:bg-[#2a2d2e]"
+              :class="group.prefix === activeGroup ? 'text-[#cccccc] bg-[#2a2d2e]' : 'text-[#a0a0a0]'"
+              @click="$emit('select-group', group)"
+            >
+              <span class="flex-1 truncate" :title="group.binary ? 'binary prefix' : group.prefix">
+                {{ group.binary ? '⟨binary⟩' : group.prefix }}
+              </span>
+              <span class="text-[10px] text-[#6e6e6e]">{{ group.count.toLocaleString() }}</span>
+            </button>
+
+            <!--
+              The scan is capped, so these groups may describe only part of the
+              keyspace. Saying so is the whole point: a tree that implied it was
+              complete would be quietly wrong on any real server.
+            -->
+            <p v-if="truncated" class="pl-7 pr-2 py-1 text-[10px] text-[#6e6e6e] italic">
+              ⋯ partial: grouped the first {{ scanned.toLocaleString() }} keys
+            </p>
+            <p
+              v-else-if="groups.length === 0"
+              class="pl-7 pr-2 py-1 text-[10px] text-[#6e6e6e] italic"
+            >
+              No keys match
+            </p>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+/**
+ * The keyspace tree: databases, and the prefix groups of the selected one.
+ *
+ * Fully controlled, like `DbTree`. The parent owns the scan and the selection;
+ * this only draws them.
+ */
+import { ChevronRight, Layers, Loader2 } from 'lucide-vue-next'
+
+defineProps({
+  databases: { type: Array, required: true },
+  activeDb: { type: Number, default: null },
+  groups: { type: Array, default: () => [] },
+  activeGroup: { type: String, default: null },
+  scanned: { type: Number, default: 0 },
+  truncated: { type: Boolean, default: false },
+  loading: { type: Boolean, default: false },
+  treeLoading: { type: Boolean, default: false },
+})
+
+defineEmits(['select-db', 'select-group'])
+</script>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseHostsFile, normalizeImportHost, summarizeImport } from '../hostImport.js'
+import { parseHostsFile, normalizeImportHost, summarizeImport, stripMongoPassword } from '../hostImport.js'
 
 describe('parseHostsFile', () => {
   it('accepts a bare array, which is what export writes', () => {
@@ -72,5 +72,44 @@ describe('summarizeImport', () => {
 
   it('says so when nothing happened', () => {
     expect(summarizeImport({})).toEqual({ message: 'Nothing to import', type: 'info' })
+  })
+})
+
+describe('stripMongoPassword', () => {
+  it('removes the password but keeps the username and host', () => {
+    expect(stripMongoPassword('mongodb://user:hunter2@localhost:27017/db')).toBe(
+      'mongodb://user@localhost:27017/db',
+    )
+  })
+
+  it('handles srv, seedlists and IPv6', () => {
+    expect(stripMongoPassword('mongodb+srv://u:p@cluster.example.net/db')).toBe(
+      'mongodb+srv://u@cluster.example.net/db',
+    )
+    expect(stripMongoPassword('mongodb://u:p@h1:27017,h2:27017/db')).toBe(
+      'mongodb://u@h1:27017,h2:27017/db',
+    )
+    expect(stripMongoPassword('mongodb://u:p@[::1]:27017/db')).toBe(
+      'mongodb://u@[::1]:27017/db',
+    )
+  })
+
+  it('leaves URIs without a password alone', () => {
+    for (const uri of [
+      'mongodb://localhost:27017/db',
+      'mongodb://user@localhost:27017/db',
+      'not-a-uri',
+    ]) {
+      expect(stripMongoPassword(uri)).toBe(uri)
+    }
+  })
+
+  it('is applied when importing a host', () => {
+    const host = normalizeImportHost({
+      name: 'db',
+      mongo_uri: 'mongodb://admin:secret@localhost:27017',
+    })
+    expect(host.mongo_uri).not.toContain('secret')
+    expect(host.mongo_uri).toBe('mongodb://admin@localhost:27017')
   })
 })

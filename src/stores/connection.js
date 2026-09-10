@@ -4,23 +4,11 @@ import { invokeWithSlowWarning as invoke } from '../utils/invoke.js'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
+import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
+import { showPromptDialog } from '../composables/usePromptDialog.js'
+import { TAB_KIND } from '../utils/tabKinds.js'
 
 
-/**
- * Show the global PromptDialog and return the user's input.
- */
-function showPromptDialog(title, message, placeholder = '', type = 'text') {
-  return new Promise((resolve) => {
-    const responseHandler = (event) => {
-      window.removeEventListener('prompt-dialog-response', responseHandler)
-      resolve(event.detail)
-    }
-    window.addEventListener('prompt-dialog-response', responseHandler)
-    window.dispatchEvent(new CustomEvent('prompt-dialog-open', {
-      detail: { title, message, placeholder, type },
-    }))
-  })
-}
 
 export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
@@ -214,12 +202,6 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  /** The backend could not find a stored password for a password host. */
-  function isMissingKeyringPassword(err) {
-    const errStr = String(err)
-    return errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')
-  }
-
   /** Open the SFTP side channel for a tab; failure only warns, the tab stays. */
   async function attachSftp(sessionId, hostId, isKeyAuth, providedPassword) {
     try {
@@ -304,19 +286,45 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  function openMongoTab(hostId) {
-    const host = hosts.value.find(h => h.id === hostId)
-    if (!host?.mongo_uri) return
+  /**
+   * What each datastore tab kind needs: which host field must be set for the
+   * tab to be openable, what its ids look like, and what to tell the backend
+   * when the last one closes.
+   */
+  const SERVICE_TABS = {
+    [TAB_KIND.MONGODB]: {
+      uriField: 'mongo_uri',
+      prefix: 'mongo',
+      disconnect: 'mongodb_disconnect',
+    },
+    [TAB_KIND.REDIS]: {
+      uriField: 'redis_uri',
+      prefix: 'redis',
+      disconnect: 'redis_disconnect',
+    },
+  }
 
-    const existing = tabs.value.find(t => t.type === 'mongodb' && t.hostId === hostId)
+  /**
+   * Open a datastore panel tab, or re-activate the one already open.
+   *
+   * Synchronous, unlike `connect`: there is no session to establish here. The
+   * panel owns its own connection and reports the result, so the tab appears
+   * immediately and shows its own spinner or error.
+   */
+  function openServiceTab(hostId, kind) {
+    const spec = SERVICE_TABS[kind]
+    const host = hosts.value.find(h => h.id === hostId)
+    if (!spec || !host?.[spec.uriField]) return
+
+    const existing = tabs.value.find(t => t.type === kind && t.hostId === hostId)
     if (existing) {
       activeTabId.value = existing.id
       return existing.id
     }
 
     const tab = {
-      id: `mongo-${hostId}-${Date.now()}`,
-      type: 'mongodb',
+      id: `${spec.prefix}-${hostId}-${Date.now()}`,
+      type: kind,
       hostId,
       name: host.name,
       connected: true,
@@ -327,12 +335,23 @@ export const useConnectionStore = defineStore('connection', () => {
     return tab.id
   }
 
-  function closeMongoTab(sessionId) {
+  function closeServiceTab(sessionId) {
+    const tab = tabs.value.find(t => t.id === sessionId)
     tabs.value = tabs.value.filter(t => t.id !== sessionId)
+    // Release the backend's pooled connections (and, for Redis, its SSH
+    // tunnel) for this host, mirroring the per-host cleanup SSH tabs do on
+    // disconnect.
+    const spec = SERVICE_TABS[tab?.type]
+    if (spec && !tabs.value.some(t => t.hostId === tab.hostId)) {
+      invoke(spec.disconnect, { hostId: tab.hostId }).catch(() => {})
+    }
     if (activeTabId.value === sessionId) {
       activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
     }
   }
+
+  const openMongoTab = hostId => openServiceTab(hostId, TAB_KIND.MONGODB)
+  const openRedisTab = hostId => openServiceTab(hostId, TAB_KIND.REDIS)
 
   function setActiveTab(sessionId) {
     activeTabId.value = sessionId
@@ -446,7 +465,9 @@ export const useConnectionStore = defineStore('connection', () => {
     connect,
     disconnect,
     openMongoTab,
-    closeMongoTab,
+    openRedisTab,
+    openServiceTab,
+    closeServiceTab,
     setActiveTab,
     sftpList,
     sftpUpload,

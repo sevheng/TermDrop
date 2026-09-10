@@ -66,7 +66,7 @@
         <input
           v-model="password"
           :type="showPassword ? 'text' : 'password'"
-          placeholder="password"
+          :placeholder="hasStoredSecret && !password ? '•••••••• (stored)' : 'password'"
           :class="[inputClass('password'), 'pr-8']"
           @input="$emit('field-input')"
           @keydown.enter="$emit('save')"
@@ -79,6 +79,9 @@
           <component :is="showPassword ? EyeOff : Eye" :size="14" />
         </button>
       </div>
+      <p v-if="hasStoredSecret" class="text-[10px] text-[#858585] mt-1">
+        A password is stored. Leave blank to keep it.
+      </p>
     </div>
   </div>
 
@@ -141,6 +144,10 @@ const props = defineProps({
   isSrv: { type: Boolean, default: false },
   hostPlaceholder: { type: String, default: 'host or IP' },
   optionsPlaceholder: { type: String, default: 'retryWrites=true' },
+  // A password is already in the keyring for this side. It is never sent to the
+  // frontend, so the field stays empty and leaving it empty keeps what is
+  // stored; typing replaces it.
+  hasStoredSecret: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue', 'uri-input', 'field-input', 'validate', 'save'])

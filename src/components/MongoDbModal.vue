@@ -1,7 +1,7 @@
 <template>
   <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl max-h-[90vh] overflow-y-auto">
       <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
-        {{ isEditing ? 'Edit MongoDB' : 'Add MongoDB' }}
+        {{ isEditing ? 'Edit MongoDB connection' : 'Add MongoDB connection' }}
       </h3>
 
       <div class="space-y-4">
@@ -22,79 +22,47 @@
           <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
         </div>
 
-        <!-- Remote Connection -->
+        <!-- Connection -->
         <div class="border border-[#3c3c3c] rounded-lg p-4 space-y-3">
-          <h4 class="text-xs font-semibold text-[#cccccc] uppercase tracking-wider">Remote Connection</h4>
+          <h4 class="text-xs font-semibold text-[#cccccc] uppercase tracking-wider">Connection</h4>
           <MongoConnectionFields
-            v-model="remoteFields"
-            :errors="remoteErrors"
-            :is-srv="isRemoteSrv"
+            v-model="fields"
+            :errors="fieldErrors"
+            :is-srv="isSrv"
+            :has-stored-secret="hasStoredSecret"
             host-placeholder="host or IP"
             options-placeholder="retryWrites=true&replicaSet=rs0"
-            @uri-input="syncFormFromUri('remote')"
-            @field-input="rebuildUri('remote')"
-            @validate="validateField('remote' + capitalize($event))"
+            @uri-input="syncFormFromUri"
+            @field-input="rebuildUri"
+            @validate="validateField($event)"
             @save="onSave"
           />
         </div>
-
-        <!-- Local Connection -->
-        <div class="border border-[#3c3c3c] rounded-lg p-4 space-y-3">
-          <div class="flex items-center justify-between">
-            <h4 class="text-xs font-semibold text-[#cccccc] uppercase tracking-wider">Local Connection</h4>
-            <label class="flex items-center gap-1.5 text-[10px] text-[#858585] cursor-pointer">
-              <input type="checkbox" v-model="form.hasLocal" class="accent-[#007acc]" />
-              Enable local sync
-            </label>
-          </div>
-
-          <template v-if="form.hasLocal">
-            <MongoConnectionFields
-              v-model="localFields"
-              :errors="localErrors"
-              :is-srv="isLocalSrv"
-              host-placeholder="localhost"
-              options-placeholder="retryWrites=true"
-              @uri-input="syncFormFromUri('local')"
-              @field-input="rebuildUri('local')"
-              @validate="validateField('local' + capitalize($event))"
-              @save="onSave"
-            />
-          </template>
-
-          <p v-else class="text-[10px] text-[#6e6e6e]">
-            Leave disabled to use dump/restore to files instead of live sync.
-          </p>
-        </div>
       </div>
 
-      <!-- Actions -->
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="onClose"
-          :disabled="loading"
-          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc] disabled:opacity-50"
+          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
         >
           Cancel
         </button>
         <button
           @click="onSave"
-          :disabled="loading"
-          class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm text-white rounded bg-[#0e639c] hover:bg-[#1177bb] transition-colors"
         >
-          <Loader2 v-if="loading" :size="14" class="animate-spin" />
-          {{ loading ? 'Saving...' : (isEditing ? 'Save' : 'Add') }}
+          {{ isEditing ? 'Save' : 'Add' }}
         </button>
       </div>
   </ModalShell>
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
-import { Loader2 } from 'lucide-vue-next'
-import { parseMongoUri, buildMongoUri, parseUriToForm } from '../composables/useMongoUri.js'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import ModalShell from './ModalShell.vue'
 import MongoConnectionFields from './MongoConnectionFields.vue'
+import { parseMongoUri, buildMongoUri, parseUriToForm } from '../composables/useMongoUri.js'
+import { invoke } from '../utils/invoke.js'
 
 const props = defineProps({
   show: Boolean,
@@ -110,23 +78,14 @@ const loading = ref(false)
 
 const defaultForm = () => ({
   name: '',
-  remoteUri: '',
-  remoteHost: '',
-  remotePort: 27017,
-  remoteUsername: '',
-  remotePassword: '',
-  remoteDatabase: '',
-  remoteAuthSource: 'admin',
-  remoteOptions: '',
-  hasLocal: false,
-  localUri: '',
-  localHost: '',
-  localPort: 27017,
-  localUsername: '',
-  localPassword: '',
-  localDatabase: '',
-  localAuthSource: 'admin',
-  localOptions: '',
+  uri: '',
+  host: '',
+  port: 27017,
+  username: '',
+  password: '',
+  database: '',
+  authSource: 'admin',
+  options: '',
 })
 
 const form = ref(defaultForm())
@@ -134,93 +93,53 @@ const errors = ref({})
 
 /** SRV seedlist or multi-host URIs have no single host/port to require. */
 function isSrvLikeUri(uri) {
-  const trimmed = uri.trim()
+  const trimmed = (uri || '').trim()
   return trimmed.startsWith('mongodb+srv://') || /^mongodb:\/\/[^/]*,/.test(trimmed)
 }
-const isRemoteSrv = computed(() => isSrvLikeUri(form.value.remoteUri))
-const isLocalSrv = computed(() => isSrvLikeUri(form.value.localUri))
+const isSrv = computed(() => isSrvLikeUri(form.value.uri))
 
 const FIELD_KEYS = ['uri', 'host', 'port', 'username', 'password', 'database', 'authSource', 'options']
 
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
+/** The connection fields as one object, for MongoConnectionFields' v-model. */
+const fields = computed({
+  get: () => Object.fromEntries(FIELD_KEYS.map(key => [key, form.value[key]])),
+  set: (value) => {
+    for (const key of FIELD_KEYS) form.value[key] = value[key]
+  },
+})
 
-/** Two-way view of one side's flat form keys (remoteUri, remoteHost, ...) as one object. */
-function sideFields(prefix) {
-  return computed({
-    get: () => Object.fromEntries(FIELD_KEYS.map(key => [key, form.value[prefix + capitalize(key)]])),
-    set: (value) => {
-      for (const key of FIELD_KEYS) {
-        form.value[prefix + capitalize(key)] = value[key]
-      }
-    },
-  })
-}
-
-function sideErrors(prefix) {
-  return computed(() =>
-    Object.fromEntries(FIELD_KEYS.map(key => [key, errors.value[prefix + capitalize(key)]])),
-  )
-}
-
-const remoteFields = sideFields('remote')
-const localFields = sideFields('local')
-const remoteErrors = sideErrors('remote')
-const localErrors = sideErrors('local')
+const fieldErrors = computed(() =>
+  Object.fromEntries(FIELD_KEYS.map(key => [key, errors.value[key]])),
+)
 
 function resetForm() {
   errors.value = {}
 
   if (props.host) {
-    const remote = parseMongoUri(props.host.mongo_uri)
-    const local = parseMongoUri(props.host.mongo_local_uri)
-
-    const remoteUri = remote.mode === 'form'
+    const parsed = parseMongoUri(props.host.mongo_uri)
+    const uri = parsed.mode === 'form'
       ? buildMongoUri({
           scheme: 'mongodb',
-          host: remote.host,
-          port: remote.port,
-          username: remote.username,
-          password: remote.password,
-          database: remote.database,
-          authSource: remote.authSource,
-          options: remote.options,
+          host: parsed.host,
+          port: parsed.port,
+          username: parsed.username,
+          password: parsed.password,
+          database: parsed.database,
+          authSource: parsed.authSource,
+          options: parsed.options,
         })
-      : remote.uri || ''
-
-    const localUri = local.mode === 'form'
-      ? buildMongoUri({
-          scheme: 'mongodb',
-          host: local.host,
-          port: local.port,
-          username: local.username,
-          password: local.password,
-          database: local.database,
-          authSource: local.authSource,
-          options: local.options,
-        })
-      : local.uri || ''
+      : parsed.uri || ''
 
     form.value = {
       name: props.host.name || '',
-      remoteUri,
-      remoteHost: remote.mode === 'form' ? remote.host : '',
-      remotePort: remote.mode === 'form' ? remote.port : 27017,
-      remoteUsername: remote.mode === 'form' ? remote.username : '',
-      remotePassword: remote.mode === 'form' ? remote.password : '',
-      remoteDatabase: remote.mode === 'form' ? remote.database : '',
-      remoteAuthSource: remote.mode === 'form' ? remote.authSource : 'admin',
-      remoteOptions: remote.mode === 'form' ? remote.options : '',
-      hasLocal: !!props.host.mongo_local_uri,
-      localUri,
-      localHost: local.mode === 'form' ? local.host : '',
-      localPort: local.mode === 'form' ? local.port : 27017,
-      localUsername: local.mode === 'form' ? local.username : '',
-      localPassword: local.mode === 'form' ? local.password : '',
-      localDatabase: local.mode === 'form' ? local.database : '',
-      localAuthSource: local.mode === 'form' ? local.authSource : 'admin',
-      localOptions: local.mode === 'form' ? local.options : '',
+      uri,
+      host: parsed.mode === 'form' ? parsed.host : '',
+      port: parsed.mode === 'form' ? parsed.port : 27017,
+      username: parsed.mode === 'form' ? parsed.username : '',
+      password: parsed.mode === 'form' ? parsed.password : '',
+      database: parsed.mode === 'form' ? parsed.database : '',
+      authSource: parsed.mode === 'form' ? parsed.authSource : 'admin',
+      options: parsed.mode === 'form' ? parsed.options : '',
     }
   } else {
     form.value = defaultForm()
@@ -228,10 +147,6 @@ function resetForm() {
 
   nextTick(() => nameInput.value?.focus())
 }
-
-watch(() => props.show, (visible) => {
-  if (visible) resetForm()
-})
 
 function inputClass(field) {
   const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
@@ -247,49 +162,24 @@ function validateField(field) {
     case 'name':
       if (!val || String(val).trim() === '') msg = 'Name is required'
       break
-    case 'remoteUri':
+    case 'uri':
       if (!val || String(val).trim() === '') {
-        msg = 'Remote URI is required'
+        msg = 'Connection string is required'
       } else if (!/^mongodb(\+srv)?:\/\//.test(String(val).trim())) {
         msg = 'URI must start with mongodb:// or mongodb+srv://'
       }
       break
-    case 'remoteHost':
-      if (!isRemoteSrv.value && (!val || String(val).trim() === '')) msg = 'Host is required'
+    case 'host':
+      if (!isSrv.value && (!val || String(val).trim() === '')) msg = 'Host is required'
       break
-    case 'remotePort':
-      if (!isRemoteSrv.value) {
+    case 'port':
+      if (!isSrv.value) {
         if (val === '' || val === null || val === undefined) msg = 'Port is required'
         else if (!Number.isInteger(Number(val))) msg = 'Port must be an integer'
         else if (Number(val) < 1 || Number(val) > 65535) msg = 'Port must be 1–65535'
       }
       break
-    case 'remoteDatabase':
-      // Database is optional; the app can list all databases when no DB is specified.
-      break
-    case 'localUri':
-      if (form.value.hasLocal) {
-        if (!val || String(val).trim() === '') msg = 'Local URI is required'
-        else if (!/^mongodb(\+srv)?:\/\//.test(String(val).trim())) {
-          msg = 'URI must start with mongodb:// or mongodb+srv://'
-        }
-      }
-      break
-    case 'localHost':
-      if (form.value.hasLocal && !isLocalSrv.value && (!val || String(val).trim() === '')) {
-        msg = 'Host is required'
-      }
-      break
-    case 'localPort':
-      if (form.value.hasLocal && !isLocalSrv.value) {
-        if (val === '' || val === null || val === undefined) msg = 'Port is required'
-        else if (!Number.isInteger(Number(val))) msg = 'Port must be an integer'
-        else if (Number(val) < 1 || Number(val) > 65535) msg = 'Port must be 1–65535'
-      }
-      break
-    case 'localDatabase':
-      // Database is optional.
-      break
+    // Database is optional; the app lists every database when none is given.
   }
 
   if (msg) errors.value[field] = msg
@@ -297,47 +187,44 @@ function validateField(field) {
 }
 
 function validateAll() {
-  ;['name', 'remoteUri', 'remoteHost', 'remotePort'].forEach(validateField)
-  if (form.value.hasLocal) {
-    ;['localUri', 'localHost', 'localPort'].forEach(validateField)
-  }
+  ;['name', 'uri', 'host', 'port'].forEach(validateField)
   return Object.keys(errors.value).length === 0
 }
 
-// While a side's fields are being filled from its URI, ignore rebuild requests
-// so the URI the user typed is not rewritten under them.
-const syncingFromUri = { remote: false, local: false }
+// While the fields are being filled from the URI, ignore rebuild requests so
+// the URI the user typed is not rewritten under them.
+let syncingFromUri = false
 
-/** Fill one side's structured fields from its connection string. */
-function syncFormFromUri(prefix) {
-  const parsed = parseUriToForm(form.value[prefix + 'Uri'])
+/** Fill the structured fields from the connection string. */
+function syncFormFromUri() {
+  const parsed = parseUriToForm(form.value.uri)
   if (!parsed) return
 
-  syncingFromUri[prefix] = true
-  form.value[prefix + 'Host'] = parsed.host
-  form.value[prefix + 'Port'] = parsed.port
-  form.value[prefix + 'Username'] = parsed.username
-  form.value[prefix + 'Password'] = parsed.password
-  form.value[prefix + 'Database'] = parsed.database
-  form.value[prefix + 'AuthSource'] = parsed.authSource
-  form.value[prefix + 'Options'] = parsed.options
+  syncingFromUri = true
+  form.value.host = parsed.host
+  form.value.port = parsed.port
+  form.value.username = parsed.username
+  form.value.password = parsed.password
+  form.value.database = parsed.database
+  form.value.authSource = parsed.authSource
+  form.value.options = parsed.options
   nextTick(() => {
-    syncingFromUri[prefix] = false
+    syncingFromUri = false
   })
 }
 
-/** Rebuild one side's connection string from its structured fields. */
-function rebuildUri(prefix) {
-  if (syncingFromUri[prefix]) return
-  form.value[prefix + 'Uri'] = buildMongoUri({
+/** Rebuild the connection string from the structured fields. */
+function rebuildUri() {
+  if (syncingFromUri) return
+  form.value.uri = buildMongoUri({
     scheme: 'mongodb',
-    host: form.value[prefix + 'Host'],
-    port: form.value[prefix + 'Port'],
-    username: form.value[prefix + 'Username'],
-    password: form.value[prefix + 'Password'],
-    database: form.value[prefix + 'Database'],
-    authSource: form.value[prefix + 'AuthSource'],
-    options: form.value[prefix + 'Options'],
+    host: form.value.host,
+    port: form.value.port,
+    username: form.value.username,
+    password: form.value.password,
+    database: form.value.database,
+    authSource: form.value.authSource,
+    options: form.value.options,
   })
 }
 
@@ -349,8 +236,7 @@ async function onSave() {
     emit('save', {
       id: props.host?.id ?? null,
       name: form.value.name.trim(),
-      mongo_uri: form.value.remoteUri.trim(),
-      mongo_local_uri: form.value.hasLocal ? form.value.localUri.trim() || null : null,
+      mongo_uri: form.value.uri.trim(),
     })
   } finally {
     loading.value = false
@@ -368,11 +254,33 @@ function onKeydown(e) {
 
 watch(() => props.show, (visible) => {
   if (visible) {
+    resetForm()
+    loadStoredSecret()
     window.addEventListener('keydown', onKeydown)
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
 })
+
+/**
+ * Whether a password is already in the keyring.
+ *
+ * The password itself is never sent to the frontend, so the field renders empty
+ * on edit; without this the user cannot tell "no password" from "not shown".
+ */
+const hasStoredSecret = ref(false)
+
+async function loadStoredSecret() {
+  hasStoredSecret.value = false
+  const hostId = props.host?.id
+  if (!hostId) return
+  try {
+    hasStoredSecret.value = await invoke('mongodb_has_secret', { hostId })
+  } catch {
+    // Not knowing is not worth blocking the dialog over.
+    hasStoredSecret.value = false
+  }
+}
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)

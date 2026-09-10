@@ -29,7 +29,12 @@
               ? 'bg-[#37373d] text-[#cccccc]'
               : 'text-[#858585] hover:text-[#cccccc]'"
           >
-            <Database v-if="tab.type === 'mongodb'" :size="12" class="shrink-0 text-[#007acc]" />
+            <Database
+              v-if="tabKind(tab) === 'mongodb'"
+              :size="12"
+              class="shrink-0 text-[#007acc]"
+            />
+            <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-[#d82c20]" />
             <span
               v-else
               class="w-2 h-2 rounded-full shrink-0"
@@ -78,6 +83,13 @@
             :hostId="tab.hostId"
             class="w-full h-full absolute top-0 left-0"
           />
+          <RedisPanel
+            v-for="tab in redisTabs"
+            :key="tab.id"
+            v-show="tab.id === store.activeTabId"
+            :hostId="tab.hostId"
+            class="w-full h-full absolute top-0 left-0"
+          />
           <div
             v-if="!store.activeTabId"
             class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 absolute inset-0"
@@ -91,13 +103,13 @@
 
         <!-- SFTP panel resize handle -->
         <div
-          v-if="store.activeTab && store.activeTab.type !== 'mongodb'"
+          v-if="hasRightPanel(store.activeTab)"
           class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
-          v-if="store.activeTab && store.activeTab.type !== 'mongodb'"
+          v-if="hasRightPanel(store.activeTab)"
           class="border-l border-[#3c3c3c] shrink-0 bg-[#1e1e1e] flex flex-col"
           :style="{ width: sftpWidth + 'px' }"
         >
@@ -214,7 +226,22 @@ import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
+import {
+  Terminal as TerminalIcon,
+  Settings,
+  Loader2,
+  Keyboard,
+  X,
+  Database,
+  Layers,
+} from 'lucide-vue-next'
+import {
+  TAB_KIND,
+  tabKind,
+  tabsOfKind,
+  hasRightPanel,
+  closeActionFor,
+} from '../utils/tabKinds.js'
 import { toast } from '../utils/toast.js'
 import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
@@ -229,10 +256,12 @@ const ShortcutsHelp = defineAsyncComponent(() => import('../components/Shortcuts
 const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel.vue'))
 const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityPanel.vue'))
 const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
+const RedisPanel = defineAsyncComponent(() => import('../components/RedisPanel.vue'))
 
 const store = useConnectionStore()
-const sshTabs = computed(() => store.tabs.filter(t => t.type !== 'mongodb'))
-const mongoTabs = computed(() => store.tabs.filter(t => t.type === 'mongodb'))
+const sshTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.SSH))
+const mongoTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.MONGODB))
+const redisTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.REDIS))
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')
@@ -265,11 +294,9 @@ function confirmDisconnect(sessionId, name) {
     message: `Close session "${name}"?`,
     danger: true,
     onConfirm: () => {
-      if (tab?.type === 'mongodb') {
-        store.closeMongoTab(sessionId)
-      } else {
-        store.disconnect(sessionId)
-      }
+      // The kind table decides which store action owns the teardown, so a
+      // new tab kind cannot be missed here.
+      store[closeActionFor(tab)](sessionId)
     },
   })
 }

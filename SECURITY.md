@@ -25,7 +25,7 @@ We aim to respond within 48 hours and will work with you to verify, address, and
 
 - Passwords are stored exclusively in the OS keyring (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux) — never in the local SQLite database or any cloud service.
 - All SSH connections use the `ssh2` crate with standard OpenSSL/libssh2 encryption.
-- MongoDB connection URIs (including credentials) are stored in the local SQLite database. Use connection strings with read-only users where possible.
+- MongoDB passwords are stored in the OS keyring, or in an AES-GCM encrypted file when no keyring is available; the connection string kept in the local SQLite database holds only the username. Passwords are passed to `mongodump`/`mongorestore` through a `--config` file rather than the command line, and are excluded from host exports.
 - No telemetry, analytics, or cloud sync.
 - All data remains local to the user's machine.
 

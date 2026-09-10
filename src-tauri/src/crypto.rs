@@ -8,6 +8,37 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 
 const SERVICE_NAME: &str = "termdrop";
+
+/// Where one secret lives, in both stores.
+///
+/// The keyring account and the fallback-file key are deliberately allowed to
+/// differ: SSH passwords have always used `host-<id>` in the keyring but the
+/// bare `<id>` in the fallback file, and changing either would orphan secrets
+/// already on disk.
+#[derive(Clone, Debug)]
+pub struct Account {
+    keyring: String,
+    fallback: String,
+}
+
+impl Account {
+    /// The SSH password for a host. Preserves the historical key shapes.
+    fn host(host_id: i64) -> Self {
+        Self {
+            keyring: format!("host-{}", host_id),
+            fallback: host_id.to_string(),
+        }
+    }
+
+    /// Any other secret, keyed by an explicit name. Names are non-numeric, so
+    /// they cannot collide with a host id in the shared fallback file.
+    fn named(name: &str) -> Self {
+        Self {
+            keyring: name.to_string(),
+            fallback: name.to_string(),
+        }
+    }
+}
 const FALLBACK_KEY_FILE: &str = ".key";
 const FALLBACK_PW_FILE: &str = ".pw";
 
@@ -18,22 +49,45 @@ const FALLBACK_PW_FILE: &str = ".pw";
 /// across sessions on headless / minimal Linux desktops without a secret service.
 pub fn store_password(host_id: i64, password: &str) -> Result<(), String> {
     let base_dir = data_dir()?;
-    store_password_internal(host_id, password, &base_dir)
+    store_password_internal(&Account::host(host_id), password, &base_dir)
 }
 
-fn store_password_internal(host_id: i64, password: &str, base_dir: &Path) -> Result<(), String> {
-    let keyring_result = Entry::new(SERVICE_NAME, &format!("host-{}", host_id))
-        .and_then(|entry| entry.set_password(password));
+/// Store a secret under an explicit account name, using the same keyring and
+/// encrypted-file fallback as host passwords.
+pub fn store_secret(account: &str, secret: &str) -> Result<(), String> {
+    let base_dir = data_dir()?;
+    store_password_internal(&Account::named(account), secret, &base_dir)
+}
+
+/// Retrieve a secret stored by [`store_secret`].
+pub fn get_secret(account: &str) -> Result<String, String> {
+    let base_dir = data_dir()?;
+    get_password_internal(&Account::named(account), &base_dir)
+}
+
+/// Remove a secret stored by [`store_secret`] from both stores.
+pub fn delete_secret(account: &str) -> Result<(), String> {
+    let base_dir = data_dir()?;
+    delete_password_internal(&Account::named(account), &base_dir)
+}
+
+fn store_password_internal(
+    account: &Account,
+    password: &str,
+    base_dir: &Path,
+) -> Result<(), String> {
+    let keyring_result =
+        Entry::new(SERVICE_NAME, &account.keyring).and_then(|entry| entry.set_password(password));
 
     match keyring_result {
         Ok(()) => {
-            // Keyring worked — clear any stale fallback entry for this host.
-            let _ = fallback_delete_password(host_id, base_dir);
+            // Keyring worked — clear any stale fallback entry for this account.
+            let _ = fallback_delete_password(account, base_dir);
             Ok(())
         }
         Err(keyring_err) => {
             // Fall back to encrypted file storage.
-            fallback_store_password(host_id, password, base_dir).map_err(|fallback_err| {
+            fallback_store_password(account, password, base_dir).map_err(|fallback_err| {
                 format!(
                     "keyring store failed: {}; fallback store failed: {}",
                     keyring_err, fallback_err
@@ -48,16 +102,16 @@ fn store_password_internal(host_id: i64, password: &str, base_dir: &Path) -> Res
 /// First tries the OS keyring, then falls back to the encrypted file store.
 pub fn get_password(host_id: i64) -> Result<String, String> {
     let base_dir = data_dir()?;
-    get_password_internal(host_id, &base_dir)
+    get_password_internal(&Account::host(host_id), &base_dir)
 }
 
-fn get_password_internal(host_id: i64, base_dir: &Path) -> Result<String, String> {
-    let keyring_result = Entry::new(SERVICE_NAME, &format!("host-{}", host_id))
-        .and_then(|entry| entry.get_password());
+fn get_password_internal(account: &Account, base_dir: &Path) -> Result<String, String> {
+    let keyring_result =
+        Entry::new(SERVICE_NAME, &account.keyring).and_then(|entry| entry.get_password());
 
     match keyring_result {
         Ok(password) => Ok(password),
-        Err(keyring_err) => fallback_get_password(host_id, base_dir).map_err(|fallback_err| {
+        Err(keyring_err) => fallback_get_password(account, base_dir).map_err(|fallback_err| {
             format!(
                 "keyring retrieve failed: {}; fallback retrieve failed: {}",
                 keyring_err, fallback_err
@@ -72,14 +126,14 @@ fn get_password_internal(host_id: i64, base_dir: &Path) -> Result<String, String
 /// ignored because the goal is simply to ensure no copy remains.
 pub fn delete_password(host_id: i64) -> Result<(), String> {
     let base_dir = data_dir()?;
-    delete_password_internal(host_id, &base_dir)
+    delete_password_internal(&Account::host(host_id), &base_dir)
 }
 
-fn delete_password_internal(host_id: i64, base_dir: &Path) -> Result<(), String> {
-    if let Ok(entry) = Entry::new(SERVICE_NAME, &format!("host-{}", host_id)) {
+fn delete_password_internal(account: &Account, base_dir: &Path) -> Result<(), String> {
+    if let Ok(entry) = Entry::new(SERVICE_NAME, &account.keyring) {
         let _ = entry.delete_credential();
     }
-    let _ = fallback_delete_password(host_id, base_dir);
+    let _ = fallback_delete_password(account, base_dir);
     Ok(())
 }
 
@@ -126,7 +180,11 @@ fn load_or_create_fallback_key(base_dir: &Path) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-fn fallback_store_password(host_id: i64, password: &str, base_dir: &Path) -> Result<(), String> {
+fn fallback_store_password(
+    account: &Account,
+    password: &str,
+    base_dir: &Path,
+) -> Result<(), String> {
     let key = load_or_create_fallback_key(base_dir)?;
     let ciphertext = encrypt(password, &key)?;
     let path = base_dir.join(FALLBACK_PW_FILE);
@@ -140,7 +198,7 @@ fn fallback_store_password(host_id: i64, password: &str, base_dir: &Path) -> Res
         HashMap::new()
     };
 
-    map.insert(host_id.to_string(), ciphertext);
+    map.insert(account.fallback.clone(), ciphertext);
     let content = serde_json::to_string_pretty(&map)
         .map_err(|e| format!("serialize fallback password file: {}", e))?;
     std::fs::write(&path, content).map_err(|e| format!("write fallback password file: {}", e))?;
@@ -159,7 +217,7 @@ fn fallback_store_password(host_id: i64, password: &str, base_dir: &Path) -> Res
     Ok(())
 }
 
-fn fallback_get_password(host_id: i64, base_dir: &Path) -> Result<String, String> {
+fn fallback_get_password(account: &Account, base_dir: &Path) -> Result<String, String> {
     let key = load_or_create_fallback_key(base_dir)?;
     let path = base_dir.join(FALLBACK_PW_FILE);
     if !path.exists() {
@@ -171,12 +229,12 @@ fn fallback_get_password(host_id: i64, base_dir: &Path) -> Result<String, String
     let map: HashMap<String, String> = serde_json::from_str(&content)
         .map_err(|e| format!("parse fallback password file: {}", e))?;
     let ciphertext = map
-        .get(&host_id.to_string())
+        .get(&account.fallback)
         .ok_or_else(|| "no fallback password for host".to_string())?;
     decrypt(ciphertext, &key)
 }
 
-fn fallback_delete_password(host_id: i64, base_dir: &Path) -> Result<(), String> {
+fn fallback_delete_password(account: &Account, base_dir: &Path) -> Result<(), String> {
     let path = base_dir.join(FALLBACK_PW_FILE);
     if !path.exists() {
         return Ok(());
@@ -186,7 +244,7 @@ fn fallback_delete_password(host_id: i64, base_dir: &Path) -> Result<(), String>
         .map_err(|e| format!("read fallback password file: {}", e))?;
     let mut map: HashMap<String, String> = serde_json::from_str(&content)
         .map_err(|e| format!("parse fallback password file: {}", e))?;
-    map.remove(&host_id.to_string());
+    map.remove(&account.fallback);
 
     let content = serde_json::to_string_pretty(&map)
         .map_err(|e| format!("serialize fallback password file: {}", e))?;
@@ -232,6 +290,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_accounts_keep_their_historical_key_shapes() {
+        // These two strings are on disk in existing installs. The keyring
+        // account and the fallback-file key differ, and changing either would
+        // orphan every SSH password already stored.
+        let a = Account::host(42);
+        assert_eq!(a.keyring, "host-42");
+        assert_eq!(a.fallback, "42");
+    }
+
+    #[test]
+    fn named_accounts_cannot_collide_with_host_ids() {
+        let named = Account::named("mongo-remote-42");
+        assert_eq!(named.fallback, "mongo-remote-42");
+        assert_ne!(named.fallback, Account::host(42).fallback);
+    }
+
+    #[test]
+    fn named_secrets_round_trip_independently_of_host_passwords() {
+        let temp = std::env::temp_dir().join(format!(
+            "termdrop-crypto-named-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let host = Account::host(7);
+        let mongo = Account::named("mongo-remote-7");
+
+        store_password_internal(&host, "ssh-secret", &temp).unwrap();
+        store_password_internal(&mongo, "mongo-secret", &temp).unwrap();
+
+        // Same numeric id, different secrets, neither clobbering the other.
+        assert_eq!(get_password_internal(&host, &temp).unwrap(), "ssh-secret");
+        assert_eq!(
+            get_password_internal(&mongo, &temp).unwrap(),
+            "mongo-secret"
+        );
+
+        // Deleting one leaves the other intact.
+        delete_password_internal(&mongo, &temp).unwrap();
+        assert_eq!(get_password_internal(&host, &temp).unwrap(), "ssh-secret");
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn test_fallback_password_round_trip() {
         let temp = std::env::temp_dir().join(format!(
             "termdrop-crypto-test-{}",
@@ -248,12 +354,13 @@ mod tests {
         // In this environment the OS keyring (D-Bus/Secret Service) is expected
         // to be unavailable, so the internal functions should transparently use
         // the encrypted fallback store.
-        store_password_internal(host_id, password, &temp).expect("store should succeed");
-        let retrieved = get_password_internal(host_id, &temp).expect("retrieve should succeed");
+        let account = Account::host(host_id);
+        store_password_internal(&account, password, &temp).expect("store should succeed");
+        let retrieved = get_password_internal(&account, &temp).expect("retrieve should succeed");
         assert_eq!(retrieved, password);
 
-        delete_password_internal(host_id, &temp).expect("delete should succeed");
-        assert!(get_password_internal(host_id, &temp).is_err());
+        delete_password_internal(&account, &temp).expect("delete should succeed");
+        assert!(get_password_internal(&account, &temp).is_err());
 
         // Clean up.
         let _ = std::fs::remove_dir_all(&temp);

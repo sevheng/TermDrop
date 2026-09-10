@@ -6,7 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **A MongoDB connection is now one connection.** A host used to hold a "remote" and a "local" URI so the two could be synced; it now holds one, and the panel offers **Browse**, **Backup** and **Restore** against it.
+  - **Sync has been removed.** A configured second connection is not discarded: on first launch it becomes its own host, named `"<name> (local)"`, taking its stored password with it
+  - The panel is now **two panes** — databases on the left, documents on the right. Clicking a collection shows its data immediately; ticking it includes it in a backup
+  - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
+
+### Added
+- **Redis connections.** A Redis server is a host row of its own, like a MongoDB connection, and opens its own tab: browse the keyspace, and back it up or restore it.
+  - **Read-only key browser.** Databases and their key counts on the left, with keys grouped by their `:` prefix; a `MATCH` pattern box and a type filter narrow the scan itself, not just the list on screen. Type-aware viewers for strings, hashes, lists, sets, sorted sets and streams, showing TTL, encoding and size. Nothing in the browser can write: there is no command console and no edit path
+  - **Nothing here can stall a server.** Every read is a `SCAN` variant or an explicit range — never `KEYS`, `HGETALL`, `SMEMBERS` or `LRANGE key 0 -1` — so opening a ten-million-element set costs the same as opening an empty one, and a 5 MB string is previewed rather than fetched whole
+  - **Backup and restore** to a `.tdredis` file, per key via `DUMP`/`RESTORE`. This works on managed Redis where `SYNC` and `BGSAVE` are blocked, works through a tunnel, and can back up a single database or a single `MATCH` pattern. TTLs are preserved as remaining time, so a key dumped with an hour left has an hour left when it is restored
+  - A truncated or damaged backup is **refused rather than half-restored** — the file carries a record count and a checksum, both verified before the first key is written — and a restore the target's Redis version cannot read is refused up front, naming both versions, instead of failing partway through
+  - Restoring will not overwrite by default: a key that already exists is counted as skipped, and the summary says how many. Emptying the database first is a separate, opt-in checkbox
+  - **Optional SSH tunnel.** A Redis that only listens on a private network can be reached through an SSH host already in TermDrop. The tunnel is bound to `127.0.0.1` only, opens and closes with the tab, and reports a bad credential or a bastion with forwarding disabled when it opens rather than on the first command
+  - Passwords are kept in the OS keyring and never written to the database or into a backup file, the same as MongoDB's
+  - Keys that are not valid UTF-8 stay addressable: they are carried as their exact bytes and shown as base64, so a binary key can be opened, backed up and restored rather than silently mangled
+  - Backing up a server in **cluster mode is refused**, because `SCAN` only sees the node it is connected to and the result would be a silently partial backup
+
+- **MongoDB document browser** — double-click any collection in the database tree, or use the browse icon on its row, to read its documents. Documents show as a **table** whose columns are the fields found on the page, so several documents can be compared at a glance; a toggle switches to the JSON view, and clicking a row expands the full document either way. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
+  - A 24-character hex `_id` is treated as an ObjectId, so the common shorthand matches instead of silently returning nothing
+  - Values are shown without losing precision — large integers and `Decimal128` keep their exact value rather than being rounded through a floating-point number
+  - An unfiltered count is read from collection metadata rather than scanning, so opening a very large collection stays fast
+  - Query errors appear under the filter box rather than as a toast that disappears while you are still editing
+
+### Changed
+- **MongoDB connections are pooled and time-limited.** Expanding a database no longer opens a fresh connection each time, and an unreachable host now fails in seconds instead of hanging on the driver's 30-second default. Sync, dump and restore remain unbounded.
+
+### Security
+- **MongoDB passwords are no longer stored in the database.** They move to the OS keyring (or the existing encrypted-file fallback) on first launch and the stored URI keeps only the username. Existing rows are migrated automatically; a keyring failure leaves the row untouched and retries next launch rather than losing the password.
+  - Host **exports no longer contain MongoDB passwords**, and importing an older export strips them instead of writing plaintext back
+  - The connection string is no longer written to the log file. `termdrop::mongodb=debug` is no longer on by default, and connection strings in command arguments and tool output are redacted
+  - Credentials are no longer passed on the mongodump/mongorestore command line, where any local user could read them from `ps`. They go in a `--config` file created 0600 and deleted when the operation ends
+  - MongoDB connection strings are no longer rendered into tooltips or list rows; only host and port are shown
+
 ### Fixed
+- **MongoDB dumped the whole database when only some collections were selected.** Only a single-collection selection was filtered, so selecting two of forty collections dumped all forty.
+- **Dumping several databases to an archive kept only the last one**, while reporting success for each. An archive holds one database, and selecting more than one is now refused with a pointer to the folder dump.
+- **MongoDB dump and restore ignored the direction toggle**, always using the remote connection even when the panel was showing local collections. Both now act on the connection whose tree is selectable and name it on the button, and a restore refreshes that tree so the restored databases appear without reopening the tab.
+- **Restoring always dropped the target collections.** `--drop` was hardcoded; it is now a checkbox that defaults to off. **This changes existing behaviour**: a restore now merges and reports duplicate `_id` conflicts unless the box is ticked.
+- **A sync that fell back to the driver silently lost indexes**, collection options and validators, and still reported plain success. The fallback now warns before it runs, says so in the result, recreates indexes, and can be refused.
+- **MongoDB progress was invented from elapsed time.** It now reports the progress mongodump and mongorestore actually print, falling back to an estimate only for the first few seconds, before the tools emit any.
+- **Cancelling a multi-database MongoDB operation could be ignored** between two databases.
+- A panic while holding a MongoDB lock disabled every later MongoDB operation until restart, and a tool process could be orphaned rather than killed.
+
 - **Security audit reported passes it could not verify** — four of the eight checks could return a false pass on a stock RHEL 9 or Ubuntu host, so an insecure server could score 87 "Good". Checks that cannot determine an answer now report `unknown` and are excluded from the score rather than counting as passes, and the panel shows how many checks passed out of how many could be determined.
   - `ufw status` reporting `inactive` matched a `contains("active")` test and was read as active
   - an unset `PasswordAuthentication` or `PermitRootLogin` matched a `contains("no")` test and was read as disabled; absence is now judged against the OpenSSH default

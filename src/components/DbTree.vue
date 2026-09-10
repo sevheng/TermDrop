@@ -34,15 +34,23 @@
           />
           <Database :size="12" class="shrink-0 text-[#007acc]" />
           <span class="flex-1 truncate" @click.self="$emit('toggle-db', db.name)">{{ db.name }}</span>
-          <span class="text-[10px] text-[#6e6e6e]">{{ db.collections.length }} cols</span>
+          <!-- Collections load lazily, so an unexpanded database has no count to
+               report; printing "0 cols" claimed it was empty. -->
+          <span v-if="db.collections.length > 0" class="text-[10px] text-[#6e6e6e]">
+            {{ db.collections.length }} cols
+          </span>
         </div>
 
         <div v-if="expandedDbs.has(db.name)" class="pl-6 pr-2 py-1 space-y-0.5">
           <label
             v-for="coll in db.collections"
             :key="coll"
-            class="flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
-            :class="selectable ? 'cursor-pointer' : ''"
+            class="group flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
+            :class="[
+              selectable || browsable ? 'cursor-pointer' : '',
+              isActive(db.name, coll) ? 'bg-[#094771] hover:bg-[#094771]' : '',
+            ]"
+            :title="browsable ? 'Click to view documents' : undefined"
           >
             <input
               v-if="selectable"
@@ -52,7 +60,13 @@
               class="accent-[#007acc]"
             />
             <Table :size="10" class="shrink-0 text-[#6e6e6e]" />
-            <span class="truncate">{{ coll }}</span>
+            <span
+              class="truncate flex-1"
+              :class="isActive(db.name, coll) ? 'text-white' : ''"
+              @click.stop.prevent="browsable && $emit('open-collection', db.name, coll)"
+            >
+              {{ coll }}
+            </span>
           </label>
           <div v-if="db.collections.length === 0" class="text-[10px] text-[#6e6e6e] px-1">
             No collections
@@ -72,10 +86,15 @@ const props = defineProps({
   expandedDbs: { type: Set, required: true },
   selectedCollections: { type: Map, required: true },
   selectable: { type: Boolean, default: true },
+  /** Clicking a collection name opens it. */
+  browsable: { type: Boolean, default: false },
+  /** The collection currently open, highlighted in the tree. */
+  activeDb: { type: String, default: '' },
+  activeCollection: { type: String, default: '' },
   loading: { type: Boolean, default: false },
 })
 
-defineEmits(['toggle-db', 'toggle-db-selection', 'toggle-collection'])
+defineEmits(['toggle-db', 'toggle-db-selection', 'toggle-collection', 'open-collection'])
 
 function isSelected(db, coll) {
   return isSelectedIn(props.selectedCollections, db, coll)
@@ -83,5 +102,9 @@ function isSelected(db, coll) {
 
 function dbSelectionState(db) {
   return dbSelectionStateIn(props.selectedCollections, db)
+}
+
+function isActive(db, coll) {
+  return props.activeDb === db && props.activeCollection === coll
 }
 </script>

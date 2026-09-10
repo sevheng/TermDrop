@@ -60,6 +60,13 @@
               <Database :size="12" />
               MongoDB
             </button>
+            <button
+              @click="openRedisModal(); showAddMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+            >
+              <Layers :size="12" class="text-[#d82c20]" />
+              Redis
+            </button>
           </div>
         </div>
       </div>
@@ -177,7 +184,7 @@
       <template v-if="contextMenu.type === 'host'">
         <button @click="menuAction(() => activateHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Zap :size="12" class="text-[#007acc]" />
-          {{ isMongoOnlyHost(contextMenu.data) ? 'Open' : 'Connect' }}
+          {{ activateVerb(contextMenu.data) }}
         </button>
         <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
           <Pencil :size="12" class="text-gray-400" />
@@ -252,6 +259,13 @@
       @save="handleMongoSave"
     />
 
+    <RedisModal
+      :show="showRedisModal"
+      :host="editingHost"
+      @close="showRedisModal = false"
+      @save="handleRedisSave"
+    />
+
     <GroupModal
       :show="showGroupModal"
       :mode="groupModalMode"
@@ -281,19 +295,24 @@
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
-  Plus, Server, Database, Search, Upload, Download, FileTerminal,
+  Plus, Server, Database, Layers, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,
   List, LayoutGrid, Star,
   Zap, Pencil, Trash2,
 } from 'lucide-vue-next'
 import HostModal from './HostModal.vue'
 import MongoDbModal from './MongoDbModal.vue'
+import RedisModal from './RedisModal.vue'
 import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
 import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
+import { splitMongoUri } from '../utils/mongoUri.js'
+import { splitRedisUri } from '../utils/redisUri.js'
+import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
+import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 
@@ -301,6 +320,7 @@ const store = useConnectionStore()
 
 const showModal = ref(false)
 const showMongoModal = ref(false)
+const showRedisModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
@@ -574,14 +594,18 @@ function openMongoModal() {
   showMongoModal.value = true
 }
 
+function openRedisModal() {
+  editingHost.value = null
+  showRedisModal.value = true
+}
+
+/** Each kind edits in its own dialog, chosen by what the row actually is. */
 function editHost(host) {
-  if (host.mongo_uri && !host.host) {
-    editingHost.value = host
-    showMongoModal.value = true
-    return
-  }
   editingHost.value = host
-  showModal.value = true
+  const kind = hostKind(host)
+  showMongoModal.value = kind === HOST_KIND.MONGODB
+  showRedisModal.value = kind === HOST_KIND.REDIS
+  showModal.value = kind === HOST_KIND.SSH
 }
 
 /** Store a host password, reporting failure as a toast rather than throwing. */
@@ -609,7 +633,11 @@ async function handleSave({ id, hostData, password }) {
   await store.loadHosts()
 }
 
-async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
+async function handleMongoSave({ id, name, mongo_uri }) {
+  // The password is kept in the keyring, never in the database, so split it out
+  // before the row is written.
+  const { uri, password } = splitMongoUri(mongo_uri)
+
   const hostData = {
     name,
     host: '',
@@ -619,51 +647,91 @@ async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
     key_path: null,
     group: null,
     favorite: null,
-    mongo_uri,
-    mongo_local_uri,
+    mongo_uri: uri,
+    mongo_local_uri: null,
   }
-  if (id) {
-    await store.updateHost(id, hostData)
-  } else {
-    await store.addHost(hostData)
+
+  try {
+    const hostId = id || (await store.addHost(hostData))
+    if (id) await store.updateHost(id, hostData)
+
+    // Only ever store a password that was actually supplied. On edit the field
+    // renders empty because the stored URI has none, and an empty field must
+    // not be read as "delete the stored password".
+    if (password) {
+      await invoke('mongodb_store_secret', { hostId, password })
+    }
+  } catch (err) {
+    toast(`Failed to save MongoDB connection: ${err}`, 'error')
+    return
   }
+
   showMongoModal.value = false
   await store.loadHosts()
 }
 
-function isMongoOnlyHost(host) {
-  return !!(host?.mongo_uri && !host?.host)
-}
+async function handleRedisSave({ id, name, redis_uri, redis_tunnel_host_id }) {
+  // Same rule as MongoDB: the password lives in the keyring, so split it out
+  // before the row is written and never let it reach SQLite.
+  const { uri, password } = splitRedisUri(redis_uri)
 
-async function activateHost(host) {
-  if (isMongoOnlyHost(host)) {
-    store.openMongoTab(host.id)
-  } else {
-    try {
-      await store.connect(host.id)
-    } catch (err) {
-      console.error('Connection failed:', err)
-    }
+  const hostData = {
+    name,
+    host: '',
+    port: 0,
+    username: '',
+    auth_type: 'password',
+    key_path: null,
+    group: null,
+    favorite: null,
+    mongo_uri: null,
+    mongo_local_uri: null,
+    redis_uri: uri,
+    redis_tunnel_host_id: redis_tunnel_host_id ?? null,
   }
+
+  try {
+    const hostId = id || (await store.addHost(hostData))
+    if (id) await store.updateHost(id, hostData)
+
+    // Only ever store a password that was actually supplied: on edit the field
+    // renders empty because the stored URI has none, and an empty field must
+    // not be read as "delete the stored password".
+    if (password) {
+      await invoke('redis_store_secret', { hostId, password })
+    }
+  } catch (err) {
+    toast(`Failed to save Redis connection: ${err}`, 'error')
+    return
+  }
+
+  showRedisModal.value = false
+  await store.loadHosts()
 }
 
-async function connectHost(id) {
-  const host = store.hosts.find(h => h.id === id)
-  if (isMongoOnlyHost(host)) {
-    store.openMongoTab(id)
+/** Open a datastore panel, or connect a shell. */
+async function activateHost(host) {
+  const kind = hostKind(host)
+  if (kind !== HOST_KIND.SSH) {
+    store.openServiceTab(host.id, kind)
     return
   }
   try {
-    await store.connect(id)
+    await store.connect(host.id)
   } catch (err) {
     console.error('Connection failed:', err)
   }
 }
 
+async function connectHost(id) {
+  await activateHost(store.hosts.find(h => h.id === id))
+}
+
 function deleteHost(host) {
   openConfirm({
     title: 'Delete Host',
-    message: `Delete host "${host.name}" (${host.host})? This cannot be undone.`,
+    // A datastore row has no SSH host, and "(  )" reads as a bug.
+    message: `Delete "${host.name}"${host.host ? ` (${host.host})` : ''}? This cannot be undone.`,
     danger: true,
     onConfirm: async () => {
       const openTab = store.tabs.find(t => t.hostId === host.id)
