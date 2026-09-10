@@ -126,6 +126,93 @@ fn push_ns_includes(cmd: &mut std::process::Command, db: &str, collections: &[St
     }
 }
 
+/// Build the `mongodump` command line.
+///
+/// `conn_arg` is the whole connection argument (`--uri=...` or `--config=...`)
+/// so the builder stays unaware of how the credential reaches the tool.
+/// Split out from the spawning closure so the argument vector is testable.
+fn build_dump_cmd(
+    tool: std::path::PathBuf,
+    conn_arg: &str,
+    db: &str,
+    collections: &[String],
+    output: &str,
+    is_archive: bool,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(tool);
+    cmd.arg(conn_arg).arg(format!("--db={}", db));
+
+    if is_archive {
+        push_archive_args(&mut cmd, output);
+    } else {
+        cmd.arg("--gzip").arg(format!("--out={}", output));
+    }
+
+    // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
+    if collections.len() == 1 {
+        cmd.arg("-c").arg(&collections[0]);
+    }
+    // For multiple collections, dump the whole DB (mongorestore will filter)
+
+    cmd
+}
+
+/// Build the `mongorestore` command line for a dump folder or archive.
+#[allow(clippy::too_many_arguments)]
+fn build_restore_cmd(
+    tool: std::path::PathBuf,
+    conn_arg: &str,
+    db: &str,
+    collections: &[String],
+    input: &str,
+    is_archive: bool,
+    is_direct_db: bool,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(tool);
+    cmd.arg(conn_arg).arg("--drop");
+
+    if is_archive {
+        push_archive_args(&mut cmd, input);
+    } else {
+        // Dump folders produced by this app are gzip-compressed.
+        cmd.arg("--gzip").arg(input);
+    }
+
+    if is_direct_db {
+        // Path is a single DB dump; --db tells mongorestore the target DB.
+        cmd.arg(format!("--db={}", db));
+        push_ns_includes(&mut cmd, db, collections);
+    } else if !db.is_empty() {
+        // Path is a dump root; filter with --nsInclude instead of deprecated --db.
+        if !collections.is_empty() {
+            push_ns_includes(&mut cmd, db, collections);
+        } else {
+            cmd.arg(format!("--nsInclude={}.*", db));
+        }
+    }
+
+    cmd
+}
+
+/// Build the `mongorestore` command line for a single archive file restoring
+/// an explicit `db.collection` namespace list.
+fn build_restore_archive_cmd(
+    tool: std::path::PathBuf,
+    conn_arg: &str,
+    includes: &[String],
+    input: &str,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(tool);
+    cmd.arg(conn_arg).arg("--drop");
+    push_archive_args(&mut cmd, input);
+
+    for ns in includes {
+        cmd.arg(format!("--nsInclude={}", ns));
+    }
+
+    cmd
+}
+
 /// Run one CLI tool invocation on the blocking pool with retry, then emit
 /// the terminal "done" event. `panic_label` names the task if it panics.
 #[allow(clippy::too_many_arguments)]
@@ -720,23 +807,14 @@ pub async fn dump_collections(
         op_id,
         db,
         move || {
-            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongodump")?);
-            cmd.arg(format!("--uri={}", &remote_uri))
-                .arg(format!("--db={}", cmd_db));
-
-            if is_archive {
-                push_archive_args(&mut cmd, &output_dir);
-            } else {
-                cmd.arg("--gzip").arg(format!("--out={}", output_dir));
-            }
-
-            // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
-            if collections.len() == 1 {
-                cmd.arg("-c").arg(&collections[0]);
-            }
-            // For multiple collections, dump the whole DB (mongorestore will filter)
-
-            Ok(cmd)
+            Ok(build_dump_cmd(
+                resolve_mongo_tool("mongodump")?,
+                &format!("--uri={}", &remote_uri),
+                &cmd_db,
+                &collections,
+                &output_dir,
+                is_archive,
+            ))
         },
     )
     .await
@@ -807,28 +885,15 @@ pub async fn restore_collections(
         op_id,
         progress_db,
         move || {
-            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-            cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
-
-            if is_archive {
-                push_archive_args(&mut cmd, &input_dir);
-            } else {
-                // Dump folders produced by this app are gzip-compressed.
-                cmd.arg("--gzip").arg(&restore_dir);
-            }
-
-            if is_direct_db {
-                // Path is a single DB dump; --db tells mongorestore the target DB.
-                cmd.arg(format!("--db={}", cmd_db));
-                push_ns_includes(&mut cmd, &cmd_db, &collections);
-            } else if has_db {
-                // Path is a dump root; filter with --nsInclude instead of deprecated --db.
-                if has_collections {
-                    push_ns_includes(&mut cmd, &cmd_db, &collections);
-                } else {
-                    cmd.arg(format!("--nsInclude={}.*", cmd_db));
-                }
-            }
+            let cmd = build_restore_cmd(
+                resolve_mongo_tool("mongorestore")?,
+                &format!("--uri={}", &remote_uri),
+                &cmd_db,
+                &collections,
+                if is_archive { &input_dir } else { &restore_dir },
+                is_archive,
+                is_direct_db,
+            );
 
             tracing::debug!(
                 program = %cmd.get_program().to_string_lossy(),
@@ -866,15 +931,12 @@ pub async fn restore_archive(
         op_id,
         "archive".to_string(),
         move || {
-            let mut cmd = std::process::Command::new(resolve_mongo_tool("mongorestore")?);
-            cmd.arg(format!("--uri={}", &remote_uri)).arg("--drop");
-            push_archive_args(&mut cmd, &input_path);
-
-            for ns in &includes {
-                cmd.arg(format!("--nsInclude={}", ns));
-            }
-
-            Ok(cmd)
+            Ok(build_restore_archive_cmd(
+                resolve_mongo_tool("mongorestore")?,
+                &format!("--uri={}", &remote_uri),
+                &includes,
+                &input_path,
+            ))
         },
     )
     .await
@@ -1021,6 +1083,80 @@ mod tests {
         cmd.get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect()
+    }
+
+    fn dummy() -> std::path::PathBuf {
+        std::path::PathBuf::from("mongodump")
+    }
+
+    #[test]
+    fn dump_cmd_folder_uses_out_and_gzip() {
+        let cmd = build_dump_cmd(dummy(), "--uri=U", "mydb", &[], "/tmp/out", false);
+        assert_eq!(
+            args(&cmd),
+            vec!["--uri=U", "--db=mydb", "--gzip", "--out=/tmp/out"]
+        );
+    }
+
+    #[test]
+    fn dump_cmd_single_collection_uses_dash_c() {
+        let cmd = build_dump_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &["logs".to_string()],
+            "/tmp/out",
+            false,
+        );
+        assert!(args(&cmd).windows(2).any(|w| w == ["-c", "logs"]));
+    }
+
+    #[test]
+    fn dump_cmd_archive_path_gets_archive_args() {
+        let cmd = build_dump_cmd(dummy(), "--uri=U", "mydb", &[], "/tmp/d.gz", true);
+        let a = args(&cmd);
+        assert!(a.contains(&"--archive=/tmp/d.gz".to_string()));
+        assert!(a.contains(&"--gzip".to_string()));
+        assert!(!a.iter().any(|s| s.starts_with("--out=")));
+    }
+
+    #[test]
+    fn restore_cmd_direct_db_folder_sets_db_and_ns_includes() {
+        let cmd = build_restore_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &["a".to_string(), "b".to_string()],
+            "/dump/mydb",
+            false,
+            true,
+        );
+        let a = args(&cmd);
+        assert!(a.contains(&"--db=mydb".to_string()));
+        assert!(a.contains(&"--nsInclude=mydb.a".to_string()));
+        assert!(a.contains(&"--nsInclude=mydb.b".to_string()));
+    }
+
+    #[test]
+    fn restore_cmd_dump_root_without_collections_includes_whole_db() {
+        let cmd = build_restore_cmd(dummy(), "--uri=U", "mydb", &[], "/dump", false, false);
+        let a = args(&cmd);
+        assert!(a.contains(&"--nsInclude=mydb.*".to_string()));
+        assert!(!a.contains(&"--db=mydb".to_string()));
+    }
+
+    #[test]
+    fn restore_archive_cmd_maps_includes_verbatim() {
+        let cmd = build_restore_archive_cmd(
+            dummy(),
+            "--uri=U",
+            &["db1.c1".to_string(), "db2.c2".to_string()],
+            "/tmp/a.gz",
+        );
+        let a = args(&cmd);
+        assert!(a.contains(&"--nsInclude=db1.c1".to_string()));
+        assert!(a.contains(&"--nsInclude=db2.c2".to_string()));
+        assert!(a.contains(&"--archive=/tmp/a.gz".to_string()));
     }
 
     #[test]
