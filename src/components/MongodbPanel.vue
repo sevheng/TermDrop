@@ -136,7 +136,7 @@
         <div v-else class="h-full flex flex-col items-center justify-center text-ink-3">
           <FileSearch :size="22" class="mb-2 opacity-50" />
           <p class="text-xs">Select a collection to view its documents</p>
-          <p class="text-[10px] mt-1 text-input-hover">
+          <p class="text-[10px] mt-1 text-ink-3">
             Tick collections to include them in a backup
           </p>
         </div>

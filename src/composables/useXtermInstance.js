@@ -5,7 +5,7 @@ import { CanvasAddon } from '@xterm/addon-canvas'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Channel } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { TERMINAL_THEME } from '../themes/index.js'
+import { currentTerminalTheme } from './useTheme.js'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 
@@ -38,7 +38,7 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
     cursorBlink: true,
     fontSize,
     fontFamily: TERMINAL_FONT_FAMILY,
-    theme: TERMINAL_THEME,
+    theme: currentTerminalTheme(),
   })
 
   const fitAddon = new FitAddon()

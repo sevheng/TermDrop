@@ -9,7 +9,7 @@
       <button
         @click="runAudit(true)"
         :disabled="loading"
-        class="text-xs text-ink-2 hover:text-ink disabled:text-line flex items-center gap-1"
+        class="text-xs text-ink-2 hover:text-ink disabled:text-ink-3 disabled:opacity-60 flex items-center gap-1"
       >
         <RefreshCw :size="12" :class="loading && 'animate-spin'" />
         Re-run

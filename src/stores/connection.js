@@ -7,6 +7,7 @@ import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
+import { applyTheme, storedTheme } from '../composables/useTheme.js'
 
 
 
@@ -66,6 +67,7 @@ export const useConnectionStore = defineStore('connection', () => {
   const settings = ref({
     font_size: '14',
     download_path: '',
+    theme: 'dark',
   })
 
   const systemStatus = ref(new Map())
@@ -425,14 +427,19 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function loadSettings() {
-    const [font_size, download_path] = await Promise.all([
+    const [font_size, download_path, theme] = await Promise.all([
       invoke('get_setting', { key: 'font_size' }),
       invoke('get_setting', { key: 'download_path' }),
+      invoke('get_setting', { key: 'theme' }),
     ])
     settings.value = {
       font_size: font_size || '14',
       download_path: download_path || '',
+      theme: theme || storedTheme(),
     }
+    // SQLite is the record; localStorage only avoids a flash of the wrong
+    // theme on the next start, so reconcile them here.
+    applyTheme(settings.value.theme)
     return settings.value
   }
 
@@ -440,8 +447,10 @@ export const useConnectionStore = defineStore('connection', () => {
     await Promise.all([
       invoke('set_setting', { key: 'font_size', value: String(newSettings.font_size || 14) }),
       invoke('set_setting', { key: 'download_path', value: newSettings.download_path || '' }),
+      invoke('set_setting', { key: 'theme', value: newSettings.theme || 'dark' }),
     ])
     settings.value = { ...settings.value, ...newSettings }
+    applyTheme(settings.value.theme)
   }
 
   return {

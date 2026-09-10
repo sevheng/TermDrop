@@ -15,6 +15,25 @@
         </div>
 
         <div>
+          <label class="block text-xs text-ink-2 mb-2">Appearance</label>
+          <div class="flex gap-2">
+            <button
+              v-for="opt in THEMES"
+              :key="opt"
+              type="button"
+              @click="selectedTheme = opt"
+              class="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs rounded border capitalize transition-colors"
+              :class="selectedTheme === opt
+                ? 'border-accent bg-accent/10 text-ink'
+                : 'border-line bg-input text-ink-2 hover:text-ink'"
+            >
+              <component :is="opt === 'dark' ? Moon : Sun" :size="13" />
+              {{ opt }}
+            </button>
+          </div>
+        </div>
+
+        <div>
           <label class="block text-xs text-ink-2 mb-1">Download Path (leave empty for default)</label>
           <input
             v-model="downloadPath"
@@ -54,7 +73,9 @@ import { getVersion } from '@tauri-apps/api/app'
 import { useConnectionStore } from '../stores/connection.js'
 import { checkForUpdates } from '../composables/useUpdater.js'
 import { toast } from '../utils/toast.js'
+import { Moon, Sun } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
+import { THEMES, applyTheme, theme } from '../composables/useTheme.js'
 
 const props = defineProps({
   show: Boolean,
@@ -65,15 +86,25 @@ const store = useConnectionStore()
 
 const fontSize = ref(14)
 const downloadPath = ref('')
+const selectedTheme = ref('dark')
 const appVersion = ref('0.2.3')
 const checking = ref(false)
 const lastChecked = ref('')
 
+watch(selectedTheme, (next) => applyTheme(next))
+
 watch(() => props.show, async (isOpen) => {
+  if (!isOpen) {
+    // Cancelled, or closed after saving: saveSettings has already written the
+    // chosen theme, so this only rolls back an unsaved preview.
+    applyTheme(store.settings.theme || 'dark')
+    return
+  }
   if (isOpen) {
     await store.loadSettings()
     fontSize.value = parseInt(store.settings.font_size || '14')
     downloadPath.value = store.settings.download_path || ''
+    selectedTheme.value = store.settings.theme || theme.value
     try {
       appVersion.value = await getVersion()
     } catch {
@@ -86,6 +117,7 @@ async function save() {
   await store.saveSettings({
     font_size: String(fontSize.value),
     download_path: downloadPath.value,
+    theme: selectedTheme.value,
   })
   window.dispatchEvent(new CustomEvent('terminal-settings-changed', {
     detail: { fontSize: fontSize.value }

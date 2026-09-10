@@ -315,7 +315,7 @@ import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { isInsertableCommand, stripSubmit } from '../utils/terminalInsert.js'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
-import { TERMINAL_THEME } from '../themes/index.js'
+import { currentTerminalTheme } from '../composables/useTheme.js'
 import { formatBytes } from '../utils/format.js'
 import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -403,7 +403,9 @@ function applySettings(settings) {
   if (settings.fontSize !== undefined) {
     term.options.fontSize = settings.fontSize
   }
-  term.options.theme = TERMINAL_THEME
+  // Re-read rather than cache: this runs on every settings change,
+  // which is exactly when the theme may have flipped.
+  term.options.theme = currentTerminalTheme()
   terminalBgClass.value = 'bg-canvas'
   if (fitAddon) {
     setTimeout(() => fitAddon.fit(), 50)

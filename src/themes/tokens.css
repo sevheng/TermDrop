@@ -3,66 +3,128 @@
  *
  * Channels rather than hex, so Tailwind's `<alpha-value>` works and
  * `bg-surface/50` resolves. Components must never name a colour directly —
- * every one of them comes from here, which is what makes a palette change a
- * one-file edit instead of a thousand-site one.
+ * every one comes from here, which is what makes a palette change a one-file
+ * edit instead of a thousand-site one.
  *
- * The neutrals carry a slight blue bias toward the accent rather than sitting
- * at pure grey, and the floor is deep enough to give four distinct elevation
- * levels instead of three.
+ * Light is the bare :root so the app renders correctly before any class is
+ * applied; `html.dark` swaps the values. Because both themes answer to the
+ * same token names, components carry no `dark:` variants at all.
  *
- * Two accent roles, not one: a blue bright enough to read as text (--td-accent,
- * 6.3:1 on surface) is too bright to carry a white label, so button fills use
- * the darker --td-accent-solid, which keeps white at 5.9:1.
+ * Every text tone clears WCAG AA (4.5:1) on every surface in both themes.
+ * Two roles per accent: a tone bright (or dark) enough to read as text cannot
+ * also carry a white button label, so `-solid` variants exist for fills.
  */
 :root {
 
   /* surfaces */
-  --td-canvas: 15 17 22;  /* terminal and main work area */
-  --td-surface: 22 25 32;  /* sidebar, panel chrome */
-  --td-overlay: 37 42 52;  /* modals and popovers */
-  --td-raised: 30 34 43;  /* hover state on rows */
-  --td-active: 37 42 52;  /* the active tab or row */
-  --td-selected: 27 58 92;  /* multi-select highlight */
+  --td-canvas: 250 251 253;
+  --td-surface: 235 239 245;
+  --td-overlay: 255 255 255;
+  --td-raised: 223 229 238;
+  --td-active: 225 231 240;
+  --td-selected: 217 231 248;
 
   /* inputs and edges */
-  --td-input: 30 34 43;  /* input and neutral button fill */
-  --td-input-hover: 42 48 59;  /* hover on those */
-  --td-line: 42 48 59;  /* dividers and borders */
+  --td-input: 255 255 255;
+  --td-input-hover: 225 231 240;
+  --td-line: 210 218 228;
 
   /* text */
-  --td-ink: 231 234 240;  /* primary */
-  --td-ink-2: 154 164 178;  /* secondary */
-  --td-ink-3: 135 145 160;  /* tertiary and placeholders */
+  --td-ink: 20 26 34;
+  --td-ink-2: 85 96 112;
+  --td-ink-3: 92 102 117;
 
   /* accent */
-  --td-accent: 59 158 255;  /* accent text, icons, focus rings */
-  --td-accent-hover: 92 175 255;  /* hover on an accent fill */
-  --td-accent-solid: 27 98 189;  /* primary button fill */
-  --td-accent-solid-hover: 42 120 216;  /* hover on that */
-  --td-accent-soft: 140 198 255;  /* links on dark */
-  --td-accent-soft-hover: 175 217 255;  /* hover on those */
+  --td-accent: 20 97 196;
+  --td-accent-hover: 15 78 158;
+  --td-accent-solid: 20 97 196;
+  --td-accent-solid-hover: 15 78 158;
+  --td-accent-soft: 15 78 158;
+  --td-accent-soft-hover: 11 62 128;
 
   /* semantic */
-  --td-good: 74 222 128;  /* connected, succeeded */
-  --td-warn: 251 191 36;  /* needs attention */
-  --td-warn-soft: 240 179 87;  /* advisory text */
-  --td-bad: 248 113 113;  /* failed, destructive */
-  --td-bad-hover: 255 138 138;  /* hover on destructive *text* */
-  --td-bad-solid: 180 35 31;  /* destructive button fill, white at 6.6:1 */
-  --td-bad-solid-hover: 201 48 40;  /* hover on a destructive fill */
-  --td-good-hover: 110 231 155;  /* hover on a confirming fill */
+  --td-good: 15 95 51;
+  --td-good-hover: 11 77 41;
+  --td-warn: 122 79 0;
+  --td-warn-soft: 122 79 0;
+  --td-bad: 179 32 23;
+  --td-bad-hover: 143 25 18;
+  --td-bad-solid: 179 32 23;
+  --td-bad-solid-hover: 143 25 18;
 
-  /* Tinted surfaces for inline banners. Dark enough to sit in the page,
-     saturated enough to read as a state rather than another panel. */
+  /* banner tints */
+  --td-warn-bg: 253 244 224;
+  --td-warn-line: 232 209 154;
+  --td-bad-bg: 252 234 232;
+  --td-bad-line: 240 188 182;
+
+  /* brand */
+  --td-redis: 179 32 23;
+  --td-mongo: 21 99 58;
+  --td-mongo-solid: 21 99 58;
+  --td-mongo-solid-hover: 15 78 45;
+
+  /* data syntax */
+  --td-syn-blue: 26 95 168;
+  --td-syn-cyan: 24 108 134;
+  --td-syn-yellow: 122 84 16;
+  --td-syn-teal: 19 107 92;
+  --td-syn-purple: 122 62 130;
+
+  /* type — IBM Plex was drawn for engineering documentation; JetBrains Mono
+     replaces Menlo/Monaco, which resolve to Courier New anywhere but macOS */
+  --td-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --td-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html.dark {
+
+  /* surfaces */
+  --td-canvas: 15 17 22;
+  --td-surface: 22 25 32;
+  --td-overlay: 37 42 52;
+  --td-raised: 30 34 43;
+  --td-active: 37 42 52;
+  --td-selected: 27 58 92;
+
+  /* inputs and edges */
+  --td-input: 30 34 43;
+  --td-input-hover: 42 48 59;
+  --td-line: 42 48 59;
+
+  /* text */
+  --td-ink: 231 234 240;
+  --td-ink-2: 154 164 178;
+  --td-ink-3: 135 145 160;
+
+  /* accent */
+  --td-accent: 59 158 255;
+  --td-accent-hover: 92 175 255;
+  --td-accent-solid: 27 98 189;
+  --td-accent-solid-hover: 42 120 216;
+  --td-accent-soft: 140 198 255;
+  --td-accent-soft-hover: 175 217 255;
+
+  /* semantic */
+  --td-good: 74 222 128;
+  --td-good-hover: 110 231 155;
+  --td-warn: 251 191 36;
+  --td-warn-soft: 240 179 87;
+  --td-bad: 248 113 113;
+  --td-bad-hover: 255 138 138;
+  --td-bad-solid: 180 35 31;
+  --td-bad-solid-hover: 201 48 40;
+
+  /* banner tints */
   --td-warn-bg: 46 38 23;
   --td-warn-line: 77 64 35;
   --td-bad-bg: 46 26 28;
   --td-bad-line: 95 42 45;
 
   /* brand */
-  --td-redis: 240 83 63;  /* Redis brand red */
-  --td-mongo: 77 208 122;  /* MongoDB brand green */
-  --td-mongo-solid: 36 112 74;  /* MongoDB button fill */
+  --td-redis: 240 83 63;
+  --td-mongo: 77 208 122;
+  --td-mongo-solid: 36 112 74;
   --td-mongo-solid-hover: 45 135 89;
 
   /* data syntax */
@@ -71,10 +133,4 @@
   --td-syn-yellow: 227 192 139;
   --td-syn-teal: 111 211 190;
   --td-syn-purple: 211 162 216;
-
-  /* Type. IBM Plex was drawn for engineering documentation and holds up at
-     the small sizes this UI is mostly made of; JetBrains Mono replaces
-     Menlo/Monaco, which resolve to Courier New anywhere but macOS. */
-  --td-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --td-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
