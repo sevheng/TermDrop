@@ -6,22 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-- **The interface has been repainted.** Cooler, deeper neutrals with more separation between panels, and a brighter accent that works as text rather than only as a button. Every piece of text in the app now meets the WCAG AA contrast standard on every background, in both themes — secondary text used to fall below it, and it was the second most-used colour in the app.
-  - **The app has a typeface.** Nothing set one before, so the interface rendered in whatever each OS happened to supply. It is now IBM Plex Sans, bundled with the app rather than fetched
-  - **Terminals are readable everywhere.** The terminal asked for Menlo or Monaco, which exist only on macOS, so Linux and Windows fell through to Courier New. It is now JetBrains Mono, which ships with the app
-  - Modals sit visibly above the panel they cover instead of at the same level, and destructive buttons use a red dark enough for their white label to be legible
-
-- **A MongoDB connection is now one connection.** A host used to hold a "remote" and a "local" URI so the two could be synced; it now holds one, and the panel offers **Browse**, **Backup** and **Restore** against it.
-  - **Sync has been removed.** A configured second connection is not discarded: on first launch it becomes its own host, named `"<name> (local)"`, taking its stored password with it
-  - The panel is now **two panes** — databases on the left, documents on the right. Clicking a collection shows its data immediately; ticking it includes it in a backup
-  - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
-
 ### Added
 - **The interface has been tidied throughout.** Every list, table and empty state now shares one treatment instead of fifteen, numbers line up in columns, and the host list fits more on screen without dropping anything.
   - **Empty states tell you what to do.** They now distinguish "nothing here yet" from "nothing matched your filter" from "still loading" — and offer the button that fixes it. The opening screen offers to add your first host instead of only telling you to pick one
   - **The host list shows more.** Favourited hosts show their star without hovering, the host whose tab is open is marked, Redis and MongoDB hosts are colour-coded, and hosts you have connected to before show when you last did
   - **The keyboard works.** Focus is visible everywhere it lands, and dialogs keep Tab inside them and close on Escape
+
+- **The shortcuts overlay lists the host-list keys.** Arrow-key navigation of the host list shipped with the interface pass but nothing announced it, so `Ctrl + Shift + ?` now shows it alongside the terminal, tab and SFTP shortcuts.
 
 - **Dropdowns are drawn by the app now.** The native control could not be themed — its list was a separate platform surface that ignored the app's colours entirely, and on Linux its text was close to unreadable. The replacement matches the rest of the interface in both themes and keeps the keyboard behaviour: arrows and Home/End to move, Enter to choose, Escape to dismiss, and type a few letters to jump.
 
@@ -45,14 +36,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Query errors appear under the filter box rather than as a toast that disappears while you are still editing
 
 ### Changed
-- **MongoDB connections are pooled and time-limited.** Expanding a database no longer opens a fresh connection each time, and an unreachable host now fails in seconds instead of hanging on the driver's 30-second default. Sync, dump and restore remain unbounded.
+- **The interface has been repainted.** Cooler, deeper neutrals with more separation between panels, and a brighter accent that works as text rather than only as a button. Every piece of text in the app now meets the WCAG AA contrast standard on every background, in both themes — secondary text used to fall below it, and it was the second most-used colour in the app.
+  - **The app has a typeface.** Nothing set one before, so the interface rendered in whatever each OS happened to supply. It is now IBM Plex Sans, bundled with the app rather than fetched
+  - **Terminals are readable everywhere.** The terminal asked for Menlo or Monaco, which exist only on macOS, so Linux and Windows fell through to Courier New. It is now JetBrains Mono, which ships with the app
+  - Modals sit visibly above the panel they cover instead of at the same level, and destructive buttons use a red dark enough for their white label to be legible
 
-### Security
-- **MongoDB passwords are no longer stored in the database.** They move to the OS keyring (or the existing encrypted-file fallback) on first launch and the stored URI keeps only the username. Existing rows are migrated automatically; a keyring failure leaves the row untouched and retries next launch rather than losing the password.
-  - Host **exports no longer contain MongoDB passwords**, and importing an older export strips them instead of writing plaintext back
-  - The connection string is no longer written to the log file. `termdrop::mongodb=debug` is no longer on by default, and connection strings in command arguments and tool output are redacted
-  - Credentials are no longer passed on the mongodump/mongorestore command line, where any local user could read them from `ps`. They go in a `--config` file created 0600 and deleted when the operation ends
-  - MongoDB connection strings are no longer rendered into tooltips or list rows; only host and port are shown
+- **A MongoDB connection is now one connection.** A host used to hold a "remote" and a "local" URI so the two could be synced; it now holds one, and the panel offers **Browse**, **Backup** and **Restore** against it.
+  - **Sync has been removed.** A configured second connection is not discarded: on first launch it becomes its own host, named `"<name> (local)"`, taking its stored password with it
+  - The panel is now **two panes** — databases on the left, documents on the right. Clicking a collection shows its data immediately; ticking it includes it in a backup
+  - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
+
+- **MongoDB connections are pooled and time-limited.** Expanding a database no longer opens a fresh connection each time, and an unreachable host now fails in seconds instead of hanging on the driver's 30-second default. Sync, dump and restore remain unbounded.
 
 ### Fixed
 - **MongoDB dumped the whole database when only some collections were selected.** Only a single-collection selection was filtered, so selecting two of forty collections dumped all forty.
@@ -80,6 +74,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Docker panel kept polling while hidden**, reported a stopped daemon as a permissions problem, and installed Docker without asking.
 - **Host import misreported its results** — a failed row was reported as a total failure even though earlier rows had been saved, and those rows did not appear until the list was reloaded.
 
+### Security
+- **MongoDB passwords are no longer stored in the database.** They move to the OS keyring (or the existing encrypted-file fallback) on first launch and the stored URI keeps only the username. Existing rows are migrated automatically; a keyring failure leaves the row untouched and retries next launch rather than losing the password.
+  - Host **exports no longer contain MongoDB passwords**, and importing an older export strips them instead of writing plaintext back
+  - The connection string is no longer written to the log file. `termdrop::mongodb=debug` is no longer on by default, and connection strings in command arguments and tool output are redacted
+  - Credentials are no longer passed on the mongodump/mongorestore command line, where any local user could read them from `ps`. They go in a `--config` file created 0600 and deleted when the operation ends
+  - MongoDB connection strings are no longer rendered into tooltips or list rows; only host and port are shown
 
 ## [0.2.6] — 2026-06-15
 
