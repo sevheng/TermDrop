@@ -21,11 +21,14 @@ mod db;
 mod docker;
 mod mongodb;
 mod port_forward;
+mod redis;
+mod redis_backup;
 mod security;
 mod sftp;
 mod ssh;
 mod ssh_config_parser;
 mod system;
+mod uri;
 
 /// Per-host coalescing locks so concurrent requests share one fetch.
 type FetchLocks = Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>;
@@ -59,6 +62,23 @@ pub struct AppState {
     /// Keyed by host id, never by URI: a URI key would put a credential into a
     /// long-lived map and into any Debug output.
     mongo_clients: Arc<tokio::sync::Mutex<HashMap<i64, ::mongodb::Client>>>,
+    /// One pooled connection per `(host_id, database)`.
+    ///
+    /// Keyed by database as well as host because `SELECT` is *connection*
+    /// state and `MultiplexedConnection` pipelines commands from every task
+    /// over one socket: a single per-host connection would let the key list's
+    /// `SELECT 1` land between another pane's `TYPE` and its `HSCAN`. Baking
+    /// the index into the connection removes the race rather than locking
+    /// around it.
+    redis_conns: Arc<tokio::sync::Mutex<HashMap<(i64, i64), ::redis::aio::MultiplexedConnection>>>,
+    /// One SSH tunnel per Redis host, alive while any of its tabs is open.
+    redis_tunnels: Arc<tokio::sync::Mutex<HashMap<i64, port_forward::Tunnel>>>,
+    /// Cancel flags for in-flight Redis exports and imports, keyed by op id.
+    ///
+    /// Deliberately not the MongoDB registry: that one also carries a child
+    /// process to kill, and a Redis operation has none -- it is a loop in this
+    /// process, so a flag is the whole mechanism.
+    redis_ops: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 fn db_err(e: r2d2::Error) -> String {
@@ -225,6 +245,8 @@ fn split_local_mongo_hosts(conn: &rusqlite::Connection) -> usize {
             favorite: None,
             mongo_uri: Some(local_uri),
             mongo_local_uri: None,
+            redis_uri: None,
+            redis_tunnel_host_id: None,
         };
 
         let new_id = match db::add_host(conn, &new_host) {
@@ -1767,6 +1789,467 @@ fn mongodb_clear_secret(host_id: i64) -> Result<(), String> {
     crypto::delete_secret(&mongo_account(host_id))
 }
 
+// ---------------------------------------------------------------------------
+// Redis
+// ---------------------------------------------------------------------------
+
+/// The keyring account holding a host's Redis password.
+///
+/// Non-numeric by construction, so it cannot collide with an SSH host password
+/// (stored under the bare id) or with `mongo-remote-<id>` in the shared
+/// fallback file. `crypto::tests::named_accounts_cannot_collide_with_host_ids`
+/// pins that property.
+fn redis_account(host_id: i64) -> String {
+    format!("redis-{}", host_id)
+}
+
+/// The full connection URI for a Redis host.
+///
+/// As with MongoDB, the stored URI carries no password and the secret is
+/// spliced in here, so the credential never crosses the IPC boundary.
+///
+/// Redis's usual form has no username at all (`redis://:password@host`), so a
+/// stripped URI is `redis://@host`; `uri::expects_password` recognises that as
+/// still wanting a secret. The error wording repeats the SSH path's
+/// "keyring retrieve failed" so one frontend detector drives prompt-and-retry
+/// for all three.
+fn load_redis_uri(state: &State<'_, AppState>, host_id: i64) -> Result<String, String> {
+    let host = with_db(state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+
+    let uri = host
+        .redis_uri
+        .filter(|u| !u.trim().is_empty())
+        .ok_or_else(|| "no Redis connection configured".to_string())?;
+
+    // Already carries a password (a row written by hand or imported).
+    if uri::split_password(&uri).1.is_some() {
+        return Ok(uri);
+    }
+
+    match crypto::get_secret(&redis_account(host_id)) {
+        Ok(password) => Ok(uri::with_password(&uri, &password)),
+        Err(e) if uri::expects_password(&uri) => {
+            Err(format!("keyring retrieve failed for Redis: {}", e))
+        }
+        // No credentials in the URI, so none are expected.
+        Err(_) => Ok(uri),
+    }
+}
+
+/// Bring up this host's SSH tunnel if it has one, returning the local port.
+///
+/// The tunnel is opened once per host and reused by every database connection,
+/// so a host with four databases browsed at once still holds one SSH session.
+async fn redis_tunnel_port(
+    state: &State<'_, AppState>,
+    host: &db::Host,
+    ssh_password: Option<String>,
+) -> Result<u16, String> {
+    let via_id = host
+        .redis_tunnel_host_id
+        .ok_or_else(|| "this Redis connection has no tunnel".to_string())?;
+
+    if let Some(tunnel) = state.redis_tunnels.lock().await.get(&host.id) {
+        return Ok(tunnel.local_port);
+    }
+
+    let via = with_db(state, |conn| db::get_host_by_id(conn, via_id))?.ok_or_else(|| {
+        "the SSH host this Redis connection tunnels through no longer exists".to_string()
+    })?;
+
+    // The URI is written from the bastion's point of view, so its host and port
+    // are the tunnel's remote end.
+    let uri = host
+        .redis_uri
+        .as_deref()
+        .filter(|u| !u.trim().is_empty())
+        .ok_or_else(|| "no Redis connection configured".to_string())?;
+    let (remote_host, remote_port) = redis::uri_endpoint(uri)?;
+
+    let (auth_password, auth_key_path) = resolve_auth(&via, ssh_password)?;
+    let (ssh_host, ssh_port, username) = (via.host.clone(), via.port as u16, via.username.clone());
+
+    // Holding the lock across the handshake keeps two tabs opening at once from
+    // building two tunnels, the same reason `mongo_client` holds its lock.
+    let mut tunnels = state.redis_tunnels.lock().await;
+    if let Some(tunnel) = tunnels.get(&host.id) {
+        return Ok(tunnel.local_port);
+    }
+
+    let tunnel = tokio::task::spawn_blocking(move || {
+        port_forward::start_ephemeral_local(
+            ssh_host,
+            ssh_port,
+            username,
+            auth_password,
+            auth_key_path,
+            remote_host,
+            remote_port,
+        )
+    })
+    .await
+    .map_err(|e| format!("redis tunnel task panicked: {}", e))??;
+
+    let port = tunnel.local_port;
+    tunnels.insert(host.id, tunnel);
+    tracing::info!(host_id = host.id, local_port = port, "redis tunnel opened");
+    Ok(port)
+}
+
+/// The URI to actually dial for a host, tunnelled or not.
+///
+/// `rediss://` through a tunnel is refused rather than silently downgraded: the
+/// driver would see `127.0.0.1` as the hostname and certificate verification
+/// could never succeed, so the only way to make it work is to turn verification
+/// off. SSH already authenticates and encrypts that hop, so plain `redis://` is
+/// the right answer and saying so is better than a checkbox that weakens TLS.
+async fn redis_dial_uri(
+    state: &State<'_, AppState>,
+    host: &db::Host,
+    ssh_password: Option<String>,
+) -> Result<(String, bool), String> {
+    let uri = load_redis_uri(state, host.id)?;
+    if host.redis_tunnel_host_id.is_none() {
+        return Ok((uri, false));
+    }
+    if redis::is_tls_uri(&uri) {
+        return Err(
+            "A rediss:// connection cannot be tunnelled: the certificate names the real \
+             host, but through a tunnel the driver only sees 127.0.0.1. The SSH tunnel \
+             already encrypts this hop, so use redis:// instead."
+                .to_string(),
+        );
+    }
+    let port = redis_tunnel_port(state, host, ssh_password).await?;
+    let (rewritten, _original) = redis::retarget_uri(&uri, port)?;
+    Ok((rewritten, true))
+}
+
+/// A pooled connection to one database of a Redis host, opened on first use.
+async fn redis_conn(
+    state: &State<'_, AppState>,
+    host_id: i64,
+    db_index: i64,
+) -> Result<::redis::aio::MultiplexedConnection, String> {
+    if let Some(conn) = state.redis_conns.lock().await.get(&(host_id, db_index)) {
+        return Ok(conn.clone());
+    }
+
+    let host = with_db(state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+    let (uri, _tunnelled) = redis_dial_uri(state, &host, None).await?;
+
+    let mut conns = state.redis_conns.lock().await;
+    if let Some(conn) = conns.get(&(host_id, db_index)) {
+        return Ok(conn.clone());
+    }
+    let conn = redis::build_client(&uri, db_index).await?;
+    conns.insert((host_id, db_index), conn.clone());
+    Ok(conn)
+}
+
+/// Drop every pooled connection for a host and close its tunnel.
+///
+/// Called when the last Redis tab closes and when the host is edited — without
+/// the latter a changed URI would stay invisible until the app restarted.
+async fn forget_redis(state: &State<'_, AppState>, host_id: i64) {
+    state
+        .redis_conns
+        .lock()
+        .await
+        .retain(|(id, _), _| *id != host_id);
+    // Dropping the handle signals the accept loop to stop.
+    state.redis_tunnels.lock().await.remove(&host_id);
+}
+
+/// Open a Redis connection and report what the server is.
+///
+/// `ssh_password` supplies the bastion's password on the prompt-and-retry path,
+/// for a tunnelled host whose SSH password is not in the keyring.
+#[tauri::command]
+async fn redis_connect(
+    state: State<'_, AppState>,
+    host_id: i64,
+    ssh_password: Option<String>,
+) -> Result<redis::RedisServerInfo, String> {
+    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+
+    let (uri, tunnelled) = redis_dial_uri(&state, &host, ssh_password).await?;
+    let db_index = redis::uri_db_index(&uri).unwrap_or(0);
+
+    let mut conn = redis::build_client(&uri, db_index).await?;
+    let info = with_async_timeout(
+        redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled),
+        30,
+    )
+    .await?;
+
+    state
+        .redis_conns
+        .lock()
+        .await
+        .insert((host_id, db_index), conn);
+    Ok(info)
+}
+
+/// Re-read the server's INFO, so key counts follow a backup or restore.
+#[tauri::command]
+async fn redis_server_info(
+    state: State<'_, AppState>,
+    host_id: i64,
+) -> Result<redis::RedisServerInfo, String> {
+    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
+    let db_index = redis::uri_db_index(&uri).unwrap_or(0);
+    let mut conn = redis_conn(&state, host_id, db_index).await?;
+    with_async_timeout(
+        redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled),
+        30,
+    )
+    .await
+}
+
+/// Drop this host's pooled connections and close its tunnel.
+#[tauri::command]
+async fn redis_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
+    forget_redis(&state, host_id).await;
+    Ok(())
+}
+
+/// One page of a database's keyspace.
+///
+/// `cursor` is a decimal string, not a number: Redis cursors are u64 and would
+/// lose precision as a JS number. `"0"` both starts and ends an iteration.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn redis_scan_keys(
+    state: State<'_, AppState>,
+    host_id: i64,
+    db: i64,
+    cursor: String,
+    pattern: Option<String>,
+    type_filter: Option<String>,
+    limit: i64,
+    with_memory: bool,
+    supports_scan_type: bool,
+) -> Result<redis::RedisScanPage, String> {
+    let mut conn = redis_conn(&state, host_id, db).await?;
+    with_async_timeout(
+        redis::scan_keys(
+            &mut conn,
+            &cursor,
+            pattern.as_deref().filter(|p| !p.is_empty()),
+            type_filter.as_deref().filter(|t| !t.is_empty()),
+            limit,
+            with_memory,
+            supports_scan_type,
+        ),
+        30,
+    )
+    .await
+}
+
+/// The prefix groups of a database, from a bounded scan.
+#[tauri::command]
+async fn redis_key_tree(
+    state: State<'_, AppState>,
+    host_id: i64,
+    db: i64,
+    pattern: Option<String>,
+) -> Result<redis::KeyTree, String> {
+    let mut conn = redis_conn(&state, host_id, db).await?;
+    with_async_timeout(
+        redis::key_tree(
+            &mut conn,
+            pattern.as_deref().filter(|p| !p.is_empty()),
+            redis::TREE_SCAN_CAP,
+            Duration::from_secs(3),
+        ),
+        30,
+    )
+    .await
+}
+
+/// One page of a single key's value.
+///
+/// `key_b64` carries the key's exact bytes: a key that is not valid UTF-8 has
+/// no faithful string form, and addressing it by a lossy one would fetch the
+/// wrong key or nothing at all.
+#[tauri::command]
+async fn redis_key_value(
+    state: State<'_, AppState>,
+    host_id: i64,
+    db: i64,
+    key_b64: String,
+    cursor: Option<String>,
+    offset: i64,
+    limit: i64,
+) -> Result<redis::RedisValuePage, String> {
+    let key = redis::decode_key(&key_b64)?;
+    let mut conn = redis_conn(&state, host_id, db).await?;
+    with_async_timeout(
+        redis::key_value(
+            &mut conn,
+            &key,
+            cursor.as_deref().unwrap_or("0"),
+            offset,
+            limit,
+        ),
+        60,
+    )
+    .await
+}
+
+/// Run a cancellable Redis operation, registering its flag for the duration.
+async fn with_redis_op<T, Fut>(
+    state: &State<'_, AppState>,
+    op_id: &str,
+    f: impl FnOnce(Arc<AtomicBool>) -> Fut,
+) -> Result<T, String>
+where
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state
+        .redis_ops
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(op_id.to_string(), cancelled.clone());
+
+    let result = f(cancelled).await;
+
+    state
+        .redis_ops
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(op_id);
+    result
+}
+
+/// Ask an in-flight export or import to stop.
+#[tauri::command]
+fn redis_cancel(state: State<'_, AppState>, op_id: String) {
+    let ops = state.redis_ops.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(flag) = ops.get(&op_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Back up a database to a `.tdredis` file.
+///
+/// Deliberately not wrapped in `with_async_timeout`: a backup of a large
+/// keyspace legitimately runs for a long time, and cancellation is the control
+/// the user has over it.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn redis_export(
+    window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
+    host_id: i64,
+    db: i64,
+    pattern: Option<String>,
+    output_path: String,
+    max_key_bytes: Option<u64>,
+) -> Result<redis::RedisOpSummary, String> {
+    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
+
+    let mut conn = redis_conn(&state, host_id, db).await?;
+    let info = redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled).await?;
+
+    let registry_id = op_id.clone();
+    with_redis_op(&state, &registry_id, |cancelled| async move {
+        redis::export_keys(
+            &window,
+            cancelled,
+            &op_id,
+            &mut conn,
+            db,
+            pattern.as_deref().filter(|p| !p.is_empty()),
+            &output_path,
+            max_key_bytes.unwrap_or(redis::MAX_DUMP_KEY_BYTES),
+            &uri,
+            &info.version,
+            &info.mode,
+        )
+        .await
+    })
+    .await
+}
+
+/// A backup file's header, for the restore dialog.
+#[tauri::command]
+fn redis_backup_info(path: String) -> Result<redis_backup::BackupHeader, String> {
+    redis::read_backup_header(&path)
+}
+
+/// Restore a `.tdredis` file into a database.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn redis_import(
+    window: Window,
+    state: State<'_, AppState>,
+    op_id: String,
+    host_id: i64,
+    db: i64,
+    input_path: String,
+    replace: bool,
+    flush_first: bool,
+) -> Result<redis::RedisOpSummary, String> {
+    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
+
+    let mut conn = redis_conn(&state, host_id, db).await?;
+    let info = redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled).await?;
+
+    let registry_id = op_id.clone();
+    with_redis_op(&state, &registry_id, |cancelled| async move {
+        redis::import_keys(
+            &window,
+            cancelled,
+            &op_id,
+            &mut conn,
+            db,
+            &input_path,
+            replace,
+            flush_first,
+            &info.version,
+        )
+        .await
+    })
+    .await
+}
+
+/// Store the password for a Redis host.
+///
+/// Only ever *sets* a secret, so an empty password field in the edit dialog
+/// cannot silently delete one; clearing is `redis_clear_secret`.
+#[tauri::command]
+fn redis_store_secret(host_id: i64, password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("refusing to store an empty Redis password".to_string());
+    }
+    crypto::store_secret(&redis_account(host_id), &password)
+}
+
+/// Whether a password is stored, so the UI can say so without revealing it.
+#[tauri::command]
+fn redis_has_secret(host_id: i64) -> bool {
+    crypto::get_secret(&redis_account(host_id)).is_ok()
+}
+
+/// Forget the stored password for a Redis host.
+#[tauri::command]
+fn redis_clear_secret(host_id: i64) -> Result<(), String> {
+    crypto::delete_secret(&redis_account(host_id))
+}
+
 #[tauri::command]
 fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
     let ops = state.mongo_ops.lock().unwrap_or_else(|e| e.into_inner());
@@ -1853,6 +2336,9 @@ fn main() {
             forward_manager: port_forward::ForwardManager::new(),
             mongo_ops: Arc::new(Mutex::new(HashMap::new())),
             mongo_clients: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            redis_conns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            redis_tunnels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            redis_ops: Arc::new(Mutex::new(HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
@@ -1927,6 +2413,19 @@ fn main() {
             mongodb_store_secret,
             mongodb_has_secret,
             mongodb_clear_secret,
+            redis_connect,
+            redis_disconnect,
+            redis_server_info,
+            redis_scan_keys,
+            redis_key_tree,
+            redis_key_value,
+            redis_export,
+            redis_import,
+            redis_backup_info,
+            redis_cancel,
+            redis_store_secret,
+            redis_has_secret,
+            redis_clear_secret,
             mongodb::scan_restore_folder,
         ])
         .run(tauri::generate_context!())
@@ -1949,6 +2448,8 @@ mod tests {
             favorite: None,
             mongo_uri: remote.map(String::from),
             mongo_local_uri: local.map(String::from),
+            redis_uri: None,
+            redis_tunnel_host_id: None,
         }
     }
 
@@ -2093,6 +2594,8 @@ mod tests {
             created_at: String::new(),
             mongo_uri: None,
             mongo_local_uri: None,
+            redis_uri: None,
+            redis_tunnel_host_id: None,
         }
     }
 

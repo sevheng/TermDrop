@@ -157,6 +157,129 @@ impl ForwardManager {
     }
 }
 
+/// A local listener forwarding to one fixed remote endpoint, alive for as long
+/// as the handle is held.
+///
+/// Separate from [`ForwardManager`] on purpose. That one is keyed by a
+/// `port_forwards` row id: user-created, persisted, and listed in the tunnels
+/// panel where it can be stopped by hand. A Redis tunnel is invisible
+/// infrastructure owned by a tab — putting it in that table would make phantom
+/// rules appear in the panel and let the user stop the tunnel out from under a
+/// running backup.
+#[derive(Debug)]
+pub struct Tunnel {
+    /// The port the OS assigned, which the caller connects to.
+    pub local_port: u16,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl Drop for Tunnel {
+    /// Dropping the handle closes the tunnel: the accept loop polls this flag
+    /// every 100ms and exits.
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Open a tunnel on an OS-assigned local port.
+///
+/// Binds `127.0.0.1` rather than `0.0.0.0` deliberately: the local end is
+/// unauthenticated, and anything that can reach it can reach the Redis server
+/// behind it, so it must not be reachable from off the machine.
+///
+/// Authenticates *and opens one forwarding channel* before returning, then
+/// throws that session away. Without the probe, every reason this can fail —
+/// a wrong password, a bastion with `AllowTcpForwarding no`, a remote host the
+/// bastion cannot reach — surfaces only on the first Redis command, as
+/// "connection reset by peer" against `127.0.0.1`. That message names nothing
+/// the user can act on, and the tunnel looks healthy while producing it.
+///
+/// This is a blocking call (a TCP connect, an SSH handshake and an auth round
+/// trip), so callers on the async runtime must wrap it in `spawn_blocking`.
+#[allow(clippy::too_many_arguments)]
+pub fn start_ephemeral_local(
+    ssh_host: String,
+    ssh_port: u16,
+    username: String,
+    password: Option<String>,
+    key_path: Option<String>,
+    remote_host: String,
+    remote_port: u16,
+) -> Result<Tunnel, String> {
+    // Fail fast, before a listener exists to clean up.
+    let probe = create_ssh_session(
+        &ssh_host,
+        ssh_port,
+        &username,
+        password.as_deref(),
+        key_path.as_deref(),
+    )?;
+    probe
+        .channel_direct_tcpip(&remote_host, remote_port, None)
+        .map_err(|e| {
+            format!(
+                "{} could not open a tunnel to {}:{}: {}. The SSH server may have \
+                 AllowTcpForwarding disabled, or it may not be able to reach that address.",
+                ssh_host, remote_host, remote_port, e
+            )
+        })?;
+    drop(probe);
+
+    let listener =
+        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("bind a local tunnel port: {}", e))?;
+    let local_port = listener
+        .local_addr()
+        .map_err(|e| format!("read the local tunnel port: {}", e))?
+        .port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+
+    thread::spawn(move || {
+        loop {
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            match listener.accept() {
+                Ok((client, _)) => {
+                    let h = ssh_host.clone();
+                    let u = username.clone();
+                    let pw = password.clone();
+                    let k = key_path.clone();
+                    let rh = remote_host.clone();
+                    // One SSH session per accepted connection, as the
+                    // rule-based forwards do. A multiplexed Redis client opens
+                    // a single socket, so in practice this is one session per
+                    // tab rather than one per command.
+                    thread::spawn(move || {
+                        if let Err(e) =
+                            handle_local_connection(h, ssh_port, u, pw, k, client, rh, remote_port)
+                        {
+                            // The client only sees a reset socket, so this log
+                            // is the sole record of why.
+                            tracing::warn!("redis tunnel connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    tracing::warn!("redis tunnel listener error: {}", e);
+                    break;
+                }
+            }
+        }
+        tracing::debug!(local_port, "redis tunnel closed");
+    });
+
+    Ok(Tunnel {
+        local_port,
+        shutdown,
+    })
+}
+
 fn create_ssh_session(
     host: &str,
     port: u16,

@@ -16,6 +16,9 @@ pub struct Host {
     pub created_at: String,
     pub mongo_uri: Option<String>,
     pub mongo_local_uri: Option<String>,
+    pub redis_uri: Option<String>,
+    /// The id of the SSH host to tunnel through, or `None` to connect directly.
+    pub redis_tunnel_host_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -30,6 +33,8 @@ pub struct NewHost {
     pub favorite: Option<i64>,
     pub mongo_uri: Option<String>,
     pub mongo_local_uri: Option<String>,
+    pub redis_uri: Option<String>,
+    pub redis_tunnel_host_id: Option<i64>,
 }
 
 pub fn init_db(conn: &Connection) -> SqlResult<()> {
@@ -44,6 +49,8 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
             key_path TEXT,
             mongo_uri TEXT,
             mongo_local_uri TEXT,
+            redis_uri TEXT,
+            redis_tunnel_host_id INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
@@ -85,13 +92,26 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
     if !columns.contains(&"mongo_local_uri".to_string()) {
         conn.execute("ALTER TABLE hosts ADD COLUMN mongo_local_uri TEXT", [])?;
     }
+    if !columns.contains(&"redis_uri".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN redis_uri TEXT", [])?;
+    }
+    // No FOREIGN KEY: the table was created without one and SQLite cannot add a
+    // constraint to an existing table without rebuilding it. A dangling id is
+    // reported when the connection is opened, which beats a cascade that would
+    // silently delete the Redis host along with its bastion.
+    if !columns.contains(&"redis_tunnel_host_id".to_string()) {
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN redis_tunnel_host_id INTEGER",
+            [],
+        )?;
+    }
 
     Ok(())
 }
 
 pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri FROM hosts ORDER BY favorite DESC, name ASC"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id FROM hosts ORDER BY favorite DESC, name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(Host {
@@ -108,6 +128,8 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
             created_at: row.get(10)?,
             mongo_uri: row.get(11)?,
             mongo_local_uri: row.get(12)?,
+            redis_uri: row.get(13)?,
+            redis_tunnel_host_id: row.get(14)?,
         })
     })?;
     hosts.collect()
@@ -115,7 +137,7 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
 
 pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             &host.name,
             &host.host,
@@ -127,6 +149,8 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
             host.favorite.unwrap_or(0),
             host.mongo_uri.as_deref(),
             host.mongo_local_uri.as_deref(),
+            host.redis_uri.as_deref(),
+            host.redis_tunnel_host_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -135,7 +159,7 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
 /// Returns the number of rows updated, which is 0 when `id` no longer exists.
 pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usize> {
     conn.execute(
-        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10 WHERE id = ?11",
+        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10, redis_uri = ?11, redis_tunnel_host_id = ?12 WHERE id = ?13",
         params![
             &host.name,
             &host.host,
@@ -147,6 +171,8 @@ pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usiz
             host.favorite.unwrap_or(0),
             host.mongo_uri.as_deref(),
             host.mongo_local_uri.as_deref(),
+            host.redis_uri.as_deref(),
+            host.redis_tunnel_host_id,
             id
         ],
     )
@@ -159,7 +185,7 @@ pub fn delete_host(conn: &Connection, id: i64) -> SqlResult<()> {
 
 pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri FROM hosts WHERE id = ?1"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id FROM hosts WHERE id = ?1"
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -177,6 +203,8 @@ pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
             created_at: row.get(10)?,
             mongo_uri: row.get(11)?,
             mongo_local_uri: row.get(12)?,
+            redis_uri: row.get(13)?,
+            redis_tunnel_host_id: row.get(14)?,
         }))
     } else {
         Ok(None)
@@ -387,6 +415,7 @@ pub struct ExportHost {
     pub favorite: i64,
     pub mongo_uri: Option<String>,
     pub mongo_local_uri: Option<String>,
+    pub redis_uri: Option<String>,
 }
 
 /// One host's stored MongoDB URI: `(id, uri)`.
@@ -438,7 +467,7 @@ pub fn vacuum(conn: &Connection) -> SqlResult<()> {
 
 pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
     let mut stmt = conn.prepare(
-        "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri FROM hosts ORDER BY name ASC"
+        "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri FROM hosts ORDER BY name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(ExportHost {
@@ -459,6 +488,13 @@ pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
             mongo_local_uri: row
                 .get::<_, Option<String>>(9)?
                 .map(|u| crate::mongodb::split_mongo_password(&u).0),
+            // Redis URIs are never written with a password, but strip anyway:
+            // an export leaves the machine and this is the last gate.
+            redis_uri: row
+                .get::<_, Option<String>>(10)?
+                .map(|u| crate::uri::split_password(&u).0),
+            // redis_tunnel_host_id is deliberately not exported: a row id means
+            // nothing on another machine and would point at an unrelated host.
         })
     })?;
     hosts.collect()
@@ -480,6 +516,8 @@ mod tests {
             favorite: None,
             mongo_uri: None,
             mongo_local_uri: None,
+            redis_uri: None,
+            redis_tunnel_host_id: None,
         }
     }
 
@@ -514,6 +552,148 @@ mod tests {
         h.port = 0;
         h.mongo_uri = Some("mongodb://localhost".to_string());
         assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn a_host_payload_without_the_redis_fields_still_deserializes() {
+        // The frontend's existing SSH and MongoDB save paths do not send the
+        // new columns. Serde treats a missing Option field as None, and this
+        // pins that: if it ever stopped being true, every save from those two
+        // dialogs would fail at runtime with no compile-time warning.
+        let json = r#"{
+            "name": "old client",
+            "host": "10.0.0.1",
+            "port": 22,
+            "username": "admin",
+            "auth_type": "password",
+            "key_path": null,
+            "group": null,
+            "favorite": null,
+            "mongo_uri": null,
+            "mongo_local_uri": null
+        }"#;
+        let host: NewHost = serde_json::from_str(json).expect("payload must still deserialize");
+        assert_eq!(host.name, "old client");
+        assert_eq!(host.redis_uri, None);
+        assert_eq!(host.redis_tunnel_host_id, None);
+    }
+
+    #[test]
+    fn validate_new_host_allows_a_redis_only_row() {
+        // Same shape as a MongoDB-only row: no SSH host, username, or port.
+        let mut h = sample("redis");
+        h.host = String::new();
+        h.username = String::new();
+        h.port = 0;
+        h.redis_uri = Some("redis://localhost:6379/0".to_string());
+        assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn a_row_with_neither_uri_still_needs_its_ssh_fields() {
+        // The relaxation must be tied to actually having a datastore URI --
+        // otherwise every malformed SSH host would silently validate.
+        let mut h = sample("neither");
+        h.host = String::new();
+        assert!(validate_new_host(&h).unwrap_err().contains("Host"));
+        h.host = "10.0.0.1".to_string();
+        h.port = 0;
+        assert!(validate_new_host(&h).unwrap_err().contains("Port"));
+    }
+
+    #[test]
+    fn a_redis_host_round_trips_through_add_and_read() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("cache");
+        h.host = String::new();
+        h.port = 0;
+        h.username = String::new();
+        h.redis_uri = Some("redis://@10.0.1.5:6379/2".to_string());
+        h.redis_tunnel_host_id = Some(bastion);
+        let id = add_host(&conn, &h).unwrap();
+
+        let read = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(read.redis_uri.as_deref(), Some("redis://@10.0.1.5:6379/2"));
+        assert_eq!(read.redis_tunnel_host_id, Some(bastion));
+
+        // The same values must survive an update, not just an insert.
+        let mut edited = h.clone();
+        edited.redis_uri = Some("redis://@10.0.1.9:6380/0".to_string());
+        edited.redis_tunnel_host_id = None;
+        update_host(&conn, id, &edited).unwrap();
+        let read = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(read.redis_uri.as_deref(), Some("redis://@10.0.1.9:6380/0"));
+        assert_eq!(read.redis_tunnel_host_id, None);
+
+        // And through the list query, which has its own column list.
+        let listed = get_hosts(&conn).unwrap();
+        let found = listed.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(found.redis_uri.as_deref(), Some("redis://@10.0.1.9:6380/0"));
+    }
+
+    #[test]
+    fn export_never_carries_a_redis_password_or_a_tunnel_row_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("cache");
+        // A row written before the split, or by hand: it still must not export.
+        h.redis_uri = Some("redis://:hunter2@10.0.1.5:6379/0".to_string());
+        h.redis_tunnel_host_id = Some(bastion);
+        add_host(&conn, &h).unwrap();
+
+        let exported = export_hosts(&conn).unwrap();
+        let row = exported.iter().find(|r| r.name == "cache").unwrap();
+        assert_eq!(row.redis_uri.as_deref(), Some("redis://@10.0.1.5:6379/0"));
+        let json = serde_json::to_string(&exported).unwrap();
+        assert!(!json.contains("hunter2"), "password survived: {}", json);
+        assert!(
+            !json.contains("redis_tunnel_host_id"),
+            "a row id must not leave the machine: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn init_db_adds_the_redis_columns_to_an_older_table_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The pre-Redis schema, as an existing install has it.
+        conn.execute(
+            "CREATE TABLE hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                host TEXT,
+                port INTEGER DEFAULT 22,
+                username TEXT,
+                auth_type TEXT DEFAULT 'password',
+                key_path TEXT,
+                mongo_uri TEXT,
+                mongo_local_uri TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO hosts (name, host, port, username) VALUES ('old', '10.0.0.1', 22, 'admin')",
+            [],
+        )
+        .unwrap();
+
+        init_db(&conn).unwrap();
+
+        let hosts = get_hosts(&conn).unwrap();
+        assert_eq!(hosts.len(), 1, "the existing row was lost");
+        assert_eq!(hosts[0].name, "old");
+        assert_eq!(hosts[0].redis_uri, None);
+        assert_eq!(hosts[0].redis_tunnel_host_id, None);
+
+        // Idempotent: a second run must not fail on duplicate columns.
+        init_db(&conn).unwrap();
     }
 
     #[test]
@@ -653,6 +833,8 @@ mod tests {
             favorite: None,
             mongo_uri: None,
             mongo_local_uri: None,
+            redis_uri: None,
+            redis_tunnel_host_id: None,
         };
 
         let id = add_host(&conn, &new).unwrap();
@@ -701,14 +883,22 @@ pub struct ImportSummary {
     pub failed: Vec<ImportFailure>,
 }
 
+/// Whether this row is a datastore connection rather than an SSH host.
+///
+/// A MongoDB- or Redis-only host legitimately has no SSH host, port or
+/// username, so the SSH field checks below do not apply to it.
+fn is_datastore_only(host: &NewHost) -> bool {
+    host.mongo_uri.is_some() || host.redis_uri.is_some()
+}
+
 /// Reject rows the host form would not accept either. Username is not
 /// required and a missing key file is not an error here, because a
-/// MongoDB-only host legitimately has no SSH fields at all.
+/// datastore-only host legitimately has no SSH fields at all.
 pub fn validate_new_host(host: &NewHost) -> Result<(), String> {
     if host.name.trim().is_empty() {
         return Err("Name is required".to_string());
     }
-    if !(1..=65535).contains(&host.port) && host.mongo_uri.is_none() {
+    if !(1..=65535).contains(&host.port) && !is_datastore_only(host) {
         return Err(format!(
             "Port must be between 1 and 65535, got {}",
             host.port
@@ -720,7 +910,7 @@ pub fn validate_new_host(host: &NewHost) -> Result<(), String> {
             host.auth_type
         ));
     }
-    if host.host.trim().is_empty() && host.mongo_uri.is_none() {
+    if host.host.trim().is_empty() && !is_datastore_only(host) {
         return Err("Host is required".to_string());
     }
     Ok(())
