@@ -2289,6 +2289,104 @@ uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
     // wrong produces filters that silently match nothing, which is the worst
     // possible failure mode for a query box.
 
+    /// Live-server checks. Ignored by default so CI needs no MongoDB; run with
+    ///   docker compose -f docker-compose.mongodb.yml up -d
+    ///   cargo test -- --ignored --test-threads=1
+    /// against the seeded fixture.
+    mod live {
+        use super::super::*;
+
+        const URI: &str = "mongodb://admin:adminpass@localhost:27018/?authSource=admin";
+
+        async fn client() -> Client {
+            build_client(URI).await.expect("connect to the test server")
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn lists_databases_and_collections() {
+            let c = client().await;
+            let dbs = list_databases_with(&c).await.unwrap();
+            assert!(dbs.contains(&"shopdb".to_string()), "got {:?}", dbs);
+
+            let mut colls = list_collections_with(&c, "shopdb").await.unwrap();
+            colls.sort();
+            assert_eq!(colls, vec!["alpha", "beta", "delta", "gamma"]);
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn counts_and_reads_documents() {
+            let c = client().await;
+
+            let counted = count_documents(&c, "shopdb", "alpha", Default::default())
+                .await
+                .unwrap();
+            assert_eq!(counted.count, 25);
+            assert!(counted.estimated, "an unfiltered count should not scan");
+
+            let filtered =
+                count_documents(&c, "shopdb", "alpha", parse_filter(r#"{"n":1}"#).unwrap())
+                    .await
+                    .unwrap();
+            assert_eq!(filtered.count, 1);
+            assert!(!filtered.estimated);
+
+            let page = find_documents(
+                &c,
+                "shopdb",
+                "alpha",
+                Default::default(),
+                Some(mongodb::bson::doc! { "n": 1 }),
+                None,
+                0,
+                10,
+            )
+            .await
+            .unwrap();
+            assert_eq!(page.documents.len(), 10);
+            assert!(!page.truncated);
+            // Canonical extended JSON, so the _id survives as an ObjectId.
+            assert!(page.documents[0].contains("$oid"), "{}", page.documents[0]);
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn a_bare_hex_id_filter_actually_matches() {
+            let c = client().await;
+
+            let first = find_documents(&c, "shopdb", "alpha", Default::default(), None, None, 0, 1)
+                .await
+                .unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&first.documents[0]).unwrap();
+            let oid = parsed["_id"]["$oid"].as_str().unwrap().to_string();
+
+            // Typing the bare hex is the common mistake; it must still match.
+            let hit = count_documents(
+                &c,
+                "shopdb",
+                "alpha",
+                parse_filter(&format!(r#"{{"_id":"{}"}}"#, oid)).unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(hit.count, 1, "a bare hex _id did not match");
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn reports_indexes_and_stats() {
+            let c = client().await;
+
+            let indexes = list_indexes(&c, "shopdb", "alpha").await.unwrap();
+            // _id_ plus the seeded n_idx.
+            assert_eq!(indexes.len(), 2, "got {:?}", indexes);
+
+            let stats = collection_stats(&c, "shopdb", "alpha").await.unwrap();
+            assert!(stats.contains("count"), "{}", stats);
+        }
+    }
+
     #[test]
     fn filter_parsing_understands_extended_json() {
         use mongodb::bson::Bson;
