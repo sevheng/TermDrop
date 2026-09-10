@@ -1,15 +1,13 @@
 <template>
   <div class="flex-1 overflow-y-auto">
-    <div v-if="loading" class="flex items-center justify-center py-8">
-      <Loader2 :size="16" class="animate-spin text-ink-2" />
-    </div>
-    <div
+    <EmptyState v-if="loading" state="loading" title="Loading databases…" />
+    <EmptyState
       v-else-if="databases.length === 0"
-      class="flex flex-col items-center justify-center py-8 text-ink-3"
-    >
-      <Layers :size="20" class="mb-2 opacity-50" />
-      <p class="text-xs">No keys on this server</p>
-    </div>
+      state="empty"
+      :icon="Layers"
+      title="No keys on this server"
+      hint="Every database is empty"
+    />
     <div v-else class="py-1">
       <div v-for="dbInfo in databases" :key="dbInfo.index" class="border-b border-line/30">
         <div
@@ -75,6 +73,7 @@
  * this only draws them.
  */
 import { ChevronRight, Layers, Loader2 } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 
 defineProps({
   databases: { type: Array, required: true },

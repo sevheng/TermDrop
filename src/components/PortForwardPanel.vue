@@ -14,11 +14,18 @@
 
     <!-- List -->
     <div class="flex-1 overflow-y-auto py-1 px-2">
-      <div v-if="forwards.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
-        <Network :size="20" class="mb-2 opacity-50" />
-        <p class="text-xs">No port forwards</p>
-        <p class="text-xs mt-1">Click + to add one</p>
-      </div>
+      <!-- `loading` exists so this is not shown before the fetch resolves;
+           it used to claim there were none while still asking. -->
+      <EmptyState v-if="loading" state="loading" title="Loading forwards…" />
+      <EmptyState
+        v-else-if="forwards.length === 0"
+        state="empty"
+        :icon="Network"
+        title="No port forwards"
+        hint="Forward a remote port to this machine"
+        action-label="Add a forward"
+        @action="$emit('add')"
+      />
 
       <div v-for="fw in forwards" :key="fw.id" class="mb-2">
         <div class="bg-surface rounded p-2 border border-line">
@@ -90,6 +97,7 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink, Pencil } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { toast } from '../utils/toast.js'
 
@@ -101,14 +109,22 @@ defineEmits(['add'])
 
 const store = useConnectionStore()
 const forwards = ref([])
+const loading = ref(false)
 const activeStatus = ref({})
 
 async function loadForwards() {
   if (!props.hostId) return
-  forwards.value = await store.getPortForwards(props.hostId)
-  // Check status for each
-  for (const fw of forwards.value) {
-    activeStatus.value[fw.id] = await store.getPortForwardStatus(fw.id)
+  // Tracked so the list can say "loading" instead of "none": it used to
+  // render its empty state before the fetch had even resolved.
+  loading.value = true
+  try {
+    forwards.value = await store.getPortForwards(props.hostId)
+    // Check status for each
+    for (const fw of forwards.value) {
+      activeStatus.value[fw.id] = await store.getPortForwardStatus(fw.id)
+    }
+  } finally {
+    loading.value = false
   }
 }
 

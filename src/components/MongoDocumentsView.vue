@@ -75,13 +75,18 @@
 
     <!-- Results -->
     <div class="flex-1 overflow-y-auto px-4 py-2">
-      <div v-if="loading" class="flex items-center justify-center py-10">
-        <Loader2 :size="18" class="animate-spin text-ink-2" />
-      </div>
-      <div v-else-if="documents.length === 0" class="flex flex-col items-center justify-center py-10 text-ink-3">
-        <FileSearch :size="20" class="mb-2 opacity-50" />
-        <p class="text-xs">{{ rangeLabel }}</p>
-      </div>
+      <EmptyState v-if="loading" state="loading" title="Querying…" />
+      <!-- A filter that matched nothing is not the same as an empty
+           collection, and only the caller knows which this is. -->
+      <EmptyState
+        v-else-if="documents.length === 0"
+        :state="filterText.trim() ? 'filtered' : 'empty'"
+        :icon="FileSearch"
+        :title="rangeLabel"
+        :hint="filterText.trim() ? 'No document matches this filter' : undefined"
+        :action-label="filterText.trim() ? 'Clear filter' : undefined"
+        @action="filterText = ''; runQuery(0)"
+      />
       <!-- Table: fields as columns, so documents can be compared at a glance. -->
       <div v-else-if="viewMode === 'table'" class="overflow-x-auto">
         <table class="w-full text-xs font-mono border-collapse">
@@ -221,7 +226,8 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { Loader2, ChevronRight, Copy, FileSearch } from 'lucide-vue-next'
+import { ChevronRight, Copy, FileSearch } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'

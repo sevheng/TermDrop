@@ -87,15 +87,19 @@
 
     <div class="flex-1 overflow-y-auto py-1 px-1" @contextmenu.prevent="showEmptyMenu">
       <!-- Empty state -->
-      <div v-if="displayHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
-        <Server :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">
-          {{ store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts' }}
-        </p>
-        <p v-if="store.hosts.length === 0" class="text-xs mt-1">
-          Click + to add your first host
-        </p>
-      </div>
+      <!-- "None yet" wants an add button; "none matching" wants the search
+           cleared. Pointing at the + three icons away served neither. -->
+      <EmptyState
+        v-if="displayHosts.length === 0"
+        :state="store.hosts.length === 0 ? 'empty' : 'filtered'"
+        :icon="Server"
+        :title="store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts'"
+        :hint="store.hosts.length === 0
+          ? 'Add a server, a MongoDB connection or a Redis connection'
+          : `${store.hosts.length} hidden by the search`"
+        :action-label="store.hosts.length === 0 ? 'Add a host' : 'Clear search'"
+        @action="store.hosts.length === 0 ? openModal() : (searchQuery = '')"
+      />
 
       <!-- Flat view -->
       <template v-if="viewMode === 'flat'">
@@ -310,6 +314,7 @@ import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
+import EmptyState from './EmptyState.vue'
 import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 import { splitMongoUri } from '../utils/mongoUri.js'
@@ -556,10 +561,14 @@ function onWindowClick(e) {
 onMounted(() => {
   store.loadHosts()
   window.addEventListener('click', onWindowClick)
+  // MainWindow's front-door empty state asks for the add dialog this way,
+  // following the existing open-port-forward-modal precedent.
+  window.addEventListener('open-host-modal', openModal)
 })
 
 onUnmounted(() => {
   window.removeEventListener('click', onWindowClick)
+  window.removeEventListener('open-host-modal', openModal)
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 })
 

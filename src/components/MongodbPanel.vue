@@ -133,13 +133,14 @@
           :db="viewing.db"
           :collection="viewing.collection"
         />
-        <div v-else class="h-full flex flex-col items-center justify-center text-ink-3">
-          <FileSearch :size="22" class="mb-2 opacity-50" />
-          <p class="text-xs">Select a collection to view its documents</p>
-          <p class="text-2xs mt-1 text-ink-3">
-            Tick collections to include them in a backup
-          </p>
-        </div>
+        <EmptyState
+          v-else
+          state="empty"
+          size="md"
+          :icon="FileSearch"
+          title="Select a collection to view its documents"
+          hint="Tick collections to include them in a backup"
+        />
       </div>
     </div>
 
@@ -156,6 +157,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { Database, RefreshCw, Download, Upload, FileSearch } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import DbTree from './DbTree.vue'
 import MongoDocumentsView from './MongoDocumentsView.vue'
 import MongoRestoreDialog from './MongoRestoreDialog.vue'

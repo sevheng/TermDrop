@@ -98,25 +98,24 @@
 
     <!-- File list -->
     <div class="flex-1 overflow-y-auto relative">
-      <div
-        v-if="loading"
-        class="flex items-center justify-center h-20 text-ink-3 text-sm"
-      >
-        Loading...
-      </div>
-      <div v-else-if="listError" class="flex flex-col items-center justify-center gap-2 py-6 px-3 text-center">
-        <p class="text-xs text-bad">Could not list this directory</p>
-        <p class="text-2xs text-ink-2 break-words" :title="listError">{{ listError }}</p>
-        <button
-          @click="loadFiles"
-          class="mt-1 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
-        >
-          Retry
-        </button>
-      </div>
-      <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center h-20 text-ink-3 text-sm">
-        {{ sortedFiles.length === 0 ? 'Empty directory' : 'No matching files' }}
-      </div>
+      <EmptyState v-if="loading" state="loading" title="Reading directory…" />
+      <EmptyState
+        v-else-if="listError"
+        state="error"
+        title="Could not list this directory"
+        :hint="listError"
+        action-label="Retry"
+        @action="loadFiles"
+      />
+      <EmptyState
+        v-else-if="filteredFiles.length === 0"
+        :state="sortedFiles.length === 0 ? 'empty' : 'filtered'"
+        :icon="Folder"
+        :title="sortedFiles.length === 0 ? 'Empty directory' : 'No matching files'"
+        :hint="sortedFiles.length === 0 ? undefined : `${sortedFiles.length} hidden by the filter`"
+        :action-label="sortedFiles.length === 0 ? undefined : 'Clear filter'"
+        @action="filterQuery = ''"
+      />
       <div v-else>
         <div
           v-for="(file, index) in filteredFiles"
@@ -257,6 +256,7 @@ import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'

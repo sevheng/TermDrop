@@ -90,14 +90,22 @@
             :hostId="tab.hostId"
             class="w-full h-full absolute top-0 left-0"
           />
-          <div
-            v-if="!store.activeTabId"
-            class="flex items-center justify-center h-full text-ink-3 dark:text-ink-3 absolute inset-0"
-          >
-            <div class="text-center">
-              <TerminalIcon :size="40" class="mx-auto mb-3 opacity-50" />
-              <p class="text-base">Select a host to connect</p>
-            </div>
+          <!-- The app's front door. It offered a new user nothing to do; the
+               sidebar owns HostModal, so the action goes there as an event,
+               the way open-port-forward-modal already does. -->
+          <div v-if="!store.activeTabId" class="absolute inset-0 flex items-center justify-center">
+            <EmptyState
+              state="empty"
+              size="md"
+              :icon="TerminalIcon"
+              :title="store.hosts.length === 0 ? 'No hosts yet' : 'No connection open'"
+              :hint="store.hosts.length === 0
+                ? 'Add a server, a MongoDB connection or a Redis connection to begin'
+                : 'Pick a host on the left, or add another'"
+              :action-label="store.hosts.length === 0 ? 'Add your first host' : 'Add a host'"
+              :action-icon="Plus"
+              @action="openHostModal"
+            />
           </div>
         </div>
 
@@ -225,6 +233,7 @@ import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Terminal as TerminalIcon,
@@ -234,6 +243,7 @@ import {
   X,
   Database,
   Layers,
+  Plus,
 } from 'lucide-vue-next'
 import {
   TAB_KIND,
@@ -286,6 +296,11 @@ const promptDialog = ref({
   placeholder: '',
   type: 'text',
 })
+
+/** The sidebar owns HostModal, so ask it to open one. */
+function openHostModal() {
+  window.dispatchEvent(new CustomEvent('open-host-modal'))
+}
 
 function confirmDisconnect(sessionId, name) {
   const tab = store.tabs.find(t => t.id === sessionId)

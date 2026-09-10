@@ -35,19 +35,21 @@
     </div>
 
     <div class="flex-1 overflow-auto">
-      <div v-if="loading" class="flex items-center justify-center py-8">
-        <Loader2 :size="16" class="animate-spin text-ink-2" />
-      </div>
-      <div
+      <EmptyState v-if="loading" state="loading" title="Scanning…" />
+      <!--
+        A filter narrowing to nothing and a genuinely empty page are different
+        answers, and SCAN adds a third: this page may be empty while later ones
+        are not, which is why the hint matters more here than anywhere else.
+      -->
+      <EmptyState
         v-else-if="keys.length === 0"
-        class="flex flex-col items-center justify-center py-10 text-ink-3"
-      >
-        <Search :size="20" class="mb-2 opacity-50" />
-        <p class="text-xs">No keys on this page</p>
-        <p v-if="!done" class="text-2xs mt-1">
-          SCAN returns pages, not results — there may be more further on.
-        </p>
-      </div>
+        :state="pattern || typeFilter ? 'filtered' : 'empty'"
+        :icon="Search"
+        :title="pattern || typeFilter ? 'No keys match on this page' : 'No keys on this page'"
+        :hint="done ? undefined : 'SCAN returns pages, not results — there may be more further on'"
+        :action-label="done ? undefined : 'Next page'"
+        @action="$emit('forward')"
+      />
       <table v-else class="w-full text-xs">
         <thead class="sticky top-0 bg-surface text-ink-2">
           <tr>
@@ -125,7 +127,8 @@
  * "the page before this one" and "the next one".
  */
 import { computed } from 'vue'
-import { Search, Loader2 } from 'lucide-vue-next'
+import { Search } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import SelectMenu from './SelectMenu.vue'
 import { formatKeyKind, formatTtl } from '../utils/redisKeys.js'
 import { formatBytes } from '../utils/format.js'

@@ -1,9 +1,6 @@
 <template>
   <div class="flex flex-col h-full border-l border-line min-w-0">
-    <div v-if="!keyB64" class="flex flex-col items-center justify-center h-full text-ink-3">
-      <FileText :size="20" class="mb-2 opacity-50" />
-      <p class="text-xs">Select a key to view it</p>
-    </div>
+    <EmptyState v-if="!keyB64" state="empty" :icon="FileText" title="Select a key to view it" />
 
     <template v-else>
       <div class="px-3 py-2 border-b border-line shrink-0">
@@ -18,23 +15,24 @@
         </div>
       </div>
 
-      <div v-if="loading" class="flex items-center justify-center py-8">
-        <Loader2 :size="16" class="animate-spin text-ink-2" />
-      </div>
-      <div v-else-if="error" class="px-3 py-2 text-xs text-bad">{{ error }}</div>
+      <EmptyState v-if="loading" state="loading" title="Reading…" />
+      <EmptyState v-else-if="error" state="error" title="Could not read this key" :hint="error" />
 
-      <div
+      <!-- A vanished key and an undisplayable type are different problems, so
+           they get different states: one is an error, the other simply is. -->
+      <EmptyState
+        v-else-if="page?.kind === 'none'"
+        state="error"
+        title="This key no longer exists"
+        hint="It expired or was deleted since the list was built"
+      />
+      <EmptyState
         v-else-if="!isViewableKind(page?.kind)"
-        class="flex flex-col items-center justify-center flex-1 text-ink-3 px-4 text-center"
-      >
-        <AlertCircle :size="20" class="mb-2 opacity-50" />
-        <p class="text-xs">
-          {{ page?.kind === 'none' ? 'This key no longer exists.' : 'TermDrop cannot display this type.' }}
-        </p>
-        <p v-if="page?.kind && page.kind !== 'none'" class="text-2xs mt-1">
-          {{ page.kind }} — usually a Redis module type.
-        </p>
-      </div>
+        state="empty"
+        :icon="AlertCircle"
+        title="TermDrop cannot display this type"
+        :hint="`${page?.kind} — usually a Redis module type`"
+      />
 
       <div v-else class="flex-1 overflow-auto">
         <!--
@@ -115,7 +113,8 @@
  * element set costs the same as opening an empty one.
  */
 import { computed } from 'vue'
-import { FileText, Loader2, AlertCircle } from 'lucide-vue-next'
+import { FileText, AlertCircle } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import { formatKeyKind, formatTtl, isViewableKind } from '../utils/redisKeys.js'
 import { formatBytes } from '../utils/format.js'
 

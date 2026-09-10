@@ -1,12 +1,13 @@
 <template>
   <div class="flex-1 overflow-y-auto">
-    <div v-if="loading" class="flex items-center justify-center py-8">
-      <Loader2 :size="16" class="animate-spin text-ink-2" />
-    </div>
-    <div v-else-if="databases.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
-      <Database :size="20" class="mb-2 opacity-50" />
-      <p class="text-xs">No databases loaded</p>
-    </div>
+    <EmptyState v-if="loading" state="loading" title="Loading databases…" />
+    <EmptyState
+      v-else-if="databases.length === 0"
+      state="empty"
+      :icon="Database"
+      title="No databases"
+      hint="This connection has no databases to browse"
+    />
     <div v-else class="py-1">
       <div
         v-for="db in databases"
@@ -78,7 +79,8 @@
 </template>
 
 <script setup>
-import { Database, Table, ChevronRight, Loader2 } from 'lucide-vue-next'
+import { Database, Table, ChevronRight } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import { isSelected as isSelectedIn, dbSelectionState as dbSelectionStateIn } from '../utils/mongoSelection.js'
 
 const props = defineProps({
