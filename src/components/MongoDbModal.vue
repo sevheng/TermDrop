@@ -29,6 +29,7 @@
             v-model="remoteFields"
             :errors="remoteErrors"
             :is-srv="isRemoteSrv"
+            :has-stored-secret="storedSecrets.remote"
             host-placeholder="host or IP"
             options-placeholder="retryWrites=true&replicaSet=rs0"
             @uri-input="syncFormFromUri('remote')"
@@ -53,6 +54,7 @@
               v-model="localFields"
               :errors="localErrors"
               :is-srv="isLocalSrv"
+              :has-stored-secret="storedSecrets.local"
               host-placeholder="localhost"
               options-placeholder="retryWrites=true"
               @uri-input="syncFormFromUri('local')"
@@ -95,6 +97,7 @@ import { Loader2 } from 'lucide-vue-next'
 import { parseMongoUri, buildMongoUri, parseUriToForm } from '../composables/useMongoUri.js'
 import ModalShell from './ModalShell.vue'
 import MongoConnectionFields from './MongoConnectionFields.vue'
+import { invoke } from '../utils/invoke.js'
 
 const props = defineProps({
   show: Boolean,
@@ -228,10 +231,6 @@ function resetForm() {
 
   nextTick(() => nameInput.value?.focus())
 }
-
-watch(() => props.show, (visible) => {
-  if (visible) resetForm()
-})
 
 function inputClass(field) {
   const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
@@ -368,11 +367,35 @@ function onKeydown(e) {
 
 watch(() => props.show, (visible) => {
   if (visible) {
+    resetForm()
+    loadStoredSecrets()
     window.addEventListener('keydown', onKeydown)
   } else {
     window.removeEventListener('keydown', onKeydown)
   }
 })
+
+/**
+ * Whether each side already has a password in the keyring.
+ *
+ * The password itself is never sent to the frontend, so the field renders empty
+ * on edit; without this the user cannot tell "no password" from "not shown".
+ */
+const storedSecrets = ref({ remote: false, local: false })
+
+async function loadStoredSecrets() {
+  storedSecrets.value = { remote: false, local: false }
+  const hostId = props.host?.id
+  if (!hostId) return
+  for (const side of ['remote', 'local']) {
+    try {
+      storedSecrets.value[side] = await invoke('mongodb_has_secret', { hostId, side })
+    } catch {
+      // Not knowing is not worth blocking the dialog over.
+      storedSecrets.value[side] = false
+    }
+  }
+}
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
