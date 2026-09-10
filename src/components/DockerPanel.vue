@@ -25,50 +25,63 @@
 
     <!-- Container list -->
     <div class="flex-1 min-h-[80px] relative">
-      <div v-if="loading" class="flex items-center justify-center py-8">
-        <Loader2 :size="16" class="animate-spin text-ink-2" />
-      </div>
-      <div v-else-if="dockerNotInstalled" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
-        <p class="text-xs text-ink mb-1">Docker is not installed</p>
-        <p class="text-2xs text-ink-2 mb-3">This host does not have Docker available</p>
-        <button
-          v-if="!installing"
-          @click="installDocker"
-          class="px-3 py-1.5 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded font-medium"
-        >
-          Install Docker
-        </button>
-        <div v-else class="flex items-center gap-2 text-2xs text-ink-2">
-          <Loader2 :size="14" class="animate-spin" />
-          <span>Installing Docker... this may take a minute</span>
-        </div>
-        <p class="text-2xs text-ink-3 mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
-      </div>
-      <div v-else-if="daemonNotRunning" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
-        <p class="text-xs text-ink mb-1">Docker daemon is not running</p>
-        <p class="text-2xs text-ink-2 mb-2">Docker is installed but the service is stopped</p>
-        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-2xs text-ink-3 mb-1">Start it by running in terminal:</p>
+      <EmptyState v-if="loading" state="loading" title="Loading containers…" />
+
+      <EmptyState
+        v-else-if="dockerNotInstalled"
+        state="empty"
+        :icon="Container"
+        title="Docker is not installed"
+        hint="This host does not have Docker available"
+        action-label="Install Docker"
+        :action-pending="installing"
+        pending-label="Installing… this may take a minute"
+        @action="installDocker"
+      >
+        <p class="text-2xs text-ink-3 mt-2 font-mono">curl -fsSL https://get.docker.com | sh</p>
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="daemonNotRunning"
+        state="empty"
+        :icon="Container"
+        title="Docker daemon is not running"
+        hint="Docker is installed but the service is stopped"
+      >
+        <!-- The command is the answer here, so it stays copyable rather than
+             being flattened into prose. -->
+        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs mt-3">
+          <p class="text-2xs text-ink-3 mb-1">Start it by running in a terminal:</p>
           <code class="text-2xs text-good font-mono block">sudo systemctl start docker</code>
         </div>
-      </div>
-      <div v-else-if="permissionDenied" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
-        <p class="text-xs text-ink mb-1">Docker permission denied</p>
-        <p class="text-2xs text-ink-2 mb-2">Your user is not in the <code class="text-warn">docker</code> group</p>
-        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-2xs text-ink-3 mb-1">Fix by running in terminal:</p>
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="permissionDenied"
+        state="empty"
+        :icon="Container"
+        title="Docker permission denied"
+        hint="Your user is not in the docker group"
+      >
+        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs mt-3">
+          <p class="text-2xs text-ink-3 mb-1">Fix by running in a terminal:</p>
           <code class="text-2xs text-good font-mono block">sudo usermod -aG docker $USER</code>
           <p class="text-2xs text-ink-3 mt-1">Then reconnect this session</p>
         </div>
-      </div>
-      <div v-else-if="containers.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
-        <Container :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">No containers</p>
-        <p class="text-2xs mt-1">Connect to a host with Docker</p>
-      </div>
+      </EmptyState>
+
+      <!-- "None running" and "none at all" are different answers, and the
+           Show all toggle is what resolves the first. -->
+      <EmptyState
+        v-else-if="containers.length === 0"
+        :state="showAll ? 'empty' : 'filtered'"
+        :icon="Container"
+        :title="showAll ? 'No containers on this host' : 'No running containers'"
+        :hint="showAll ? undefined : 'Stopped containers are hidden'"
+        :action-label="showAll ? undefined : 'Show all'"
+        @action="showAll = true; loadContainers()"
+      />
+
       <VirtualList
         v-else
         :items="containers"
@@ -153,10 +166,11 @@
 import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { invoke } from '../utils/invoke.js'
 import {
-  RefreshCw, Loader2, Container,
+  RefreshCw, Container,
   Play, Square, RotateCcw, FileText, Terminal,
 } from 'lucide-vue-next'
 import VirtualList from './VirtualList.vue'
+import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { shellEscape } from '../utils/shell.js'
 import { toast } from '../utils/toast.js'

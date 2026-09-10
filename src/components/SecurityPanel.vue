@@ -18,38 +18,32 @@
 
     <!-- Content -->
     <div class="flex-1 overflow-y-auto">
-      <!-- Loading (background audit running) -->
-      <div v-if="loading" class="flex flex-col items-center justify-center py-12">
-        <Loader2 :size="20" class="animate-spin text-ink-2 mb-2" />
-        <span class="text-xs text-ink-2">Running security audit...</span>
-        <span class="text-2xs text-ink-3 mt-1">Switch tabs freely — results will appear here</span>
-      </div>
+      <EmptyState
+        v-if="loading"
+        state="loading"
+        title="Running security audit…"
+        hint="Switch tabs freely — results will appear here"
+      />
 
-      <!-- Error -->
-      <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-ink-3">
-        <ShieldAlert :size="24" class="mb-2 text-bad opacity-50" />
-        <p class="text-xs text-bad">Audit failed</p>
-        <p class="text-2xs mt-1">{{ error }}</p>
-        <button
-          @click="runAudit(true)"
-          class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
-        >
-          Retry
-        </button>
-      </div>
+      <EmptyState
+        v-else-if="error"
+        state="error"
+        :icon="ShieldAlert"
+        title="Audit failed"
+        :hint="error"
+        action-label="Retry"
+        @action="runAudit(true)"
+      />
 
-      <!-- Empty -->
-      <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-ink-3">
-        <Shield :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">No audit has run for this host</p>
-        <p class="text-2xs mt-1">The audit runs privileged probes on the server</p>
-        <button
-          @click="runAudit(true)"
-          class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
-        >
-          Run Audit
-        </button>
-      </div>
+      <EmptyState
+        v-else-if="!report"
+        state="empty"
+        :icon="Shield"
+        title="No audit has run for this host"
+        hint="The audit runs privileged probes on the server"
+        action-label="Run audit"
+        @action="runAudit(true)"
+      />
 
       <!-- Report -->
       <div v-else>
@@ -155,9 +149,10 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, onActivated, watch, computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
-import { RefreshCw, Loader2, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight, Copy, TerminalSquare } from 'lucide-vue-next'
+import { RefreshCw, Shield, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, ChevronRight, Copy, TerminalSquare } from 'lucide-vue-next'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
+import EmptyState from './EmptyState.vue'
 
 const props = defineProps({
   hostId: {
