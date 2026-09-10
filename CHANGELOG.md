@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **MongoDB document browser** — open any collection from the database tree to read its documents. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
+  - A 24-character hex `_id` is treated as an ObjectId, so the common shorthand matches instead of silently returning nothing
+  - Values are shown without losing precision — large integers and `Decimal128` keep their exact value rather than being rounded through a floating-point number
+  - An unfiltered count is read from collection metadata rather than scanning, so opening a very large collection stays fast
+  - Query errors appear under the filter box rather than as a toast that disappears while you are still editing
+
+### Changed
+- **MongoDB connections are pooled and time-limited.** Expanding a database no longer opens a fresh connection each time, and an unreachable host now fails in seconds instead of hanging on the driver's 30-second default. Sync, dump and restore remain unbounded.
+
 ### Security
 - **MongoDB passwords are no longer stored in the database.** They move to the OS keyring (or the existing encrypted-file fallback) on first launch and the stored URI keeps only the username. Existing rows are migrated automatically; a keyring failure leaves the row untouched and retries next launch rather than losing the password.
   - Host **exports no longer contain MongoDB passwords**, and importing an older export strips them instead of writing plaintext back
