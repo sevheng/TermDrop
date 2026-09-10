@@ -13,6 +13,8 @@ import { terminalTheme } from '../themes/index.js'
  */
 
 export const THEMES = ['dark', 'light']
+// Read by the inline script in index.html before first paint. Kept in sync
+// here; nothing else in the app should read it, because SQLite is the record.
 const STORAGE_KEY = 'td-theme'
 
 export const theme = ref('dark')
@@ -29,16 +31,6 @@ export function applyTheme(next) {
   } catch {
     // Private mode or blocked storage: the setting in SQLite is the record
     // that matters, this is only to avoid a flash of the wrong theme.
-  }
-}
-
-/** The last known choice, for the first paint. */
-export function storedTheme() {
-  try {
-    const v = localStorage.getItem(STORAGE_KEY)
-    return THEMES.includes(v) ? v : 'dark'
-  } catch {
-    return 'dark'
   }
 }
 

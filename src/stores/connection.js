@@ -7,7 +7,7 @@ import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
-import { applyTheme, storedTheme } from '../composables/useTheme.js'
+import { applyTheme } from '../composables/useTheme.js'
 
 
 
@@ -435,10 +435,11 @@ export const useConnectionStore = defineStore('connection', () => {
     settings.value = {
       font_size: font_size || '14',
       download_path: download_path || '',
-      theme: theme || storedTheme(),
+      // SQLite is the record. localStorage is only a paint-time cache to stop
+      // the wrong theme flashing before this resolves, so it must not win
+      // here — a stale mirror would otherwise override the default.
+      theme: theme || 'dark',
     }
-    // SQLite is the record; localStorage only avoids a flash of the wrong
-    // theme on the next start, so reconcile them here.
     applyTheme(settings.value.theme)
     return settings.value
   }

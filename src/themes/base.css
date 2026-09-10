@@ -6,6 +6,18 @@
  * tokens.css via Tailwind utilities.
  */
 
+/* Native widgets — select popups, scrollbars, spinners, the caret — are drawn
+   by the platform, not by our CSS. Without this the engine assumes a light
+   page and paints a light <select>, which our light text then vanishes into.
+   It is set alongside the token blocks so the two can never disagree. */
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
 body {
   background-color: rgb(var(--td-canvas));
   color: rgb(var(--td-ink));
@@ -39,4 +51,11 @@ code, kbd, samp, pre, .font-mono {
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* The dropdown list is a separate native surface and does not inherit the
+   closed control's colours in WebKitGTK, so name them explicitly. */
+select option {
+  background-color: rgb(var(--td-overlay));
+  color: rgb(var(--td-ink));
 }

@@ -492,7 +492,12 @@ onMounted(() => {
   const savedSftpWidth = localStorage.getItem('sftp-width')
   if (savedSftpWidth) sftpWidth.value = parseInt(savedSftpWidth)
 
-  document.documentElement.classList.add('dark')
+  // Settings are the record for the theme, the terminal font size and the
+  // download path. Nothing loaded them at startup, so the persisted theme was
+  // never applied until the Settings dialog happened to be opened. (This used
+  // to force `classList.add('dark')` here unconditionally, which overrode the
+  // choice even once it was loaded.)
+  store.loadSettings().catch(() => {})
 
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
