@@ -323,7 +323,12 @@ where
                     let _ = stderr_thread.join();
                     if status.success() {
                         let lines = stderr_lines.lock().unwrap();
-                        let recent: Vec<_> = lines.iter().rev().take(30).cloned().collect();
+                        let recent: Vec<_> = lines
+                            .iter()
+                            .rev()
+                            .take(30)
+                            .map(|l| redact_uris_in_text(l))
+                            .collect();
                         tracing::debug!(
                             label = label,
                             stage = stage,
@@ -334,11 +339,13 @@ where
                         return Ok(());
                     }
                     let lines = stderr_lines.lock().unwrap();
+                    // Redact here so neither the log, the retry decision, nor the
+                    // toast this becomes can carry the connection string.
                     let err = lines
                         .iter()
                         .rev()
                         .take(30)
-                        .cloned()
+                        .map(|l| redact_uris_in_text(l))
                         .collect::<Vec<_>>()
                         .join("\n");
                     if is_retryable_error(&err) && attempt < max_retries - 1 {
@@ -442,6 +449,82 @@ fn mongo_uri_has_path(uri: &str) -> bool {
         .find(&['/', '?', '#'][..])
         .map(|idx| uri.as_bytes()[authority_start + idx] == b'/')
         .unwrap_or(false)
+}
+
+/// The byte range of a URI's authority (everything between `://` and the
+/// first `/`, `?` or `#`). Shared by the userinfo helpers below.
+fn authority_range(uri: &str) -> Option<(usize, usize)> {
+    let scheme_end = uri.find("://")?;
+    let start = scheme_end + 3;
+    let end = uri[start..]
+        .find(&['/', '?', '#'][..])
+        .map(|idx| start + idx)
+        .unwrap_or(uri.len());
+    Some((start, end))
+}
+
+/// The byte range of the userinfo inside the authority, if the URI has one.
+///
+/// Takes the *last* `@` in the authority: a percent-encoded password cannot
+/// contain a literal `@`, but a host list can't either, so the last one is the
+/// separator in every valid form.
+fn userinfo_range(uri: &str) -> Option<(usize, usize)> {
+    let (start, end) = authority_range(uri)?;
+    let at = uri[start..end].rfind('@')? + start;
+    Some((start, at))
+}
+
+/// Replace a URI's credentials with `***` so it can be logged.
+///
+/// Connection strings reach the log through command arguments and through
+/// mongodump/mongorestore stderr, both of which echo them verbatim.
+pub fn redact_mongo_uri(uri: &str) -> String {
+    let Some((start, at)) = userinfo_range(uri) else {
+        return uri.to_string();
+    };
+    let userinfo = &uri[start..at];
+    let masked = match userinfo.find(':') {
+        Some(_) => "***:***",
+        None => "***",
+    };
+    format!("{}{}{}", &uri[..start], masked, &uri[at..])
+}
+
+/// Redact every MongoDB connection string embedded in free text.
+///
+/// The CLI tools echo the connection string back in their own error output, so
+/// their stderr reaches both the log and the user-facing toast. Scan for the
+/// scheme and redact each URI-shaped token in place.
+pub fn redact_uris_in_text(text: &str) -> String {
+    const SCHEMES: [&str; 2] = ["mongodb+srv://", "mongodb://"];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    'outer: loop {
+        // Find whichever scheme appears first in what is left.
+        let mut best: Option<(usize, &str)> = None;
+        for scheme in SCHEMES {
+            if let Some(idx) = rest.find(scheme) {
+                if best.is_none_or(|(b, _)| idx < b) {
+                    best = Some((idx, scheme));
+                }
+            }
+        }
+        let Some((idx, _)) = best else { break 'outer };
+
+        // The URI runs to the next character that cannot appear in one.
+        let tail = &rest[idx..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ')'))
+            .unwrap_or(tail.len());
+
+        out.push_str(&rest[..idx]);
+        out.push_str(&redact_mongo_uri(&tail[..end]));
+        rest = &tail[end..];
+    }
+
+    out.push_str(rest);
+    out
 }
 
 /// Ensure a MongoDB URI authenticates against the `admin` database when
@@ -585,7 +668,10 @@ pub async fn sync_collections(
                 // try_cli_sync already emitted mongodb-sync-cancelled
                 return Err(e);
             }
-            tracing::info!("CLI sync failed ({}), falling back to driver", e);
+            tracing::warn!(
+                "CLI sync failed ({}), falling back to a document-only driver copy",
+                redact_uris_in_text(&e)
+            );
         }
     }
 
@@ -907,7 +993,10 @@ pub async fn restore_collections(
 
             tracing::debug!(
                 program = %cmd.get_program().to_string_lossy(),
-                args = ?cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                args = ?cmd
+                    .get_args()
+                    .map(|a| redact_uris_in_text(&a.to_string_lossy()))
+                    .collect::<Vec<_>>(),
                 "mongorestore command"
             );
 
@@ -1156,6 +1245,62 @@ mod tests {
         let a = args(&cmd);
         assert!(a.contains(&"--nsInclude=mydb.*".to_string()));
         assert!(!a.contains(&"--db=mydb".to_string()));
+    }
+
+    #[test]
+    fn redact_covers_every_uri_shape() {
+        // credentials -> masked
+        assert_eq!(
+            redact_mongo_uri("mongodb://user:pass@localhost:27017/db"),
+            "mongodb://***:***@localhost:27017/db"
+        );
+        // username with no password
+        assert_eq!(
+            redact_mongo_uri("mongodb://user@localhost:27017"),
+            "mongodb://***@localhost:27017"
+        );
+        // no credentials -> untouched
+        assert_eq!(
+            redact_mongo_uri("mongodb://localhost:27017/db"),
+            "mongodb://localhost:27017/db"
+        );
+        // srv
+        assert_eq!(
+            redact_mongo_uri("mongodb+srv://u:p@cluster.example.net/db?retryWrites=true"),
+            "mongodb+srv://***:***@cluster.example.net/db?retryWrites=true"
+        );
+        // multi-host seedlist
+        assert_eq!(
+            redact_mongo_uri("mongodb://u:p@h1:27017,h2:27017/db"),
+            "mongodb://***:***@h1:27017,h2:27017/db"
+        );
+        // IPv6 literal
+        assert_eq!(
+            redact_mongo_uri("mongodb://u:p@[::1]:27017/db"),
+            "mongodb://***:***@[::1]:27017/db"
+        );
+        // an @ in the host list must not be mistaken for the separator
+        assert_eq!(
+            redact_mongo_uri("mongodb://localhost:27017/?appName=a@b"),
+            "mongodb://localhost:27017/?appName=a@b"
+        );
+    }
+
+    #[test]
+    fn redact_scrubs_uris_out_of_tool_stderr() {
+        let stderr = "Failed: can\'t create session: connection() error occurred during \
+connection handshake: auth error: sasl conversation error: unable to authenticate \
+using mechanism \"SCRAM-SHA-1\": (AuthenticationFailed) Authentication failed., \
+uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
+        let out = redact_uris_in_text(stderr);
+        assert!(!out.contains("hunter2"), "password survived: {}", out);
+        assert!(out.contains("mongodb://***:***@10.0.0.5:27017/?authSource=admin"));
+    }
+
+    #[test]
+    fn redact_leaves_text_without_uris_alone() {
+        let plain = "mongorestore failed: no such file or directory";
+        assert_eq!(redact_uris_in_text(plain), plain);
     }
 
     #[test]
