@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
+  <ModalShell
+    @close="$emit('cancel')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
       <div class="flex items-start gap-3 mb-4">
         <div class="shrink-0 mt-0.5">
           <AlertTriangle :size="20" class="text-warn" />

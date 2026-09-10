@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-5">{{ isEditing ? 'Edit Port Forward' : 'Add Port Forward' }}</h3>
 
       <div class="space-y-4">

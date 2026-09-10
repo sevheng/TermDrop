@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="state.show" z="z-[100]" panel-class="p-6 w-[32rem] shadow-xl">
+  <ModalShell
+    @close="$emit('cancel')" :show="state.show" z="z-[100]" panel-class="p-6 w-[32rem] shadow-xl">
     <h3 class="text-base font-medium text-ink mb-1">Restore into {{ connectionName }}</h3>
     <p class="text-xs text-ink-2 mb-4 break-all">{{ state.path }}</p>
 

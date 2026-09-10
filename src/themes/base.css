@@ -59,3 +59,18 @@ select option {
   background-color: rgb(var(--td-overlay));
   color: rgb(var(--td-ink));
 }
+
+/*
+ * A visible focus ring, everywhere, for keyboard users only.
+ *
+ * The app carried 15 `focus:outline-none` and not one `focus-visible`, so it
+ * removed focus rings and never put one back except on inputs — the whole
+ * interface was keyboard-invisible. `:where()` keeps specificity at zero so
+ * any component that draws its own ring still wins, and `focus-visible` means
+ * a mouse click never shows one, which would be worse than nothing.
+ */
+:where(button, [href], summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid rgb(var(--td-accent));
+  outline-offset: -1px;
+  border-radius: 2px;
+}

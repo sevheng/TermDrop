@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] max-w-[90vw] shadow-xl max-h-[80vh] flex flex-col">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] max-w-[90vw] shadow-xl max-h-[80vh] flex flex-col">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-base font-semibold text-ink">Keyboard Shortcuts</h3>
         <button @click="onClose" class="text-ink-3 hover:text-ink">×</button>

@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-6 w-[420px] shadow-2xl">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-6 w-[420px] shadow-2xl">
       <div class="flex items-center gap-2 mb-3">
         <span class="text-2xl">🎉</span>
         <h3 class="text-lg font-semibold text-ink">Update Available</h3>

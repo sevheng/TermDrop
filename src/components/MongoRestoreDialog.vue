@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="state.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
+  <ModalShell
+    @close="$emit('cancel')" :show="state.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
       <h3 class="text-base font-semibold text-ink mb-3">
         Confirm restore into <span class="text-accent-soft">{{ connectionName }}</span>
       </h3>

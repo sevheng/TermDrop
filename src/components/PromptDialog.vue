@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
+  <ModalShell
+    @close="$emit('cancel')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
       <h3 class="text-base font-semibold text-ink mb-1">{{ title }}</h3>
       <p v-if="message" class="text-sm text-ink-2 mb-3">{{ message }}</p>
 

@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/50" z="z-50" panel-class="p-6 w-96 shadow-xl">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/50" z="z-50" panel-class="p-6 w-96 shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-4">Settings</h3>
 
       <div class="space-y-2">

@@ -1,5 +1,6 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-80 shadow-xl">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-80 shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isRename ? 'Rename Group' : 'New Group' }}
       </h3>

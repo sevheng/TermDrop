@@ -1,5 +1,6 @@
 <template>
   <ModalShell
+    @close="$emit('close')"
     :show="show"
     panel-class="p-6 w-[30rem] shadow-xl max-h-[90vh] overflow-y-auto"
   >
