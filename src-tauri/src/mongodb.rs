@@ -167,9 +167,13 @@ fn build_restore_cmd(
     input: &str,
     is_archive: bool,
     is_direct_db: bool,
+    drop_first: bool,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(tool);
-    cmd.arg(conn_arg).arg("--drop");
+    cmd.arg(conn_arg);
+    if drop_first {
+        cmd.arg("--drop");
+    }
 
     if is_archive {
         push_archive_args(&mut cmd, input);
@@ -201,9 +205,13 @@ fn build_restore_archive_cmd(
     conn_arg: &str,
     includes: &[String],
     input: &str,
+    drop_first: bool,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(tool);
-    cmd.arg(conn_arg).arg("--drop");
+    cmd.arg(conn_arg);
+    if drop_first {
+        cmd.arg("--drop");
+    }
     push_archive_args(&mut cmd, input);
 
     for ns in includes {
@@ -831,6 +839,7 @@ pub async fn restore_collections(
     collections: Vec<String>,
     input_dir: &str,
     is_archive: bool,
+    drop_first: bool,
 ) -> Result<(), String> {
     let remote_uri = prepare_cli_uri(remote_uri);
     let db = db.to_string();
@@ -893,6 +902,7 @@ pub async fn restore_collections(
                 if is_archive { &input_dir } else { &restore_dir },
                 is_archive,
                 is_direct_db,
+                drop_first,
             );
 
             tracing::debug!(
@@ -917,6 +927,7 @@ pub async fn restore_archive(
     remote_uri: &str,
     includes: Vec<String>,
     input_path: &str,
+    drop_first: bool,
 ) -> Result<(), String> {
     let remote_uri = prepare_cli_uri(remote_uri);
     let input_path = input_path.to_string();
@@ -936,6 +947,7 @@ pub async fn restore_archive(
                 &format!("--uri={}", &remote_uri),
                 &includes,
                 &input_path,
+                drop_first,
             ))
         },
     )
@@ -1130,6 +1142,7 @@ mod tests {
             "/dump/mydb",
             false,
             true,
+            true,
         );
         let a = args(&cmd);
         assert!(a.contains(&"--db=mydb".to_string()));
@@ -1139,10 +1152,36 @@ mod tests {
 
     #[test]
     fn restore_cmd_dump_root_without_collections_includes_whole_db() {
-        let cmd = build_restore_cmd(dummy(), "--uri=U", "mydb", &[], "/dump", false, false);
+        let cmd = build_restore_cmd(dummy(), "--uri=U", "mydb", &[], "/dump", false, false, true);
         let a = args(&cmd);
         assert!(a.contains(&"--nsInclude=mydb.*".to_string()));
         assert!(!a.contains(&"--db=mydb".to_string()));
+    }
+
+    #[test]
+    fn restore_never_drops_unless_asked() {
+        // Restoring into a live cluster must not destroy the target unless the
+        // caller opted in; --drop used to be hardcoded.
+        let folder = build_restore_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &["a".to_string()],
+            "/dump/mydb",
+            false,
+            true,
+            false,
+        );
+        assert!(!args(&folder).contains(&"--drop".to_string()));
+
+        let archive = build_restore_archive_cmd(
+            dummy(),
+            "--uri=U",
+            &["db1.c1".to_string()],
+            "/tmp/a.gz",
+            false,
+        );
+        assert!(!args(&archive).contains(&"--drop".to_string()));
     }
 
     #[test]
@@ -1152,6 +1191,7 @@ mod tests {
             "--uri=U",
             &["db1.c1".to_string(), "db2.c2".to_string()],
             "/tmp/a.gz",
+            true,
         );
         let a = args(&cmd);
         assert!(a.contains(&"--nsInclude=db1.c1".to_string()));

@@ -312,8 +312,23 @@
           <p v-else class="text-[#75beff]">
             No database selected — everything in the source will be restored.
           </p>
-          <p class="text-[#f44336]">
-            Existing collections in the target database will be dropped before restoring.
+          <label class="flex items-start gap-2 pt-1 cursor-pointer">
+            <input
+              type="checkbox"
+              v-model="restoreConfirm.dropFirst"
+              class="accent-[#f44336] mt-0.5 shrink-0"
+            />
+            <span class="text-xs">
+              Drop existing collections in the target first
+            </span>
+          </label>
+          <p v-if="restoreConfirm.dropFirst" class="text-[#f44336] text-xs">
+            Existing collections in the target database will be dropped before
+            restoring. This cannot be undone.
+          </p>
+          <p v-else class="text-[#858585] text-xs">
+            Existing documents are kept. Documents whose <span class="font-mono">_id</span>
+            already exists will be reported as failures, not overwritten.
           </p>
         </div>
         <div class="flex justify-end gap-2 mt-5">
@@ -325,7 +340,10 @@
           </button>
           <button
             @click="confirmRestore"
-            class="px-3 py-1.5 text-sm text-white rounded bg-[#f44336] hover:bg-[#d32f2f] transition-colors"
+            class="px-3 py-1.5 text-sm text-white rounded transition-colors"
+            :class="restoreConfirm.dropFirst
+              ? 'bg-[#f44336] hover:bg-[#d32f2f]'
+              : 'bg-[#007acc] hover:bg-[#1f8ad2]'"
           >
             Restore
           </button>
@@ -396,6 +414,8 @@ const restoreConfirm = ref({
   isArchive: false,
   entries: [],
   sourceDbs: [],
+  // Dropping the target is destructive and has no undo, so it is opt-in.
+  dropFirst: false,
 })
 
 function resetOperationState() {
@@ -632,6 +652,7 @@ function openRestoreConfirm(inputPath, isArchive, sourceDbs = []) {
     isArchive,
     entries: buildEntries(selectedCollections.value),
     sourceDbs,
+    dropFirst: false,
   }
 }
 
@@ -640,9 +661,9 @@ function cancelRestore() {
 }
 
 async function confirmRestore() {
-  const { inputPath, isArchive, sourceDbs } = restoreConfirm.value
+  const { inputPath, isArchive, sourceDbs, dropFirst } = restoreConfirm.value
   restoreConfirm.value.show = false
-  await runRestore(inputPath, isArchive, restoreConfirm.value.entries, sourceDbs)
+  await runRestore(inputPath, isArchive, restoreConfirm.value.entries, sourceDbs, dropFirst)
 }
 
 async function startRestoreFolder() {
@@ -716,7 +737,7 @@ function folderRestoreJobs(entries, sourceDbs) {
   }))
 }
 
-async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
+async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFirst = false) {
   if (!remoteUri.value) return
 
   beginOperation(isArchive ? 'restore-archive' : 'restore-folder')
@@ -737,6 +758,7 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
         remoteUri: remoteUri.value,
         includes,
         inputPath,
+        dropFirst,
         opId: currentOpId.value,
       })
       toast(hasSelection ? 'Restored selected collections from archive' : 'Restored archive', 'success')
@@ -753,6 +775,7 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = []) {
           collections: job.collections,
           inputDir: inputPath,
           isArchive: false,
+          dropFirst,
           opId: currentOpId.value,
         })
         toast(job.success, 'success')

@@ -1369,6 +1369,7 @@ async fn mongodb_restore(
     collections: Vec<String>,
     input_dir: String,
     is_archive: bool,
+    drop_first: bool,
 ) -> Result<(), String> {
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_collections(
@@ -1381,6 +1382,7 @@ async fn mongodb_restore(
             collections,
             &input_dir,
             is_archive,
+            drop_first,
         )
     })
     .await
@@ -1394,6 +1396,7 @@ async fn mongodb_restore_archive(
     remote_uri: String,
     includes: Vec<String>,
     input_path: String,
+    drop_first: bool,
 ) -> Result<(), String> {
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_archive(
@@ -1404,6 +1407,7 @@ async fn mongodb_restore_archive(
             &remote_uri,
             includes,
             &input_path,
+            drop_first,
         )
     })
     .await
