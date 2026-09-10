@@ -140,6 +140,7 @@
                 v-else-if="rightPanelTab === 'security' && store.activeTab"
                 :key="'security-' + store.activeTab.hostId"
                 :hostId="store.activeTab.hostId"
+                @sendToTerminal="onSendToTerminal"
                 class="w-full h-full"
               />
               <SftpPanel
@@ -215,6 +216,7 @@ import PromptDialog from '../components/PromptDialog.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Terminal as TerminalIcon, Settings, Loader2, Keyboard, X, Database } from 'lucide-vue-next'
 import { toast } from '../utils/toast.js'
+import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 
 defineEmits(['update-available'])
@@ -268,6 +270,42 @@ function confirmDisconnect(sessionId, name) {
       } else {
         store.disconnect(sessionId)
       }
+    },
+  })
+}
+
+/** Asked once per app run, then remembered. */
+let terminalInsertConfirmed = false
+
+/**
+ * Types a command at the active terminal's prompt. The panel is keyed to the
+ * active tab, so the target shell is never ambiguous. TerminalTab writes it
+ * without a trailing newline; nothing runs until the user presses Enter.
+ *
+ * The confirm is about where the characters land, not about running them. A
+ * terminal sitting in less or top or vim takes single keys as commands, so the
+ * first send explains that before anything is typed.
+ */
+function onSendToTerminal(command) {
+  const tab = store.activeTab
+  if (!canReceiveCommand(tab) || !isInsertableCommand(command)) return
+
+  const send = () => window.dispatchEvent(new CustomEvent('terminal-insert-command', {
+    detail: { sessionId: tab.id, command }
+  }))
+
+  if (terminalInsertConfirmed) {
+    send()
+    return
+  }
+  openConfirm({
+    title: 'Send to Terminal',
+    message: 'The command is typed at the prompt and not run — you press Enter. '
+      + 'If the terminal is inside an editor or pager instead of at a shell prompt, '
+      + 'the characters go to that program. Send it?',
+    onConfirm: () => {
+      terminalInsertConfirmed = true
+      send()
     },
   })
 }

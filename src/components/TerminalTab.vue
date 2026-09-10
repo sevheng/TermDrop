@@ -313,6 +313,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
+import { isInsertableCommand, stripSubmit } from '../utils/terminalInsert.js'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
 import { TERMINAL_THEME } from '../themes/index.js'
 import { formatBytes } from '../utils/format.js'
@@ -690,6 +691,21 @@ function onDockerPaneOpen(event) {
   }
 }
 
+/**
+ * Types a command at this session's prompt. Deliberately sent with no trailing
+ * newline: the shell is often root-capable, so the user reviews the line and
+ * presses Enter. The guard is re-applied here because this is the last point
+ * before the bytes reach the shell.
+ */
+function onInsertCommand(event) {
+  const { sessionId, command } = event.detail || {}
+  if (sessionId !== props.sessionId) return
+  if (!isInsertableCommand(command)) return
+  invoke('ssh_write', { sessionId: props.sessionId, data: stripSubmit(command) }).catch(() => {})
+  // Move focus to the terminal so Enter goes to the shell, not the panel.
+  term?.focus()
+}
+
 function showTooltip(event, text) {
   tooltip.value = {
     show: true,
@@ -912,11 +928,13 @@ onMounted(async () => {
   }
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('docker-pane-open', onDockerPaneOpen)
+  window.addEventListener('terminal-insert-command', onInsertCommand)
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('docker-pane-open', onDockerPaneOpen)
+  window.removeEventListener('terminal-insert-command', onInsertCommand)
   disposeTerminal()
 })
 
