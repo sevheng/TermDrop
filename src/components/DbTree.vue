@@ -34,7 +34,11 @@
           />
           <Database :size="12" class="shrink-0 text-[#007acc]" />
           <span class="flex-1 truncate" @click.self="$emit('toggle-db', db.name)">{{ db.name }}</span>
-          <span class="text-[10px] text-[#6e6e6e]">{{ db.collections.length }} cols</span>
+          <!-- Collections load lazily, so an unexpanded database has no count to
+               report; printing "0 cols" claimed it was empty. -->
+          <span v-if="db.collections.length > 0" class="text-[10px] text-[#6e6e6e]">
+            {{ db.collections.length }} cols
+          </span>
         </div>
 
         <div v-if="expandedDbs.has(db.name)" class="pl-6 pr-2 py-1 space-y-0.5">
@@ -42,7 +46,10 @@
             v-for="coll in db.collections"
             :key="coll"
             class="group flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
-            :class="selectable ? 'cursor-pointer' : ''"
+            :class="selectable || browsable ? 'cursor-pointer' : ''"
+            :title="browsable ? 'Double-click to browse documents' : undefined"
+            @dblclick="browsable && $emit('open-collection', db.name, coll)"
+            @click="!selectable && browsable && $emit('open-collection', db.name, coll)"
           >
             <input
               v-if="selectable"
@@ -55,7 +62,7 @@
             <span class="truncate flex-1">{{ coll }}</span>
             <button
               v-if="browsable"
-              class="opacity-0 group-hover:opacity-100 text-[#75beff] hover:text-white px-1 shrink-0"
+              class="text-[#6e6e6e] hover:text-white focus-visible:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#007acc] rounded px-1 shrink-0"
               title="Browse documents"
               @click.stop.prevent="$emit('open-collection', db.name, coll)"
             >

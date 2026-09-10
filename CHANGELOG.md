@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- **MongoDB document browser** — open any collection from the database tree to read its documents. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
+- **MongoDB document browser** — double-click any collection in the database tree, or use the browse icon on its row, to read its documents. Documents show as a **table** whose columns are the fields found on the page, so several documents can be compared at a glance; a toggle switches to the JSON view, and clicking a row expands the full document either way. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
   - A 24-character hex `_id` is treated as an ObjectId, so the common shorthand matches instead of silently returning nothing
   - Values are shown without losing precision — large integers and `Decimal128` keep their exact value rather than being rounded through a floating-point number
   - An unfiltered count is read from collection metadata rather than scanning, so opening a very large collection stays fast

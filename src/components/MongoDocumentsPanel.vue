@@ -1,5 +1,12 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-[95]" panel-class="w-[56rem] h-[80vh] flex flex-col shadow-xl">
+  <!-- .self so only the backdrop closes, never a click inside the panel. -->
+  <ModalShell
+    :show="show"
+    dim="bg-black/60"
+    z="z-[95]"
+    panel-class="w-[56rem] h-[80vh] flex flex-col shadow-xl"
+    @click.self="$emit('close')"
+  >
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-[#3c3c3c] shrink-0">
       <div class="min-w-0">
@@ -47,7 +54,20 @@
             @keydown.meta.enter="runQuery(0)"
           />
         </div>
-        <div class="flex items-end">
+        <div class="flex items-end gap-2">
+          <div class="flex rounded overflow-hidden border border-[#3c3c3c]">
+            <button
+              v-for="mode in ['table', 'json']"
+              :key="mode"
+              @click="viewMode = mode"
+              class="px-2 py-1.5 text-[11px] capitalize transition-colors"
+              :class="viewMode === mode
+                ? 'bg-[#0e639c] text-white'
+                : 'bg-[#3c3c3c] text-[#cccccc] hover:bg-[#4a4a4a]'"
+            >
+              {{ mode }}
+            </button>
+          </div>
           <button
             @click="runQuery(0)"
             :disabled="loading"
@@ -76,6 +96,70 @@
         <FileSearch :size="20" class="mb-2 opacity-50" />
         <p class="text-xs">{{ rangeLabel }}</p>
       </div>
+      <!-- Table: fields as columns, so documents can be compared at a glance. -->
+      <div v-else-if="viewMode === 'table'" class="overflow-x-auto">
+        <table class="w-full text-[11px] font-mono border-collapse">
+          <thead class="sticky top-0 bg-[#252526]">
+            <tr>
+              <th class="w-4 border-b border-[#3c3c3c]"></th>
+              <th
+                v-for="col in columns"
+                :key="col"
+                class="text-left font-medium text-[#858585] px-2 py-1 border-b border-[#3c3c3c] whitespace-nowrap"
+              >
+                {{ col }}
+              </th>
+              <th class="w-6 border-b border-[#3c3c3c]"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="(doc, i) in documents" :key="i">
+              <tr class="hover:bg-[#2a2d2e] cursor-pointer" @click="toggle(i)">
+                <td class="px-1 align-top text-[#858585]">
+                  <ChevronRight
+                    :size="10"
+                    class="transition-transform"
+                    :class="expanded.has(i) ? 'rotate-90' : ''"
+                  />
+                </td>
+                <td
+                  v-for="col in columns"
+                  :key="col"
+                  class="px-2 py-1 text-[#cccccc] max-w-[16rem] truncate"
+                  :title="cellFor(i, col)"
+                >
+                  {{ cellFor(i, col) }}
+                </td>
+                <td class="px-1 align-top">
+                  <button
+                    class="text-[#858585] hover:text-[#cccccc]"
+                    title="Copy document"
+                    @click.stop="copyDocument(doc)"
+                  >
+                    <Copy :size="11" />
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="expanded.has(i)">
+                <td :colspan="columns.length + 2" class="p-0">
+                  <pre
+                    class="px-3 py-2 text-[11px] text-[#cccccc] bg-[#1e1e1e] overflow-x-auto whitespace-pre"
+                  >{{ pretty(doc) }}</pre>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <p v-if="hiddenColumns > 0" class="text-[10px] text-[#858585] pt-2">
+          {{ hiddenColumns }} more field{{ hiddenColumns === 1 ? '' : 's' }} not shown —
+          open a row, or switch to JSON, to see everything.
+        </p>
+        <p v-if="truncated" class="text-[10px] text-[#e5c07b] pt-1">
+          Results were cut short because the page exceeded the size limit.
+        </p>
+      </div>
+
       <div v-else class="space-y-1">
         <div
           v-for="(doc, i) in documents"
@@ -152,13 +236,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { X, Loader2, ChevronRight, Copy, FileSearch } from 'lucide-vue-next'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import ModalShell from './ModalShell.vue'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { prettyPrintDocument, summarizeDocument } from '../utils/bsonDisplay.js'
+import { parseDocuments, deriveColumns, cellText } from '../utils/mongoTable.js'
 import {
   validateJsonInput,
   clampPageSize,
@@ -176,8 +261,32 @@ const props = defineProps({
   collection: { type: String, default: '' },
 })
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
+/**
+ * Escape and backdrop click close this panel.
+ *
+ * Handled here rather than in ModalShell: that overlay is shared with the
+ * restore confirm and the delete dialogs, and giving those backdrop-dismiss
+ * would quietly weaken a destructive confirmation.
+ */
+function onKeydown(e) {
+  if (e.key === 'Escape' && props.show) emit('close')
+}
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (visible) window.addEventListener('keydown', onKeydown)
+    else window.removeEventListener('keydown', onKeydown)
+  },
+)
+
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+
+// Table by default: it answers "what is in here?" faster than a list of JSON.
+// Kept across collections for the life of the panel, so the choice sticks.
+const viewMode = ref('table')
 const filterText = ref('')
 const sortText = ref('')
 const pageSize = ref(DEFAULT_PAGE_SIZE)
@@ -201,6 +310,21 @@ const maxPage = computed(() => lastPage(total.value, pageSize.value))
 const rangeLabel = computed(() =>
   describeRange(page.value, pageSize.value, documents.value.length, total.value, estimated.value),
 )
+
+/**
+ * The page parsed once for the table, rather than per cell. Documents in a
+ * collection need not share a shape, so the columns are the union of what this
+ * page actually contains.
+ */
+const parsedDocs = computed(() => parseDocuments(documents.value))
+const derived = computed(() => deriveColumns(parsedDocs.value))
+const columns = computed(() => derived.value.columns)
+const hiddenColumns = computed(() => derived.value.hidden)
+
+/** One cell, blank when this document simply lacks the field. */
+function cellFor(index, column) {
+  return cellText(parsedDocs.value[index]?.[column])
+}
 
 function summarize(doc) {
   return summarizeDocument(doc)
