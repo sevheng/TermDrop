@@ -1,70 +1,70 @@
 <template>
-  <div class="h-full flex flex-col bg-[#1e1e1e]">
+  <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-2 py-1 border-b border-[#3c3c3c]">
+    <div class="flex items-center justify-between px-2 py-1 border-b border-line">
       <div class="flex items-center gap-2">
         <button
           @click="loadContainers"
-          class="text-[#858585] hover:text-[#cccccc] p-1"
+          class="text-ink-2 hover:text-ink p-1"
           title="Refresh"
         >
           <RefreshCw :size="12" />
         </button>
-        <label class="flex items-center gap-1 text-[10px] text-[#858585] cursor-pointer select-none">
+        <label class="flex items-center gap-1 text-[10px] text-ink-2 cursor-pointer select-none">
           <input
             v-model="showAll"
             type="checkbox"
-            class="accent-[#007acc]"
+            class="accent-accent"
             @change="loadContainers"
           />
           Show all
         </label>
       </div>
-      <span class="text-[10px] text-[#6e6e6e]">{{ containers.length }} containers</span>
+      <span class="text-[10px] text-ink-3">{{ containers.length }} containers</span>
     </div>
 
     <!-- Container list -->
     <div class="flex-1 min-h-[80px] relative">
       <div v-if="loading" class="flex items-center justify-center py-8">
-        <Loader2 :size="16" class="animate-spin text-[#858585]" />
+        <Loader2 :size="16" class="animate-spin text-ink-2" />
       </div>
       <div v-else-if="dockerNotInstalled" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
-        <p class="text-xs text-[#cccccc] mb-1">Docker is not installed</p>
-        <p class="text-[10px] text-[#858585] mb-3">This host does not have Docker available</p>
+        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
+        <p class="text-xs text-ink mb-1">Docker is not installed</p>
+        <p class="text-[10px] text-ink-2 mb-3">This host does not have Docker available</p>
         <button
           v-if="!installing"
           @click="installDocker"
-          class="px-3 py-1.5 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded font-medium"
+          class="px-3 py-1.5 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded font-medium"
         >
           Install Docker
         </button>
-        <div v-else class="flex items-center gap-2 text-[10px] text-[#858585]">
+        <div v-else class="flex items-center gap-2 text-[10px] text-ink-2">
           <Loader2 :size="14" class="animate-spin" />
           <span>Installing Docker... this may take a minute</span>
         </div>
-        <p class="text-[10px] text-[#6e6e6e] mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
+        <p class="text-[10px] text-ink-3 mt-2">Runs: curl -fsSL https://get.docker.com | sh</p>
       </div>
       <div v-else-if="daemonNotRunning" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
-        <p class="text-xs text-[#cccccc] mb-1">Docker daemon is not running</p>
-        <p class="text-[10px] text-[#858585] mb-2">Docker is installed but the service is stopped</p>
-        <div class="bg-[#252526] border border-[#3c3c3c] rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-[10px] text-[#6e6e6e] mb-1">Start it by running in terminal:</p>
-          <code class="text-[10px] text-[#89d185] font-mono block">sudo systemctl start docker</code>
+        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
+        <p class="text-xs text-ink mb-1">Docker daemon is not running</p>
+        <p class="text-[10px] text-ink-2 mb-2">Docker is installed but the service is stopped</p>
+        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
+          <p class="text-[10px] text-ink-3 mb-1">Start it by running in terminal:</p>
+          <code class="text-[10px] text-good font-mono block">sudo systemctl start docker</code>
         </div>
       </div>
       <div v-else-if="permissionDenied" class="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <Container :size="28" class="mb-3 text-[#6e6e6e] opacity-50" />
-        <p class="text-xs text-[#cccccc] mb-1">Docker permission denied</p>
-        <p class="text-[10px] text-[#858585] mb-2">Your user is not in the <code class="text-[#cca700]">docker</code> group</p>
-        <div class="bg-[#252526] border border-[#3c3c3c] rounded px-3 py-2 text-left max-w-xs">
-          <p class="text-[10px] text-[#6e6e6e] mb-1">Fix by running in terminal:</p>
-          <code class="text-[10px] text-[#89d185] font-mono block">sudo usermod -aG docker $USER</code>
-          <p class="text-[10px] text-[#6e6e6e] mt-1">Then reconnect this session</p>
+        <Container :size="28" class="mb-3 text-ink-3 opacity-50" />
+        <p class="text-xs text-ink mb-1">Docker permission denied</p>
+        <p class="text-[10px] text-ink-2 mb-2">Your user is not in the <code class="text-warn">docker</code> group</p>
+        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs">
+          <p class="text-[10px] text-ink-3 mb-1">Fix by running in terminal:</p>
+          <code class="text-[10px] text-good font-mono block">sudo usermod -aG docker $USER</code>
+          <p class="text-[10px] text-ink-3 mt-1">Then reconnect this session</p>
         </div>
       </div>
-      <div v-else-if="containers.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
+      <div v-else-if="containers.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
         <Container :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No containers</p>
         <p class="text-[10px] mt-1">Connect to a host with Docker</p>
@@ -78,25 +78,25 @@
       >
         <template #default="{ item: c }">
           <div
-            class="flex items-center gap-2 px-2 py-1 border-b border-[#3c3c3c]/50 hover:bg-[#2a2d2e]"
+            class="flex items-center gap-2 px-2 py-1 border-b border-line/50 hover:bg-raised"
           >
             <!-- Status dot -->
             <span
               class="w-2 h-2 rounded-full shrink-0"
-              :class="c.running ? 'bg-[#89d185]' : 'bg-[#6e6e6e]'"
+              :class="c.running ? 'bg-good' : 'bg-ink-3'"
             />
             <!-- Info -->
             <div class="flex-1 min-w-0">
-              <div class="text-[11px] text-[#cccccc] truncate">{{ c.name }}</div>
-              <div class="text-[10px] text-[#858585] truncate">{{ c.image }}</div>
-              <div class="text-[10px] text-[#6e6e6e] truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
+              <div class="text-[11px] text-ink truncate">{{ c.name }}</div>
+              <div class="text-[10px] text-ink-2 truncate">{{ c.image }}</div>
+              <div class="text-[10px] text-ink-3 truncate">{{ c.status }}<span v-if="c.ports"> · {{ c.ports }}</span></div>
             </div>
             <!-- Actions -->
             <div class="flex items-center gap-0.5 shrink-0">
               <button
                 v-if="!c.running"
                 @click="startContainer(c.id)"
-                class="text-[#858585] hover:text-[#89d185] p-0.5"
+                class="text-ink-2 hover:text-good p-0.5"
                 title="Start"
               >
                 <Play :size="12" />
@@ -104,28 +104,28 @@
               <button
                 v-if="c.running"
                 @click="stopContainer(c.id)"
-                class="text-[#858585] hover:text-[#f44336] p-0.5"
+                class="text-ink-2 hover:text-bad p-0.5"
                 title="Stop"
               >
                 <Square :size="12" />
               </button>
               <button
                 @click="restartContainer(c.id)"
-                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                class="text-ink-2 hover:text-ink p-0.5"
                 title="Restart"
               >
                 <RotateCcw :size="12" />
               </button>
               <button
                 @click="viewLogs(c.id, c.name, c.running)"
-                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                class="text-ink-2 hover:text-ink p-0.5"
                 title="Logs"
               >
                 <FileText :size="12" />
               </button>
               <button
                 @click="execInto(c.id, c.name)"
-                class="text-[#858585] hover:text-[#cccccc] p-0.5"
+                class="text-ink-2 hover:text-ink p-0.5"
                 title="Exec"
               >
                 <Terminal :size="12" />

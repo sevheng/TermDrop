@@ -1,10 +1,10 @@
 <template>
   <div
-    class="flex h-screen bg-[#1e1e1e] text-[#cccccc]"
+    class="flex h-screen bg-canvas text-ink"
   >
     <!-- Host Sidebar -->
     <div
-      class="h-full bg-[#252526] border-r border-[#3c3c3c] flex flex-col shrink-0"
+      class="h-full bg-surface border-r border-line flex flex-col shrink-0"
       :style="{ width: sidebarWidth + 'px' }"
     >
       <HostSidebar />
@@ -12,29 +12,29 @@
 
     <!-- Sidebar resize handle -->
     <div
-      class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
+      class="w-1.5 shrink-0 cursor-col-resize bg-input hover:bg-accent transition-colors z-10"
       @mousedown="startResizeSidebar"
     ></div>
 
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Header with tabs and settings -->
-      <div class="flex border-b border-[#3c3c3c] bg-[#252526] items-center justify-between">
+      <div class="flex border-b border-line bg-surface items-center justify-between">
         <div class="flex overflow-x-auto">
           <button
             v-for="tab in store.tabs"
             :key="tab.id"
             @click="store.setActiveTab(tab.id)"
-            class="px-3 py-1.5 text-xs border-r border-[#3c3c3c] flex items-center gap-1.5 whitespace-nowrap transition-colors"
+            class="px-3 py-1.5 text-xs border-r border-line flex items-center gap-1.5 whitespace-nowrap transition-colors"
             :class="tab.id === store.activeTabId
-              ? 'bg-[#37373d] text-[#cccccc]'
-              : 'text-[#858585] hover:text-[#cccccc]'"
+              ? 'bg-active text-ink'
+              : 'text-ink-2 hover:text-ink'"
           >
             <Database
               v-if="tabKind(tab) === 'mongodb'"
               :size="12"
-              class="shrink-0 text-[#007acc]"
+              class="shrink-0 text-accent"
             />
-            <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-[#d82c20]" />
+            <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-redis" />
             <span
               v-else
               class="w-2 h-2 rounded-full shrink-0"
@@ -55,10 +55,10 @@
           </button>
         </div>
         <div class="flex items-center shrink-0">
-          <button @click="showShortcuts = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Keyboard shortcuts">
+          <button @click="showShortcuts = true" class="px-2 py-1.5 text-ink-2 hover:text-ink" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
-          <button @click="showSettings = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Settings">
+          <button @click="showSettings = true" class="px-2 py-1.5 text-ink-2 hover:text-ink" title="Settings">
             <Settings :size="14" />
           </button>
         </div>
@@ -104,30 +104,30 @@
         <!-- SFTP panel resize handle -->
         <div
           v-if="hasRightPanel(store.activeTab)"
-          class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
+          class="w-1.5 shrink-0 cursor-col-resize bg-input hover:bg-accent transition-colors z-10"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
           v-if="hasRightPanel(store.activeTab)"
-          class="border-l border-[#3c3c3c] shrink-0 bg-[#1e1e1e] flex flex-col"
+          class="border-l border-line shrink-0 bg-canvas flex flex-col"
           :style="{ width: sftpWidth + 'px' }"
         >
           <!-- Panel tabs -->
-          <div class="flex border-b border-[#3c3c3c]">
+          <div class="flex border-b border-line">
             <button
               v-for="tab in PANEL_TABS"
               :key="tab.id"
               @click="rightPanelTab = tab.id"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
               :class="rightPanelTab === tab.id
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
+                ? 'text-accent'
+                : 'text-ink-2 hover:text-ink'"
             >
               {{ tab.label }}
               <span
                 v-if="rightPanelTab === tab.id"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-accent rounded-full"
               />
             </button>
           </div>
@@ -163,7 +163,7 @@
               />
               <div
                 v-else-if="rightPanelTab === 'sftp' && store.activeTab && !store.activeTab.sftpSessionId"
-                class="flex-1 flex flex-col items-center justify-center text-[#6e6e6e] h-full"
+                class="flex-1 flex flex-col items-center justify-center text-ink-3 h-full"
               >
                 <Loader2 :size="24" class="animate-spin mb-2" />
                 <span class="text-sm">Connecting SFTP...</span>

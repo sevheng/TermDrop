@@ -1,15 +1,15 @@
 <template>
-  <div class="h-full flex flex-col bg-[#1e1e1e]">
+  <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-2 py-1 border-b border-[#3c3c3c]">
+    <div class="flex items-center justify-between px-2 py-1 border-b border-line">
       <div class="flex items-center gap-2">
-        <span class="text-[10px] text-[#6e6e6e]">{{ report?.checks?.length || 0 }} checks</span>
-        <span v-if="timeAgo" class="text-[10px] text-[#858585]">· updated {{ timeAgo }}</span>
+        <span class="text-[10px] text-ink-3">{{ report?.checks?.length || 0 }} checks</span>
+        <span v-if="timeAgo" class="text-[10px] text-ink-2">· updated {{ timeAgo }}</span>
       </div>
       <button
         @click="runAudit(true)"
         :disabled="loading"
-        class="text-xs text-[#858585] hover:text-[#cccccc] disabled:text-[#3c3c3c] flex items-center gap-1"
+        class="text-xs text-ink-2 hover:text-ink disabled:text-line flex items-center gap-1"
       >
         <RefreshCw :size="12" :class="loading && 'animate-spin'" />
         Re-run
@@ -20,32 +20,32 @@
     <div class="flex-1 overflow-y-auto">
       <!-- Loading (background audit running) -->
       <div v-if="loading" class="flex flex-col items-center justify-center py-12">
-        <Loader2 :size="20" class="animate-spin text-[#858585] mb-2" />
-        <span class="text-xs text-[#858585]">Running security audit...</span>
-        <span class="text-[10px] text-[#6e6e6e] mt-1">Switch tabs freely — results will appear here</span>
+        <Loader2 :size="20" class="animate-spin text-ink-2 mb-2" />
+        <span class="text-xs text-ink-2">Running security audit...</span>
+        <span class="text-[10px] text-ink-3 mt-1">Switch tabs freely — results will appear here</span>
       </div>
 
       <!-- Error -->
-      <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
-        <ShieldAlert :size="24" class="mb-2 text-[#f44336] opacity-50" />
-        <p class="text-xs text-[#f44336]">Audit failed</p>
+      <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-ink-3">
+        <ShieldAlert :size="24" class="mb-2 text-bad opacity-50" />
+        <p class="text-xs text-bad">Audit failed</p>
         <p class="text-[10px] mt-1">{{ error }}</p>
         <button
           @click="runAudit(true)"
-          class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
+          class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
         >
           Retry
         </button>
       </div>
 
       <!-- Empty -->
-      <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-[#6e6e6e]">
+      <div v-else-if="!report" class="flex flex-col items-center justify-center py-12 text-ink-3">
         <Shield :size="24" class="mb-2 opacity-50" />
         <p class="text-xs">No audit has run for this host</p>
         <p class="text-[10px] mt-1">The audit runs privileged probes on the server</p>
         <button
           @click="runAudit(true)"
-          class="mt-3 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
+          class="mt-3 px-3 py-1 bg-accent-solid hover:bg-accent-solid-hover text-white text-xs rounded"
         >
           Run Audit
         </button>
@@ -54,7 +54,7 @@
       <!-- Report -->
       <div v-else>
         <!-- Score header -->
-        <div class="flex items-center justify-center py-4 border-b border-[#3c3c3c]">
+        <div class="flex items-center justify-center py-4 border-b border-line">
           <div class="text-center">
             <div
               class="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold mx-auto mb-1"
@@ -62,16 +62,16 @@
             >
               {{ hasScore ? report.score : '—' }}
             </div>
-            <span class="text-[10px] text-[#858585] uppercase tracking-wide">{{ scoreLabel }}</span>
-            <p class="text-[10px] text-[#858585] mt-1">
+            <span class="text-[10px] text-ink-2 uppercase tracking-wide">{{ scoreLabel }}</span>
+            <p class="text-[10px] text-ink-2 mt-1">
               {{ hasScore ? `${report.passed} of ${report.scored} checks passed` : 'Nothing could be determined' }}
             </p>
-            <p v-if="breakdown" class="text-[10px] text-[#6e6e6e] mt-0.5">{{ breakdown }}</p>
+            <p v-if="breakdown" class="text-[10px] text-ink-3 mt-0.5">{{ breakdown }}</p>
           </div>
         </div>
 
         <!-- Checks list -->
-        <div class="divide-y divide-[#3c3c3c]/50">
+        <div class="divide-y divide-line/50">
           <div
             v-for="check in report.checks"
             :key="check.name"
@@ -85,7 +85,7 @@
             />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class="text-[11px] text-[#cccccc]">{{ check.name }}</span>
+                <span class="text-[11px] text-ink">{{ check.name }}</span>
                 <span
                   class="text-[9px] px-1 py-0 rounded font-medium uppercase"
                   :class="statusMeta(check.status).badge"
@@ -93,10 +93,10 @@
                   {{ check.status }}
                 </span>
               </div>
-              <p class="text-[10px] text-[#858585] mt-0.5">{{ check.message }}</p>
+              <p class="text-[10px] text-ink-2 mt-0.5">{{ check.message }}</p>
               <p
                 v-if="check.detail"
-                class="text-[10px] text-[#6e6e6e] mt-0.5 font-mono whitespace-pre-wrap break-words"
+                class="text-[10px] text-ink-3 mt-0.5 font-mono whitespace-pre-wrap break-words"
               >{{ check.detail }}</p>
 
               <!-- What to do about it. Collapsed by default so the list stays
@@ -104,7 +104,7 @@
               <template v-if="check.remediation">
                 <button
                   @click="toggle(check.name)"
-                  class="text-[10px] text-[#4daafc] hover:text-[#6fc0ff] mt-1 flex items-center gap-0.5"
+                  class="text-[10px] text-accent-soft hover:text-accent-soft-hover mt-1 flex items-center gap-0.5"
                 >
                   <ChevronRight
                     :size="10"
@@ -114,17 +114,17 @@
                   What to do
                 </button>
                 <div v-if="isOpen(check.name)" class="mt-1 mb-0.5">
-                  <p class="text-[10px] text-[#a0a0a0] leading-relaxed">
+                  <p class="text-[10px] text-ink-2 leading-relaxed">
                     {{ check.remediation.summary }}
                   </p>
                   <template v-if="check.remediation.command">
                     <pre
-                      class="mt-1 px-1.5 py-1 bg-[#252526] border border-[#3c3c3c] rounded text-[10px] text-[#cccccc] font-mono whitespace-pre-wrap break-all"
+                      class="mt-1 px-1.5 py-1 bg-surface border border-line rounded text-[10px] text-ink font-mono whitespace-pre-wrap break-all"
                     >{{ check.remediation.command }}</pre>
                     <div class="flex items-center gap-2 mt-1">
                       <button
                         @click="copyCommand(check.remediation.command)"
-                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                        class="text-[10px] text-ink-2 hover:text-ink flex items-center gap-1"
                       >
                         <Copy :size="10" />
                         Copy
@@ -132,13 +132,13 @@
                       <button
                         v-if="canSend"
                         @click="sendCommand(check.remediation.command)"
-                        class="text-[10px] text-[#858585] hover:text-[#cccccc] flex items-center gap-1"
+                        class="text-[10px] text-ink-2 hover:text-ink flex items-center gap-1"
                       >
                         <TerminalSquare :size="10" />
                         Send to terminal
                       </button>
                     </div>
-                    <p v-if="canSend" class="text-[9px] text-[#6e6e6e] mt-0.5">
+                    <p v-if="canSend" class="text-[9px] text-ink-3 mt-0.5">
                       Typed at the prompt without running. Press Enter yourself.
                     </p>
                   </template>
@@ -226,11 +226,11 @@ const scoreLabel = computed(() => {
 
 const scoreClass = computed(() => {
   if (!report.value) return ''
-  if (!hasScore.value) return 'bg-[#3c3c3c] text-[#858585]'
+  if (!hasScore.value) return 'bg-input text-ink-2'
   const s = report.value.score
-  if (s >= 80) return 'bg-[#89d185]/20 text-[#89d185]'
-  if (s >= 50) return 'bg-[#cca700]/20 text-[#cca700]'
-  return 'bg-[#f44336]/20 text-[#f44336]'
+  if (s >= 80) return 'bg-good/20 text-good'
+  if (s >= 50) return 'bg-warn/20 text-warn'
+  return 'bg-bad/20 text-bad'
 })
 
 /** "2 failed · 1 warning · 3 undetermined", omitting whichever counts are zero. */
@@ -249,11 +249,11 @@ const breakdown = computed(() => {
 })
 
 const STATUS_META = {
-  pass: { icon: ShieldCheck, color: 'text-[#89d185]', badge: 'bg-[#89d185]/20 text-[#89d185]' },
-  warn: { icon: AlertTriangle, color: 'text-[#cca700]', badge: 'bg-[#cca700]/20 text-[#cca700]' },
-  fail: { icon: XCircle, color: 'text-[#f44336]', badge: 'bg-[#f44336]/20 text-[#f44336]' },
+  pass: { icon: ShieldCheck, color: 'text-good', badge: 'bg-good/20 text-good' },
+  warn: { icon: AlertTriangle, color: 'text-warn', badge: 'bg-warn/20 text-warn' },
+  fail: { icon: XCircle, color: 'text-bad', badge: 'bg-bad/20 text-bad' },
   // The backend reports this when a probe lacked the privileges to answer.
-  unknown: { icon: Shield, color: 'text-[#858585]', badge: 'bg-[#3c3c3c] text-[#858585]' },
+  unknown: { icon: Shield, color: 'text-ink-2', badge: 'bg-input text-ink-2' },
 }
 const UNKNOWN_STATUS_META = STATUS_META.unknown
 

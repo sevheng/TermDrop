@@ -1,54 +1,54 @@
 <template>
   <ModalShell :show="state.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
-      <h3 class="text-base font-semibold text-[#cccccc] mb-3">
-        Confirm restore into <span class="text-[#75beff]">{{ connectionName }}</span>
+      <h3 class="text-base font-semibold text-ink mb-3">
+        Confirm restore into <span class="text-accent-soft">{{ connectionName }}</span>
       </h3>
-      <div class="space-y-2 text-sm text-[#cccccc]">
+      <div class="space-y-2 text-sm text-ink">
         <p>
           Source {{ state.isArchive ? 'archive' : 'folder' }}:
-          <span class="font-mono text-[#89d185] break-all">{{ state.inputPath }}</span>
+          <span class="font-mono text-good break-all">{{ state.inputPath }}</span>
         </p>
         <div v-if="!state.isArchive && state.sourceDbs.length > 0">
-          <p class="text-[#858585] mb-1">Data found in folder:</p>
-          <ul class="max-h-32 overflow-y-auto bg-[#1e1e1e] rounded p-2 space-y-1 text-xs">
+          <p class="text-ink-2 mb-1">Data found in folder:</p>
+          <ul class="max-h-32 overflow-y-auto bg-canvas rounded p-2 space-y-1 text-xs">
             <li v-for="db in state.sourceDbs" :key="db.name">
-              <span class="text-[#75beff]">{{ db.name }}</span>:
-              <span class="text-[#cccccc]">{{ db.collections.map(c => c.name).join(', ') }}</span>
+              <span class="text-accent-soft">{{ db.name }}</span>:
+              <span class="text-ink">{{ db.collections.map(c => c.name).join(', ') }}</span>
             </li>
           </ul>
         </div>
         <template v-if="state.entries.length > 0">
           <p>
             Target filter database{{ state.entries.length > 1 ? 's' : '' }}:
-            <span class="font-mono text-[#75beff]">
+            <span class="font-mono text-accent-soft">
               {{ state.entries.map(e => e.db).join(', ') }}
             </span>
           </p>
           <div>
-            <p class="text-[#858585] mb-1">Collections to restore:</p>
-            <ul class="max-h-32 overflow-y-auto bg-[#1e1e1e] rounded p-2 space-y-0.5 text-xs">
+            <p class="text-ink-2 mb-1">Collections to restore:</p>
+            <ul class="max-h-32 overflow-y-auto bg-canvas rounded p-2 space-y-0.5 text-xs">
               <li v-for="entry in state.entries" :key="entry.db">
-                <span class="text-[#75beff]">{{ entry.db }}</span>:
-                <span class="text-[#cccccc]">{{ entry.collections.join(', ') }}</span>
+                <span class="text-accent-soft">{{ entry.db }}</span>:
+                <span class="text-ink">{{ entry.collections.join(', ') }}</span>
               </li>
             </ul>
           </div>
         </template>
         <template v-else-if="!state.isArchive && state.sourceDbs.length === 1">
-          <p class="text-[#75beff]">
-            Will restore database <span class="font-mono text-[#75beff]">{{ state.sourceDbs[0].name }}</span>
+          <p class="text-accent-soft">
+            Will restore database <span class="font-mono text-accent-soft">{{ state.sourceDbs[0].name }}</span>
             (all collections found in the folder).
           </p>
         </template>
         <template v-else-if="!state.isArchive && state.sourceDbs.length > 1">
-          <p class="text-[#75beff]">
+          <p class="text-accent-soft">
             Will restore all databases found in the folder:
-            <span class="font-mono text-[#75beff]">
+            <span class="font-mono text-accent-soft">
               {{ state.sourceDbs.map(d => d.name).join(', ') }}
             </span>
           </p>
         </template>
-        <p v-else class="text-[#75beff]">
+        <p v-else class="text-accent-soft">
           No database selected — everything in the source will be restored.
         </p>
         <label class="flex items-start gap-2 pt-1 cursor-pointer">
@@ -56,17 +56,17 @@
             type="checkbox"
             :checked="state.dropFirst"
             @change="$emit('update:dropFirst', $event.target.checked)"
-            class="accent-[#f44336] mt-0.5 shrink-0"
+            class="accent-bad mt-0.5 shrink-0"
           />
           <span class="text-xs">
             Drop existing collections in the target first
           </span>
         </label>
-        <p v-if="state.dropFirst" class="text-[#f44336] text-xs">
+        <p v-if="state.dropFirst" class="text-bad text-xs">
           Existing collections in the target database will be dropped before
           restoring. This cannot be undone.
         </p>
-        <p v-else class="text-[#858585] text-xs">
+        <p v-else class="text-ink-2 text-xs">
           Existing documents are kept. Documents whose <span class="font-mono">_id</span>
           already exists will be reported as failures, not overwritten.
         </p>
@@ -74,7 +74,7 @@
       <div class="flex justify-end gap-2 mt-5">
         <button
           @click="$emit('cancel')"
-          class="px-3 py-1.5 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
+          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
         >
           Cancel
         </button>
@@ -82,8 +82,8 @@
           @click="$emit('confirm')"
           class="px-3 py-1.5 text-sm text-white rounded transition-colors"
           :class="state.dropFirst
-            ? 'bg-[#f44336] hover:bg-[#d32f2f]'
-            : 'bg-[#007acc] hover:bg-[#1f8ad2]'"
+            ? 'bg-bad hover:bg-bad-hover'
+            : 'bg-accent hover:bg-accent-hover'"
         >
           Restore
         </button>

@@ -1,6 +1,6 @@
 <template>
   <div v-if="show" :class="['fixed inset-0 flex items-center justify-center', dim, z]">
-    <div :class="['bg-[#252526] rounded-lg border border-[#3c3c3c]', panelClass]">
+    <div :class="['bg-surface rounded-lg border border-line', panelClass]">
       <slot />
     </div>
   </div>

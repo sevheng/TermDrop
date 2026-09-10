@@ -1,0 +1,36 @@
+/**
+ * Base element styling that Tailwind utilities cannot reach.
+ *
+ * The colour variables that used to live here are gone: they were read by one
+ * file and duplicated by hand everywhere else. Colour now comes from
+ * tokens.css via Tailwind utilities.
+ */
+
+body {
+  background-color: rgb(var(--td-canvas));
+  color: rgb(var(--td-ink));
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Sits on both canvas and surface, so it is a translucent lift rather than a
+   fixed grey that only reads correctly on one of them. */
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--td-ink-3) / 0.45);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--td-ink-3) / 0.7);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

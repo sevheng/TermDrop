@@ -1,13 +1,13 @@
 <template>
   <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
+      <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isEditing ? 'Edit Host' : 'Add Host' }}
       </h3>
 
       <div class="space-y-4">
         <!-- Name -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">Name <span class="text-[#f44336]">*</span></label>
+          <label class="block text-xs text-ink-2 mb-1.5">Name <span class="text-bad">*</span></label>
           <input
             v-model="form.name"
             type="text"
@@ -15,12 +15,12 @@
             :class="inputClass('name')"
             @blur="validateField('name')"
           />
-          <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-bad mt-1">{{ errors.name }}</p>
         </div>
 
         <!-- Host -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">Host <span class="text-[#f44336]">*</span></label>
+          <label class="block text-xs text-ink-2 mb-1.5">Host <span class="text-bad">*</span></label>
           <input
             v-model="form.host"
             type="text"
@@ -28,13 +28,13 @@
             :class="inputClass('host')"
             @blur="validateField('host')"
           />
-          <p v-if="errors.host" class="text-xs text-[#f44336] mt-1">{{ errors.host }}</p>
+          <p v-if="errors.host" class="text-xs text-bad mt-1">{{ errors.host }}</p>
         </div>
 
         <!-- Port + Username -->
         <div class="flex gap-3">
           <div class="flex-1">
-            <label class="block text-xs text-[#858585] mb-1.5">Port <span class="text-[#f44336]">*</span></label>
+            <label class="block text-xs text-ink-2 mb-1.5">Port <span class="text-bad">*</span></label>
             <input
               v-model.number="form.port"
               type="number"
@@ -42,10 +42,10 @@
               :class="inputClass('port')"
               @blur="validateField('port')"
             />
-            <p v-if="errors.port" class="text-xs text-[#f44336] mt-1">{{ errors.port }}</p>
+            <p v-if="errors.port" class="text-xs text-bad mt-1">{{ errors.port }}</p>
           </div>
           <div class="flex-[2]">
-            <label class="block text-xs text-[#858585] mb-1.5">Username <span class="text-[#f44336]">*</span></label>
+            <label class="block text-xs text-ink-2 mb-1.5">Username <span class="text-bad">*</span></label>
             <input
               v-model="form.username"
               type="text"
@@ -53,19 +53,19 @@
               :class="inputClass('username')"
               @blur="validateField('username')"
             />
-            <p v-if="errors.username" class="text-xs text-[#f44336] mt-1">{{ errors.username }}</p>
+            <p v-if="errors.username" class="text-xs text-bad mt-1">{{ errors.username }}</p>
           </div>
         </div>
 
         <!-- Auth Type Toggle -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">Authentication</label>
-          <div class="flex bg-[#3c3c3c] rounded p-1">
+          <label class="block text-xs text-ink-2 mb-1.5">Authentication</label>
+          <div class="flex bg-input rounded p-1">
             <button
               type="button"
               @click="form.auth_type = 'password'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.auth_type === 'password' ? 'bg-[#0e639c] text-white' : 'text-[#858585] hover:text-[#cccccc]'"
+              :class="form.auth_type === 'password' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Password
             </button>
@@ -73,7 +73,7 @@
               type="button"
               @click="form.auth_type = 'key'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.auth_type === 'key' ? 'bg-[#0e639c] text-white' : 'text-[#858585] hover:text-[#cccccc]'"
+              :class="form.auth_type === 'key' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               SSH Key
             </button>
@@ -82,9 +82,9 @@
 
         <!-- Password -->
         <div v-if="form.auth_type === 'password'">
-          <label class="block text-xs text-[#858585] mb-1.5">
+          <label class="block text-xs text-ink-2 mb-1.5">
             Password
-            <span v-if="!isEditing" class="text-[#f44336]">*</span>
+            <span v-if="!isEditing" class="text-bad">*</span>
           </label>
           <div class="relative">
             <input
@@ -97,18 +97,18 @@
             <button
               type="button"
               @click="showPassword = !showPassword"
-              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#6e6e6e] hover:text-[#cccccc]"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
             >
               <component :is="showPassword ? EyeOff : Eye" :size="16" />
             </button>
           </div>
-          <p v-if="errors.password" class="text-xs text-[#f44336] mt-1">{{ errors.password }}</p>
-          <p v-else-if="isEditing" class="text-xs text-[#6e6e6e] mt-1">Leave empty to keep the existing password</p>
+          <p v-if="errors.password" class="text-xs text-bad mt-1">{{ errors.password }}</p>
+          <p v-else-if="isEditing" class="text-xs text-ink-3 mt-1">Leave empty to keep the existing password</p>
         </div>
 
         <!-- Key Path -->
         <div v-if="form.auth_type === 'key'">
-          <label class="block text-xs text-[#858585] mb-1.5">Private Key Path <span class="text-[#f44336]">*</span></label>
+          <label class="block text-xs text-ink-2 mb-1.5">Private Key Path <span class="text-bad">*</span></label>
           <div class="flex gap-2">
             <input
               v-model="form.key_path"
@@ -120,14 +120,14 @@
             <button
               type="button"
               @click="browseKey"
-              class="px-3 py-2 bg-[#3c3c3c] border border-[#3c3c3c] rounded text-sm text-[#cccccc] hover:bg-[#37373d] shrink-0"
+              class="px-3 py-2 bg-input border border-line rounded text-sm text-ink hover:bg-active shrink-0"
             >
               <FileSearch :size="14" class="inline mr-1" />
               Browse
             </button>
           </div>
-          <p v-if="errors.key_path" class="text-xs text-[#f44336] mt-1">{{ errors.key_path }}</p>
-          <p v-else class="text-xs text-[#6e6e6e] mt-1">Supports ~ for home directory</p>
+          <p v-if="errors.key_path" class="text-xs text-bad mt-1">{{ errors.key_path }}</p>
+          <p v-else class="text-xs text-ink-3 mt-1">Supports ~ for home directory</p>
         </div>
 
 
@@ -138,14 +138,14 @@
         <button
           @click="onClose"
           :disabled="loading"
-          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc] disabled:opacity-50"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           @click="onSave"
           :disabled="loading"
-          class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Host') }}
@@ -217,8 +217,8 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
-  const error = errors.value[field] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
+  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }
 

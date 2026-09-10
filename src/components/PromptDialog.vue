@@ -1,14 +1,14 @@
 <template>
   <ModalShell :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
-      <h3 class="text-base font-semibold text-[#cccccc] mb-1">{{ title }}</h3>
-      <p v-if="message" class="text-sm text-[#858585] mb-3">{{ message }}</p>
+      <h3 class="text-base font-semibold text-ink mb-1">{{ title }}</h3>
+      <p v-if="message" class="text-sm text-ink-2 mb-3">{{ message }}</p>
 
       <input
         ref="inputRef"
         v-model="inputValue"
         :type="type"
         :placeholder="placeholder"
-        class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] placeholder-[#6e6e6e] focus:outline-none focus:border-[#007acc] mb-4"
+        class="w-full bg-input border border-line rounded px-3 py-2 text-sm text-ink placeholder-ink-3 focus:outline-none focus:border-accent mb-4"
         @keydown.enter="onConfirm"
         @keydown.esc="onCancel"
       />
@@ -16,7 +16,7 @@
       <div class="flex justify-end gap-2">
         <button
           @click="onCancel"
-          class="px-3 py-1.5 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
+          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
         >
           {{ cancelText }}
         </button>
@@ -26,8 +26,8 @@
           :class="[
             'px-3 py-1.5 text-sm text-white rounded transition-colors',
             danger
-              ? 'bg-[#f44336] hover:bg-[#d32f2f] disabled:bg-[#f44336]/30'
-              : 'bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/30'
+              ? 'bg-bad hover:bg-bad-hover disabled:bg-bad/30'
+              : 'bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/30'
           ]"
         >
           {{ confirmText }}

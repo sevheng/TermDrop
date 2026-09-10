@@ -1,12 +1,12 @@
 <template>
-  <div class="h-full flex flex-col bg-[#1e1e1e]">
+  <div class="h-full flex flex-col bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between px-4 py-2.5 border-b border-[#3c3c3c] shrink-0 bg-[#252526]">
+    <div class="flex items-center justify-between px-4 py-2.5 border-b border-line shrink-0 bg-surface">
       <div class="flex items-center gap-2 min-w-0">
-        <Database :size="14" class="text-[#4DB33D] shrink-0" />
-        <span class="text-sm font-medium text-[#cccccc] truncate">{{ connectionName }}</span>
+        <Database :size="14" class="text-mongo shrink-0" />
+        <span class="text-sm font-medium text-ink truncate">{{ connectionName }}</span>
         <span
-          class="text-[10px] text-[#858585] truncate max-w-[18rem]"
+          class="text-[10px] text-ink-2 truncate max-w-[18rem]"
           :title="connectionDisplay"
         >
           {{ connectionDisplay }}
@@ -17,21 +17,21 @@
         <button
           @click="loadDatabases"
           :disabled="loading"
-          class="p-1.5 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e] disabled:opacity-40"
+          class="p-1.5 rounded text-ink-2 hover:text-ink hover:bg-raised disabled:opacity-40"
           title="Refresh databases"
         >
           <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
         </button>
 
-        <div class="w-px h-4 bg-[#3c3c3c] mx-1" />
+        <div class="w-px h-4 bg-input mx-1" />
 
         <button
           @click="backup.backupFolder"
           :disabled="!canBackup"
           class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors"
           :class="canBackup
-            ? 'bg-[#0e639c] hover:bg-[#1177bb] text-white'
-            : 'bg-[#3c3c3c] text-[#6e6e6e] cursor-not-allowed'"
+            ? 'bg-accent-solid hover:bg-accent-solid-hover text-white'
+            : 'bg-input text-ink-3 cursor-not-allowed'"
           :title="selectedCount === 0 ? 'Select collections to back up' : 'Back up to a folder'"
         >
           <Download :size="12" />
@@ -40,18 +40,18 @@
         <button
           @click="backup.backupArchive"
           :disabled="!canBackup"
-          class="px-2 py-1 text-xs rounded text-[#cccccc] hover:bg-[#2a2d2e] disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
           title="Back up to a single archive file"
         >
           Archive
         </button>
 
-        <div class="w-px h-4 bg-[#3c3c3c] mx-1" />
+        <div class="w-px h-4 bg-input mx-1" />
 
         <button
           @click="backup.restoreFolder"
           :disabled="backup.busy.value"
-          class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 bg-[#388a34] hover:bg-[#43a047] text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 bg-mongo-solid hover:bg-mongo-solid-hover text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Restore from a backup folder"
         >
           <Upload :size="12" />
@@ -60,7 +60,7 @@
         <button
           @click="backup.restoreFile"
           :disabled="backup.busy.value"
-          class="px-2 py-1 text-xs rounded text-[#cccccc] hover:bg-[#2a2d2e] disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
           title="Restore from an archive file"
         >
           From file
@@ -69,20 +69,20 @@
     </div>
 
     <!-- Progress, while a backup or restore runs -->
-    <div v-if="backup.busy.value" class="px-4 py-2 border-b border-[#3c3c3c] shrink-0 bg-[#252526] space-y-1">
-      <div class="flex items-center justify-between text-[10px] text-[#6e6e6e]">
+    <div v-if="backup.busy.value" class="px-4 py-2 border-b border-line shrink-0 bg-surface space-y-1">
+      <div class="flex items-center justify-between text-[10px] text-ink-3">
         <span>{{ backup.progress.value.stage }} {{ backup.progress.value.collection }}</span>
-        <button @click="backup.cancel" class="text-[#f44336] hover:text-red-300 underline">
+        <button @click="backup.cancel" class="text-bad hover:text-red-300 underline">
           Cancel
         </button>
       </div>
-      <div class="h-1.5 bg-[#3c3c3c] rounded-full overflow-hidden">
+      <div class="h-1.5 bg-input rounded-full overflow-hidden">
         <div
-          class="h-full bg-[#007acc] rounded-full transition-all duration-300"
+          class="h-full bg-accent rounded-full transition-all duration-300"
           :style="{ width: backup.progress.value.percent + '%' }"
         />
       </div>
-      <div class="flex justify-between text-[10px] text-[#6e6e6e]">
+      <div class="flex justify-between text-[10px] text-ink-3">
         <span>
           {{ backup.progress.value.detail
             || `${backup.progress.value.synced} / ${backup.progress.value.total}` }}
@@ -93,16 +93,16 @@
 
     <!-- Tree | documents -->
     <div class="flex-1 flex overflow-hidden">
-      <div class="w-72 shrink-0 flex flex-col border-r border-[#3c3c3c]">
-        <div class="flex items-center justify-between px-3 py-1.5 border-b border-[#3c3c3c] shrink-0">
-          <span class="text-[10px] font-medium text-[#858585] uppercase tracking-wider">
+      <div class="w-72 shrink-0 flex flex-col border-r border-line">
+        <div class="flex items-center justify-between px-3 py-1.5 border-b border-line shrink-0">
+          <span class="text-[10px] font-medium text-ink-2 uppercase tracking-wider">
             Databases
           </span>
-          <span v-if="selectedCount > 0" class="text-[10px] text-[#75beff]">
+          <span v-if="selectedCount > 0" class="text-[10px] text-accent-soft">
             {{ selectedCount }} selected
             <button
               @click="clearSelection"
-              class="ml-1 text-[#858585] hover:text-[#cccccc] underline"
+              class="ml-1 text-ink-2 hover:text-ink underline"
             >
               clear
             </button>
@@ -133,10 +133,10 @@
           :db="viewing.db"
           :collection="viewing.collection"
         />
-        <div v-else class="h-full flex flex-col items-center justify-center text-[#6e6e6e]">
+        <div v-else class="h-full flex flex-col items-center justify-center text-ink-3">
           <FileSearch :size="22" class="mb-2 opacity-50" />
           <p class="text-xs">Select a collection to view its documents</p>
-          <p class="text-[10px] mt-1 text-[#5a5a5a]">
+          <p class="text-[10px] mt-1 text-input-hover">
             Tick collections to include them in a backup
           </p>
         </div>

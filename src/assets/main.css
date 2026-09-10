@@ -1,4 +1,5 @@
-@import '../themes/vscode-dark.css';
+@import '../themes/tokens.css';
+@import '../themes/base.css';
 
 @tailwind base;
 @tailwind components;

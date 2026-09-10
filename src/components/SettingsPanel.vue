@@ -1,40 +1,40 @@
 <template>
   <ModalShell :show="show" dim="bg-black/50" z="z-50" panel-class="p-6 w-96 shadow-xl">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-4">Settings</h3>
+      <h3 class="text-lg font-semibold text-ink mb-4">Settings</h3>
 
       <div class="space-y-2">
         <div>
-          <label class="block text-xs text-[#858585] mb-1">Terminal Font Size: {{ fontSize }}px</label>
+          <label class="block text-xs text-ink-2 mb-1">Terminal Font Size: {{ fontSize }}px</label>
           <input
             v-model.number="fontSize"
             type="range"
             min="10"
             max="24"
-            class="w-full accent-[#007acc]"
+            class="w-full accent-accent"
           />
         </div>
 
         <div>
-          <label class="block text-xs text-[#858585] mb-1">Download Path (leave empty for default)</label>
+          <label class="block text-xs text-ink-2 mb-1">Download Path (leave empty for default)</label>
           <input
             v-model="downloadPath"
             type="text"
             placeholder="~/Downloads"
-            class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none focus:border-[#007acc]"
+            class="w-full bg-input border border-line rounded px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent"
           />
         </div>
       </div>
 
-      <div class="border-t border-[#3c3c3c] pt-4 mt-4">
+      <div class="border-t border-line pt-4 mt-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs text-[#cccccc]">Version: <span class="font-mono">{{ appVersion }}</span></p>
-            <p v-if="lastChecked" class="text-xs text-[#858585]">Last checked: {{ lastChecked }}</p>
+            <p class="text-xs text-ink">Version: <span class="font-mono">{{ appVersion }}</span></p>
+            <p v-if="lastChecked" class="text-xs text-ink-2">Last checked: {{ lastChecked }}</p>
           </div>
           <button
             @click="manualCheck"
             :disabled="checking"
-            class="px-3 py-1.5 text-xs bg-[#3c3c3c] hover:bg-[#4c4c4c] text-[#cccccc] rounded disabled:opacity-50"
+            class="px-3 py-1.5 text-xs bg-input hover:bg-input-hover text-ink rounded disabled:opacity-50"
           >
             {{ checking ? 'Checking...' : 'Check for Updates' }}
           </button>
@@ -42,8 +42,8 @@
       </div>
 
       <div class="flex justify-end gap-2 mt-6">
-        <button @click="$emit('close')" class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]">Cancel</button>
-        <button @click="save" class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] text-white rounded">Save</button>
+        <button @click="$emit('close')" class="px-4 py-2 text-sm text-ink-2 hover:text-ink">Cancel</button>
+        <button @click="save" class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded">Save</button>
       </div>
   </ModalShell>
 </template>

@@ -2,8 +2,8 @@
   <div
     class="group flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer"
     :class="isConnecting
-      ? 'bg-[#0e639c]/30 opacity-60'
-      : 'hover:bg-[#2a2d2e]'"
+      ? 'bg-accent-solid/30 opacity-60'
+      : 'hover:bg-raised'"
     draggable="true"
     @dragstart="onDragStart"
     @dragend="$emit('drag-end')"
@@ -13,38 +13,38 @@
     <!-- Connection status dot -->
     <span
       class="w-1.5 h-1.5 rounded-full shrink-0"
-      :class="isConnected ? 'bg-[#89d185]' : 'bg-[#6e6e6e]'"
+      :class="isConnected ? 'bg-good' : 'bg-ink-3'"
     ></span>
 
     <!-- Icon: Database for MongoDB-only, OS icon for SSH -->
-    <component :is="rowIcon" :size="14" class="shrink-0 text-[#6e6e6e]" />
+    <component :is="rowIcon" :size="14" class="shrink-0 text-ink-3" />
 
     <!-- Host info -->
     <div class="min-w-0 flex-1">
-      <div class="text-xs text-[#cccccc] truncate">{{ host.name }}</div>
-      <div class="text-[10px] text-[#858585] truncate">{{ subtitle }}</div>
+      <div class="text-xs text-ink truncate">{{ host.name }}</div>
+      <div class="text-[10px] text-ink-2 truncate">{{ subtitle }}</div>
     </div>
 
     <!-- Actions -->
     <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
       <button
         @click.stop="$emit('toggle-favorite')"
-        class="p-0.5 text-[#6e6e6e] hover:text-[#cca700]"
-        :class="host.favorite ? 'text-[#cca700] opacity-100' : ''"
+        class="p-0.5 text-ink-3 hover:text-warn"
+        :class="host.favorite ? 'text-warn opacity-100' : ''"
         title="Toggle favorite"
       >
         <Star :size="12" :fill="host.favorite ? 'currentColor' : 'none'" />
       </button>
-      <button @click.stop="$emit('edit')" class="p-0.5 text-[#6e6e6e] hover:text-[#cccccc]" title="Edit">
+      <button @click.stop="$emit('edit')" class="p-0.5 text-ink-3 hover:text-ink" title="Edit">
         <Pencil :size="12" />
       </button>
-      <button @click.stop="$emit('delete')" class="p-0.5 text-[#6e6e6e] hover:text-[#f44336]" title="Delete">
+      <button @click.stop="$emit('delete')" class="p-0.5 text-ink-3 hover:text-bad" title="Delete">
         <Trash2 :size="12" />
       </button>
     </div>
 
     <!-- Connecting spinner -->
-    <Loader2 v-if="isConnecting" :size="14" class="text-[#007acc] shrink-0 animate-spin" />
+    <Loader2 v-if="isConnecting" :size="14" class="text-accent shrink-0 animate-spin" />
   </div>
 </template>
 
@@ -91,7 +91,7 @@ function onDragStart(event) {
   // Compact drag ghost — mini host row
   const ghost = document.createElement('div')
   ghost.innerHTML = `<span style="opacity:0.6">${kindLabel.value}</span> <strong>${props.host.name}</strong>`
-  ghost.style.cssText = 'padding: 2px 8px; background: #1f2937; color: #e5e7eb; border-radius: 3px; font-size: 10px; white-space: nowrap; font-family: system-ui; position: fixed; top: -9999px; pointer-events: none;'
+  ghost.style.cssText = 'padding: 2px 8px; background: rgb(var(--td-overlay)); color: rgb(var(--td-ink)); border-radius: 3px; font-size: 10px; white-space: nowrap; font-family: system-ui; position: fixed; top: -9999px; pointer-events: none;'
   document.body.appendChild(ghost)
   event.dataTransfer.setDragImage(ghost, 8, 10)
   setTimeout(() => document.body.removeChild(ghost), 0)

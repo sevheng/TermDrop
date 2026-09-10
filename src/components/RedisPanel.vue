@@ -1,20 +1,20 @@
 <template>
-  <div class="flex flex-col h-full bg-[#1e1e1e]">
+  <div class="flex flex-col h-full bg-canvas">
     <!-- Toolbar -->
-    <div class="flex items-center gap-2 px-3 py-2 border-b border-[#3c3c3c] shrink-0">
-      <Layers :size="14" class="text-[#d82c20] shrink-0" />
-      <span class="text-xs text-[#cccccc] font-medium truncate">{{ host?.name }}</span>
-      <span class="text-[11px] text-[#6e6e6e] truncate font-mono">{{ displayUri }}</span>
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-line shrink-0">
+      <Layers :size="14" class="text-redis shrink-0" />
+      <span class="text-xs text-ink font-medium truncate">{{ host?.name }}</span>
+      <span class="text-[11px] text-ink-3 truncate font-mono">{{ displayUri }}</span>
       <span
         v-if="serverInfo?.tunnelled"
-        class="text-[10px] px-1.5 py-0.5 rounded bg-[#37373d] text-[#9cdcfe] shrink-0"
+        class="text-[10px] px-1.5 py-0.5 rounded bg-active text-syn-cyan shrink-0"
         :title="`Tunnelled through ${tunnelHostName}`"
       >
         via {{ tunnelHostName }}
       </span>
       <span
         v-if="serverInfo?.mode === 'cluster'"
-        class="text-[10px] px-1.5 py-0.5 rounded bg-[#4d3800] text-[#d19a66] shrink-0"
+        class="text-[10px] px-1.5 py-0.5 rounded bg-warn-bg text-warn-soft shrink-0"
         title="SCAN sees only this node, so the key list is one node's keyspace and backup is disabled"
       >
         cluster
@@ -22,13 +22,13 @@
 
       <div class="flex-1"></div>
 
-      <span v-if="serverInfo" class="text-[10px] text-[#6e6e6e]">
+      <span v-if="serverInfo" class="text-[10px] text-ink-3">
         Redis {{ serverInfo.version }}
       </span>
       <button
         :disabled="busy"
         @click="refreshAll"
-        class="text-xs px-2 py-1 rounded text-[#cccccc] hover:bg-[#3c3c3c] disabled:opacity-40"
+        class="text-xs px-2 py-1 rounded text-ink hover:bg-input disabled:opacity-40"
       >
         Refresh
       </button>
@@ -36,14 +36,14 @@
         :disabled="busy || !serverInfo || isCluster"
         :title="isCluster ? 'A cluster backup would cover only this node' : ''"
         @click="backup.backup(pattern)"
-        class="text-xs px-2 py-1 rounded text-[#cccccc] hover:bg-[#3c3c3c] disabled:opacity-40"
+        class="text-xs px-2 py-1 rounded text-ink hover:bg-input disabled:opacity-40"
       >
         Back up
       </button>
       <button
         :disabled="busy || !serverInfo"
         @click="backup.chooseRestoreFile()"
-        class="text-xs px-2 py-1 rounded text-[#cccccc] hover:bg-[#3c3c3c] disabled:opacity-40"
+        class="text-xs px-2 py-1 rounded text-ink hover:bg-input disabled:opacity-40"
       >
         Restore
       </button>
@@ -52,21 +52,21 @@
     <!-- Progress -->
     <div
       v-if="busy"
-      class="flex items-center gap-3 px-3 py-2 border-b border-[#3c3c3c] shrink-0"
+      class="flex items-center gap-3 px-3 py-2 border-b border-line shrink-0"
     >
-      <span class="text-xs text-[#cccccc] shrink-0">{{ currentAction }}</span>
-      <div class="flex-1 h-1.5 bg-[#3c3c3c] rounded overflow-hidden">
+      <span class="text-xs text-ink shrink-0">{{ currentAction }}</span>
+      <div class="flex-1 h-1.5 bg-input rounded overflow-hidden">
         <div
-          class="h-full bg-[#0e639c] transition-all"
+          class="h-full bg-accent-solid transition-all"
           :style="{ width: `${progress?.percent ?? 0}%` }"
         ></div>
       </div>
-      <span class="text-[10px] text-[#858585] shrink-0 w-48 truncate text-right">
+      <span class="text-[10px] text-ink-2 shrink-0 w-48 truncate text-right">
         {{ progress?.detail || '…' }}
       </span>
       <button
         @click="backup.cancel()"
-        class="text-xs px-2 py-0.5 rounded text-red-400 hover:bg-[#3c3c3c] shrink-0"
+        class="text-xs px-2 py-0.5 rounded text-red-400 hover:bg-input shrink-0"
       >
         Cancel
       </button>
@@ -75,24 +75,24 @@
     <!-- Connection error -->
     <div
       v-if="connectError"
-      class="flex items-start gap-2 px-3 py-2 bg-[#3a1d1d] border-b border-red-900 shrink-0"
+      class="flex items-start gap-2 px-3 py-2 bg-bad-bg border-b border-bad-line shrink-0"
     >
       <AlertCircle :size="14" class="text-red-400 shrink-0 mt-0.5" />
       <p class="text-xs text-red-300 flex-1">{{ connectError }}</p>
       <button
         @click="connect"
-        class="text-xs px-2 py-0.5 rounded text-[#cccccc] hover:bg-[#3c3c3c] shrink-0"
+        class="text-xs px-2 py-0.5 rounded text-ink hover:bg-input shrink-0"
       >
         Reconnect
       </button>
     </div>
 
     <div v-if="connecting" class="flex items-center justify-center flex-1">
-      <Loader2 :size="20" class="animate-spin text-[#858585]" />
+      <Loader2 :size="20" class="animate-spin text-ink-2" />
     </div>
 
     <div v-else-if="serverInfo" class="flex-1 flex overflow-hidden min-h-0">
-      <div class="w-64 shrink-0 border-r border-[#3c3c3c] flex flex-col">
+      <div class="w-64 shrink-0 border-r border-line flex flex-col">
         <RedisKeyTree
           :databases="databases"
           :activeDb="activeDb"

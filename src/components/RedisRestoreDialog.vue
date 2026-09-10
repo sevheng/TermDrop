@@ -1,34 +1,34 @@
 <template>
   <ModalShell :show="state.show" z="z-[100]" panel-class="p-6 w-[32rem] shadow-xl">
-    <h3 class="text-base font-medium text-[#cccccc] mb-1">Restore into {{ connectionName }}</h3>
-    <p class="text-xs text-[#858585] mb-4 break-all">{{ state.path }}</p>
+    <h3 class="text-base font-medium text-ink mb-1">Restore into {{ connectionName }}</h3>
+    <p class="text-xs text-ink-2 mb-4 break-all">{{ state.path }}</p>
 
-    <div v-if="state.header" class="bg-[#1e1e1e] rounded p-3 mb-4 text-xs space-y-1">
+    <div v-if="state.header" class="bg-canvas rounded p-3 mb-4 text-xs space-y-1">
       <div class="flex justify-between">
-        <span class="text-[#858585]">Taken from</span>
-        <span class="text-[#cccccc]">{{ state.header.source }}</span>
+        <span class="text-ink-2">Taken from</span>
+        <span class="text-ink">{{ state.header.source }}</span>
       </div>
       <div class="flex justify-between">
-        <span class="text-[#858585]">Redis version</span>
-        <span class="text-[#cccccc]">{{ state.header.redis_version }}</span>
+        <span class="text-ink-2">Redis version</span>
+        <span class="text-ink">{{ state.header.redis_version }}</span>
       </div>
       <div class="flex justify-between">
-        <span class="text-[#858585]">Created</span>
-        <span class="text-[#cccccc]">{{ state.header.created_at }}</span>
+        <span class="text-ink-2">Created</span>
+        <span class="text-ink">{{ state.header.created_at }}</span>
       </div>
       <div v-if="state.header.pattern" class="flex justify-between">
-        <span class="text-[#858585]">Pattern</span>
-        <span class="text-[#cccccc] font-mono">{{ state.header.pattern }}</span>
+        <span class="text-ink-2">Pattern</span>
+        <span class="text-ink font-mono">{{ state.header.pattern }}</span>
       </div>
     </div>
 
-    <p v-if="warning" class="text-xs text-[#d19a66] mb-4">{{ warning }}</p>
+    <p v-if="warning" class="text-xs text-warn-soft mb-4">{{ warning }}</p>
 
-    <label class="block text-xs text-[#858585] mb-1">Restore into database</label>
+    <label class="block text-xs text-ink-2 mb-1">Restore into database</label>
     <select
       :value="state.targetDb"
       @change="$emit('update:targetDb', Number($event.target.value))"
-      class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 mb-4 outline-none"
+      class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 mb-4 outline-none"
     >
       <option v-for="i in 16" :key="i - 1" :value="i - 1">db{{ i - 1 }}</option>
     </select>
@@ -38,11 +38,11 @@
         type="checkbox"
         :checked="state.replace"
         @change="$emit('update:replace', $event.target.checked)"
-        class="accent-[#007acc] mt-0.5"
+        class="accent-accent mt-0.5"
       />
-      <span class="text-xs text-[#cccccc]">
+      <span class="text-xs text-ink">
         Overwrite keys that already exist
-        <span class="block text-[10px] text-[#858585]">
+        <span class="block text-[10px] text-ink-2">
           Without this, a key that is already there is left alone and counted as skipped.
         </span>
       </span>
@@ -55,7 +55,7 @@
         @change="$emit('update:flushFirst', $event.target.checked)"
         class="accent-red-500 mt-0.5"
       />
-      <span class="text-xs text-[#cccccc]">
+      <span class="text-xs text-ink">
         Empty the database first
         <span class="block text-[10px] text-red-400">
           Deletes every key in db{{ state.targetDb }} before restoring. This cannot be undone.
@@ -66,14 +66,14 @@
     <div class="flex justify-end gap-2">
       <button
         @click="$emit('cancel')"
-        class="px-3 py-1.5 text-xs rounded text-[#cccccc] hover:bg-[#3c3c3c]"
+        class="px-3 py-1.5 text-xs rounded text-ink hover:bg-input"
       >
         Cancel
       </button>
       <button
         @click="$emit('confirm')"
         class="px-3 py-1.5 text-xs rounded text-white"
-        :class="state.flushFirst ? 'bg-red-700 hover:bg-red-600' : 'bg-[#0e639c] hover:bg-[#1177bb]'"
+        :class="state.flushFirst ? 'bg-red-700 hover:bg-red-600' : 'bg-accent-solid hover:bg-accent-solid-hover'"
       >
         {{ state.flushFirst ? 'Empty and restore' : 'Restore' }}
       </button>

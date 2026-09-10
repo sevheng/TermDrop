@@ -4,39 +4,39 @@
     v-if="showSshConfigDialog"
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
   >
-    <div class="bg-[#252526] border border-[#3c3c3c] rounded-lg w-96 max-h-[80vh] flex flex-col shadow-xl">
-      <div class="px-4 py-3 border-b border-[#3c3c3c] flex items-center justify-between">
-        <h3 class="text-sm font-medium text-[#cccccc]">Import from ~/.ssh/config</h3>
-        <button @click="showSshConfigDialog = false" class="text-[#858585] hover:text-[#cccccc]">×</button>
+    <div class="bg-surface border border-line rounded-lg w-96 max-h-[80vh] flex flex-col shadow-xl">
+      <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+        <h3 class="text-sm font-medium text-ink">Import from ~/.ssh/config</h3>
+        <button @click="showSshConfigDialog = false" class="text-ink-2 hover:text-ink">×</button>
       </div>
       <div class="flex-1 overflow-y-auto p-2">
         <div
           v-for="(host, index) in sshConfigHosts"
           :key="index"
-          class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#2a2d2e]"
+          class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-raised"
         >
           <input
             type="checkbox"
             :checked="selectedSshHosts.has(index)"
             @change="(e) => e.target.checked ? selectedSshHosts.add(index) : selectedSshHosts.delete(index)"
-            class="accent-[#007acc]"
+            class="accent-accent"
           />
           <div class="flex-1 min-w-0">
-            <div class="text-xs text-[#cccccc] truncate">{{ host.name }}</div>
-            <div class="text-[10px] text-[#858585] truncate">{{ host.username }}@{{ host.host }}:{{ host.port }} · {{ host.auth_type }}</div>
+            <div class="text-xs text-ink truncate">{{ host.name }}</div>
+            <div class="text-[10px] text-ink-2 truncate">{{ host.username }}@{{ host.host }}:{{ host.port }} · {{ host.auth_type }}</div>
           </div>
         </div>
       </div>
-      <div class="px-4 py-3 border-t border-[#3c3c3c] flex justify-end gap-2">
+      <div class="px-4 py-3 border-t border-line flex justify-end gap-2">
         <button
           @click="showSshConfigDialog = false"
-          class="px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#3c3c3c] rounded"
+          class="px-3 py-1.5 text-xs text-ink hover:bg-input rounded"
         >
           Cancel
         </button>
         <button
           @click="confirmSshConfigImport"
-          class="px-3 py-1.5 text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white rounded"
+          class="px-3 py-1.5 text-xs bg-accent-solid hover:bg-accent-solid-hover text-white rounded"
         >
           Import {{ selectedSshHosts.size }} host{{ selectedSshHosts.size === 1 ? '' : 's' }}
         </button>

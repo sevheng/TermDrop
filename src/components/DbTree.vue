@@ -1,9 +1,9 @@
 <template>
   <div class="flex-1 overflow-y-auto">
     <div v-if="loading" class="flex items-center justify-center py-8">
-      <Loader2 :size="16" class="animate-spin text-[#858585]" />
+      <Loader2 :size="16" class="animate-spin text-ink-2" />
     </div>
-    <div v-else-if="databases.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
+    <div v-else-if="databases.length === 0" class="flex flex-col items-center justify-center py-8 text-ink-3">
       <Database :size="20" class="mb-2 opacity-50" />
       <p class="text-xs">No databases loaded</p>
     </div>
@@ -11,10 +11,10 @@
       <div
         v-for="db in databases"
         :key="db.name"
-        class="border-b border-[#3c3c3c]/30"
+        class="border-b border-line/30"
       >
         <div
-          class="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e] cursor-pointer"
+          class="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-ink hover:bg-raised cursor-pointer"
           @click.self="$emit('toggle-db', db.name)"
         >
           <ChevronRight
@@ -30,13 +30,13 @@
             :indeterminate="dbSelectionState(db) === 'some'"
             @change="$emit('toggle-db-selection', db)"
             @click.stop
-            class="accent-[#007acc] shrink-0"
+            class="accent-accent shrink-0"
           />
-          <Database :size="12" class="shrink-0 text-[#007acc]" />
+          <Database :size="12" class="shrink-0 text-accent" />
           <span class="flex-1 truncate" @click.self="$emit('toggle-db', db.name)">{{ db.name }}</span>
           <!-- Collections load lazily, so an unexpanded database has no count to
                report; printing "0 cols" claimed it was empty. -->
-          <span v-if="db.collections.length > 0" class="text-[10px] text-[#6e6e6e]">
+          <span v-if="db.collections.length > 0" class="text-[10px] text-ink-3">
             {{ db.collections.length }} cols
           </span>
         </div>
@@ -45,10 +45,10 @@
           <label
             v-for="coll in db.collections"
             :key="coll"
-            class="group flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
+            class="group flex items-center gap-1.5 text-[11px] text-ink hover:bg-raised px-1 py-0.5 rounded"
             :class="[
               selectable || browsable ? 'cursor-pointer' : '',
-              isActive(db.name, coll) ? 'bg-[#094771] hover:bg-[#094771]' : '',
+              isActive(db.name, coll) ? 'bg-selected hover:bg-selected' : '',
             ]"
             :title="browsable ? 'Click to view documents' : undefined"
           >
@@ -57,9 +57,9 @@
               type="checkbox"
               :checked="isSelected(db.name, coll)"
               @change="$emit('toggle-collection', db.name, coll)"
-              class="accent-[#007acc]"
+              class="accent-accent"
             />
-            <Table :size="10" class="shrink-0 text-[#6e6e6e]" />
+            <Table :size="10" class="shrink-0 text-ink-3" />
             <span
               class="truncate flex-1"
               :class="isActive(db.name, coll) ? 'text-white' : ''"
@@ -68,7 +68,7 @@
               {{ coll }}
             </span>
           </label>
-          <div v-if="db.collections.length === 0" class="text-[10px] text-[#6e6e6e] px-1">
+          <div v-if="db.collections.length === 0" class="text-[10px] text-ink-3 px-1">
             No collections
           </div>
         </div>

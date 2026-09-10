@@ -3,45 +3,45 @@
   <div
     v-if="editorModal.show"
     ref="editorModalRef"
-    class="fixed z-50 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl flex flex-col"
+    class="fixed z-50 bg-surface border border-line rounded shadow-xl flex flex-col"
     :style="{ left: editorModal.x + 'px', top: editorModal.y + 'px', width: editorModal.width + 'px', height: editorModal.height + 'px', minWidth: '400px', minHeight: '250px' }"
   >
     <!-- Draggable title bar -->
     <div
-      class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c] shrink-0 select-none cursor-move bg-[#2d2d30]"
+      class="flex items-center justify-between px-3 py-2 border-b border-line shrink-0 select-none cursor-move bg-raised"
       @mousedown="startEditorDrag"
     >
-      <span class="text-xs text-[#cccccc] truncate flex-1 mr-2">
+      <span class="text-xs text-ink truncate flex-1 mr-2">
         {{ editorModal.fileName }}
-        <span v-if="editorModal.dirty" class="text-[#cca700] ml-1">●</span>
+        <span v-if="editorModal.dirty" class="text-warn ml-1">●</span>
       </span>
       <div class="flex items-center gap-1.5 shrink-0">
         <button
           @click.stop="editorModal.wordWrap = !editorModal.wordWrap"
           class="text-[10px] px-1.5 py-0.5 rounded"
-          :class="editorModal.wordWrap ? 'bg-[#007acc] text-white' : 'bg-[#3c3c3c] text-[#858585] hover:text-[#cccccc]'"
+          :class="editorModal.wordWrap ? 'bg-accent text-white' : 'bg-input text-ink-2 hover:text-ink'"
           title="Toggle word wrap"
         >↵ Wrap</button>
         <button
           @click.stop="onEditorSave"
           :disabled="editorModal.saving || !editorModal.dirty"
           class="text-[11px] px-2.5 py-1 rounded font-medium"
-          :class="editorModal.dirty ? 'bg-[#89d185] hover:bg-[#73c16e] text-black' : 'bg-[#3c3c3c] text-[#858585] cursor-not-allowed'"
+          :class="editorModal.dirty ? 'bg-good hover:bg-good-hover text-black' : 'bg-input text-ink-2 cursor-not-allowed'"
         >
           {{ editorModal.saving ? 'Saving...' : 'Save' }}
         </button>
-        <button @click.stop="onEditorClose" class="text-[#858585] hover:text-[#cccccc] leading-none">×</button>
+        <button @click.stop="onEditorClose" class="text-ink-2 hover:text-ink leading-none">×</button>
       </div>
     </div>
     <div class="flex-1 overflow-hidden flex">
-      <div v-if="editorModal.loading" class="flex items-center justify-center h-full w-full text-[#858585] text-sm">
+      <div v-if="editorModal.loading" class="flex items-center justify-center h-full w-full text-ink-2 text-sm">
         Loading...
       </div>
       <template v-else>
         <!-- Line numbers -->
         <div
           ref="editorLineNumbersRef"
-          class="shrink-0 bg-[#1e1e1e] text-[#6e6e6e] text-right select-none px-2 py-3 border-r border-[#3c3c3c] overflow-hidden"
+          class="shrink-0 bg-canvas text-ink-3 text-right select-none px-2 py-3 border-r border-line overflow-hidden"
           style="min-width: 2.5rem;"
         >
           <div v-for="n in editorLineCount" :key="n" class="text-[12px] leading-5 font-mono px-1">{{ n }}</div>
@@ -53,21 +53,21 @@
           @input="onEditorInput"
           @keydown="onEditorKeydown"
           @scroll="syncEditorScroll"
-          class="flex-1 bg-[#1e1e1e] text-[#cccccc] text-[12px] font-mono p-3 resize-none focus:outline-none leading-5"
+          class="flex-1 bg-canvas text-ink text-[12px] font-mono p-3 resize-none focus:outline-none leading-5"
           :class="editorModal.wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'"
           spellcheck="false"
         ></textarea>
       </template>
     </div>
-    <div class="px-3 py-1.5 border-t border-[#3c3c3c] text-[10px] text-[#6e6e6e] flex justify-between shrink-0">
+    <div class="px-3 py-1.5 border-t border-line text-[10px] text-ink-3 flex justify-between shrink-0">
       <span>{{ editorModal.content.length }} chars</span>
-      <span v-if="editorModal.dirty" class="text-[#cca700]">Unsaved changes</span>
+      <span v-if="editorModal.dirty" class="text-warn">Unsaved changes</span>
       <span v-else>Saved</span>
     </div>
     <!-- Resize handle -->
     <div
       class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-      style="background: linear-gradient(135deg, transparent 50%, #6e6e6e 50%);"
+      style="background: linear-gradient(135deg, transparent 50%, rgb(var(--td-ink-3)) 50%);"
       @mousedown="startEditorResize"
       title="Resize"
     ></div>

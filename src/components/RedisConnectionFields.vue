@@ -1,72 +1,72 @@
 <template>
   <div class="space-y-3">
     <div>
-      <label class="block text-xs text-[#858585] mb-1">Connection URI</label>
+      <label class="block text-xs text-ink-2 mb-1">Connection URI</label>
       <input
         v-model="uri"
         @input="$emit('uri-input')"
         placeholder="redis://:password@localhost:6379/0"
-        class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 font-mono outline-none focus:ring-1 focus:ring-[#007acc]"
+        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 font-mono outline-none focus:ring-1 focus:ring-accent"
       />
       <p v-if="errors.uri" class="text-[10px] text-red-400 mt-1">{{ errors.uri }}</p>
     </div>
 
     <div class="flex items-center gap-2">
       <div class="flex-1">
-        <label class="block text-xs text-[#858585] mb-1">Host</label>
+        <label class="block text-xs text-ink-2 mb-1">Host</label>
         <input
           v-model="host"
           @input="$emit('field-input')"
           placeholder="localhost"
-          class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#007acc]"
+          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="w-24">
-        <label class="block text-xs text-[#858585] mb-1">Port</label>
+        <label class="block text-xs text-ink-2 mb-1">Port</label>
         <input
           v-model="port"
           @input="$emit('field-input')"
           placeholder="6379"
-          class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#007acc]"
+          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="w-20">
-        <label class="block text-xs text-[#858585] mb-1">DB</label>
+        <label class="block text-xs text-ink-2 mb-1">DB</label>
         <input
           v-model="database"
           @input="$emit('field-input')"
           placeholder="0"
-          class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#007acc]"
+          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
     </div>
 
     <div class="flex items-center gap-2">
       <div class="flex-1">
-        <label class="block text-xs text-[#858585] mb-1">
+        <label class="block text-xs text-ink-2 mb-1">
           Username
-          <span class="text-[#6e6e6e]">(ACL, Redis 6+)</span>
+          <span class="text-ink-3">(ACL, Redis 6+)</span>
         </label>
         <input
           v-model="username"
           @input="$emit('field-input')"
-          class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#007acc]"
+          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="flex-1">
-        <label class="block text-xs text-[#858585] mb-1">Password</label>
+        <label class="block text-xs text-ink-2 mb-1">Password</label>
         <div class="relative">
           <input
             v-model="password"
             :type="showPassword ? 'text' : 'password'"
             @input="$emit('field-input')"
             :placeholder="hasStoredSecret ? '•••••••• (stored)' : ''"
-            class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 pr-7 outline-none focus:ring-1 focus:ring-[#007acc]"
+            class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 pr-7 outline-none focus:ring-1 focus:ring-accent"
           />
           <button
             type="button"
             @click="showPassword = !showPassword"
-            class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#858585] hover:text-[#cccccc]"
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-2 hover:text-ink"
           >
             <component :is="showPassword ? EyeOff : Eye" :size="12" />
           </button>
@@ -75,23 +75,23 @@
     </div>
 
     <label class="flex items-center gap-2 cursor-pointer">
-      <input v-model="tls" type="checkbox" @change="$emit('field-input')" class="accent-[#007acc]" />
-      <span class="text-xs text-[#cccccc]">Use TLS (rediss://)</span>
+      <input v-model="tls" type="checkbox" @change="$emit('field-input')" class="accent-accent" />
+      <span class="text-xs text-ink">Use TLS (rediss://)</span>
     </label>
 
     <div>
-      <label class="block text-xs text-[#858585] mb-1">Connect through SSH host</label>
+      <label class="block text-xs text-ink-2 mb-1">Connect through SSH host</label>
       <select
         :value="tunnelHostId ?? ''"
         @change="$emit('update:tunnelHostId', $event.target.value === '' ? null : Number($event.target.value))"
-        class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none"
+        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none"
       >
         <option value="">Connect directly</option>
         <option v-for="h in sshHosts" :key="h.id" :value="h.id">
           {{ h.name }} ({{ h.username }}@{{ h.host }})
         </option>
       </select>
-      <p class="text-[10px] text-[#6e6e6e] mt-1">
+      <p class="text-[10px] text-ink-3 mt-1">
         For a Redis that only listens on a private network. The host and port above are
         resolved from the SSH host, not from this machine.
       </p>

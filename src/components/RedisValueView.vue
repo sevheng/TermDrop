@@ -1,14 +1,14 @@
 <template>
-  <div class="flex flex-col h-full border-l border-[#3c3c3c] min-w-0">
-    <div v-if="!keyB64" class="flex flex-col items-center justify-center h-full text-[#6e6e6e]">
+  <div class="flex flex-col h-full border-l border-line min-w-0">
+    <div v-if="!keyB64" class="flex flex-col items-center justify-center h-full text-ink-3">
       <FileText :size="20" class="mb-2 opacity-50" />
       <p class="text-xs">Select a key to view it</p>
     </div>
 
     <template v-else>
-      <div class="px-3 py-2 border-b border-[#3c3c3c] shrink-0">
-        <p class="font-mono text-xs text-[#cccccc] break-all">{{ keyLabel }}</p>
-        <div class="flex items-center gap-3 mt-1 text-[10px] text-[#858585]">
+      <div class="px-3 py-2 border-b border-line shrink-0">
+        <p class="font-mono text-xs text-ink break-all">{{ keyLabel }}</p>
+        <div class="flex items-center gap-3 mt-1 text-[10px] text-ink-2">
           <span>{{ formatKeyKind(page?.kind) }}</span>
           <span>{{ formatTtl(page?.ttl_ms) }}</span>
           <span v-if="page?.encoding">{{ page.encoding }}</span>
@@ -19,13 +19,13 @@
       </div>
 
       <div v-if="loading" class="flex items-center justify-center py-8">
-        <Loader2 :size="16" class="animate-spin text-[#858585]" />
+        <Loader2 :size="16" class="animate-spin text-ink-2" />
       </div>
       <div v-else-if="error" class="px-3 py-2 text-xs text-red-400">{{ error }}</div>
 
       <div
         v-else-if="!isViewableKind(page?.kind)"
-        class="flex flex-col items-center justify-center flex-1 text-[#6e6e6e] px-4 text-center"
+        class="flex flex-col items-center justify-center flex-1 text-ink-3 px-4 text-center"
       >
         <AlertCircle :size="20" class="mb-2 opacity-50" />
         <p class="text-xs">
@@ -45,7 +45,7 @@
         -->
         <p
           v-if="truncatedNote"
-          class="sticky top-0 z-10 px-3 py-1.5 text-[10px] text-[#d19a66] bg-[#3a2f1d] border-b border-[#5a4a2a]"
+          class="sticky top-0 z-10 px-3 py-1.5 text-[10px] text-warn-soft bg-warn-bg border-b border-warn-line"
         >
           {{ truncatedNote }}
         </p>
@@ -53,11 +53,11 @@
         <!-- A string is one value; everything else is a table of elements. -->
         <pre
           v-if="page.kind === 'string'"
-          class="px-3 py-2 text-xs font-mono text-[#cccccc] whitespace-pre-wrap break-all"
+          class="px-3 py-2 text-xs font-mono text-ink whitespace-pre-wrap break-all"
           >{{ display(page.entries[0]?.value) }}</pre
         >
         <table v-else class="w-full text-xs">
-          <thead class="sticky top-0 bg-[#252526] text-[#858585]">
+          <thead class="sticky top-0 bg-surface text-ink-2">
             <tr>
               <th v-if="hasField" class="text-left font-normal px-3 py-1.5 w-1/3">
                 {{ page.kind === 'stream' ? 'ID' : page.kind === 'list' ? '#' : 'Field' }}
@@ -72,15 +72,15 @@
             <tr
               v-for="(entry, i) in page.entries"
               :key="i"
-              class="border-t border-[#3c3c3c]/30 align-top"
+              class="border-t border-line/30 align-top"
             >
-              <td v-if="hasField" class="px-3 py-1 font-mono text-[#9cdcfe] break-all">
+              <td v-if="hasField" class="px-3 py-1 font-mono text-syn-cyan break-all">
                 {{ display(entry.field) }}
               </td>
-              <td class="px-3 py-1 font-mono text-[#cccccc] break-all">
+              <td class="px-3 py-1 font-mono text-ink break-all">
                 {{ display(entry.value) }}
               </td>
-              <td v-if="page.kind === 'zset'" class="px-3 py-1 text-right text-[#858585]">
+              <td v-if="page.kind === 'zset'" class="px-3 py-1 text-right text-ink-2">
                 {{ entry.score }}
               </td>
             </tr>
@@ -91,14 +91,14 @@
 
       <div
         v-if="isViewableKind(page?.kind) && page.kind !== 'string'"
-        class="flex items-center justify-between px-3 py-1.5 border-t border-[#3c3c3c] text-[11px] text-[#858585] shrink-0"
+        class="flex items-center justify-between px-3 py-1.5 border-t border-line text-[11px] text-ink-2 shrink-0"
       >
         <span>{{ page.entries.length }} shown</span>
         <button
           v-if="!page.done || canPageByOffset"
           :disabled="loading"
           @click="$emit('more')"
-          class="px-2 py-0.5 rounded hover:bg-[#2a2d2e] disabled:opacity-40"
+          class="px-2 py-0.5 rounded hover:bg-raised disabled:opacity-40"
         >
           Load more
         </button>

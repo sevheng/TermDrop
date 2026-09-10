@@ -1,7 +1,7 @@
 <template>
   <div>
-    <label class="block text-xs text-[#858585] mb-1.5">
-      Connection String <span class="text-[#f44336]">*</span>
+    <label class="block text-xs text-ink-2 mb-1.5">
+      Connection String <span class="text-bad">*</span>
     </label>
     <input
       v-model="uri"
@@ -12,13 +12,13 @@
       @blur="$emit('validate', 'uri')"
       @keydown.enter="$emit('save')"
     />
-    <p v-if="errors.uri" class="text-xs text-[#f44336] mt-1">{{ errors.uri }}</p>
+    <p v-if="errors.uri" class="text-xs text-bad mt-1">{{ errors.uri }}</p>
   </div>
 
   <div class="flex gap-3">
     <div class="flex-[2]">
-      <label class="block text-xs text-[#858585] mb-1.5">
-        Host <span v-if="!isSrv" class="text-[#f44336]">*</span>
+      <label class="block text-xs text-ink-2 mb-1.5">
+        Host <span v-if="!isSrv" class="text-bad">*</span>
       </label>
       <input
         v-model="host"
@@ -29,11 +29,11 @@
         @blur="$emit('validate', 'host')"
         @keydown.enter="$emit('save')"
       />
-      <p v-if="errors.host" class="text-xs text-[#f44336] mt-1">{{ errors.host }}</p>
+      <p v-if="errors.host" class="text-xs text-bad mt-1">{{ errors.host }}</p>
     </div>
     <div class="flex-1">
-      <label class="block text-xs text-[#858585] mb-1.5">
-        Port <span v-if="!isSrv" class="text-[#f44336]">*</span>
+      <label class="block text-xs text-ink-2 mb-1.5">
+        Port <span v-if="!isSrv" class="text-bad">*</span>
       </label>
       <input
         v-model.number="port"
@@ -44,13 +44,13 @@
         @blur="$emit('validate', 'port')"
         @keydown.enter="$emit('save')"
       />
-      <p v-if="errors.port" class="text-xs text-[#f44336] mt-1">{{ errors.port }}</p>
+      <p v-if="errors.port" class="text-xs text-bad mt-1">{{ errors.port }}</p>
     </div>
   </div>
 
   <div class="flex gap-3">
     <div class="flex-1">
-      <label class="block text-xs text-[#858585] mb-1.5">Username</label>
+      <label class="block text-xs text-ink-2 mb-1.5">Username</label>
       <input
         v-model="username"
         type="text"
@@ -61,7 +61,7 @@
       />
     </div>
     <div class="flex-1">
-      <label class="block text-xs text-[#858585] mb-1.5">Password</label>
+      <label class="block text-xs text-ink-2 mb-1.5">Password</label>
       <div class="relative">
         <input
           v-model="password"
@@ -74,12 +74,12 @@
         <button
           type="button"
           @click="showPassword = !showPassword"
-          class="absolute right-2 top-1/2 -translate-y-1/2 text-[#6e6e6e] hover:text-[#cccccc]"
+          class="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
         >
           <component :is="showPassword ? EyeOff : Eye" :size="14" />
         </button>
       </div>
-      <p v-if="hasStoredSecret" class="text-[10px] text-[#858585] mt-1">
+      <p v-if="hasStoredSecret" class="text-[10px] text-ink-2 mt-1">
         A password is stored. Leave blank to keep it.
       </p>
     </div>
@@ -87,7 +87,7 @@
 
   <div class="flex gap-3">
     <div class="flex-1">
-      <label class="block text-xs text-[#858585] mb-1.5">
+      <label class="block text-xs text-ink-2 mb-1.5">
         Database
       </label>
       <input
@@ -99,10 +99,10 @@
         @blur="$emit('validate', 'database')"
         @keydown.enter="$emit('save')"
       />
-      <p v-if="errors.database" class="text-xs text-[#f44336] mt-1">{{ errors.database }}</p>
+      <p v-if="errors.database" class="text-xs text-bad mt-1">{{ errors.database }}</p>
     </div>
     <div class="flex-1">
-      <label class="block text-xs text-[#858585] mb-1.5">Auth Source</label>
+      <label class="block text-xs text-ink-2 mb-1.5">Auth Source</label>
       <input
         v-model="authSource"
         type="text"
@@ -115,7 +115,7 @@
   </div>
 
   <div>
-    <label class="block text-xs text-[#858585] mb-1.5">Connection Options</label>
+    <label class="block text-xs text-ink-2 mb-1.5">Connection Options</label>
     <input
       v-model="options"
       type="text"
@@ -171,8 +171,8 @@ const authSource = field('authSource')
 const options = field('options')
 
 function inputClass(key) {
-  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
-  const error = props.errors[key] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
+  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const error = props.errors[key] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }
 </script>

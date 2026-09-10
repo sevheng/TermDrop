@@ -1,0 +1,66 @@
+/**
+ * TermDrop design tokens.
+ *
+ * Channels rather than hex, so Tailwind's `<alpha-value>` works and
+ * `bg-surface/50` resolves. Components must never name a colour directly —
+ * every one of them comes from here, which is what makes a palette change a
+ * one-file edit instead of a thousand-site one.
+ *
+ * Values below are the original VS Code Dark+ set, unchanged.
+ */
+:root {
+
+  /* surfaces */
+  --td-canvas: 30 30 30;  /* terminal and main work area */
+  --td-surface: 37 37 38;  /* sidebar, panel chrome */
+  --td-overlay: 37 37 38;  /* modals and popovers */
+  --td-raised: 42 45 46;  /* hover state on rows */
+  --td-active: 55 55 61;  /* the active tab or row */
+  --td-selected: 9 71 113;  /* multi-select highlight */
+
+  /* inputs and edges */
+  --td-input: 60 60 60;  /* input and neutral button fill */
+  --td-input-hover: 76 76 76;  /* hover on those */
+  --td-line: 60 60 60;  /* dividers and borders */
+
+  /* text */
+  --td-ink: 204 204 204;  /* primary */
+  --td-ink-2: 133 133 133;  /* secondary */
+  --td-ink-3: 110 110 110;  /* tertiary and placeholders */
+
+  /* accent */
+  --td-accent: 0 122 204;  /* accent text, icons, focus rings */
+  --td-accent-hover: 31 138 210;  /* hover on an accent fill */
+  --td-accent-solid: 14 99 156;  /* primary button fill */
+  --td-accent-solid-hover: 17 119 187;  /* hover on that */
+  --td-accent-soft: 117 190 255;  /* links on dark */
+  --td-accent-soft-hover: 111 192 255;  /* hover on those */
+
+  /* semantic */
+  --td-good: 137 209 133;  /* connected, succeeded */
+  --td-warn: 204 167 0;  /* needs attention */
+  --td-warn-soft: 209 154 102;  /* advisory text */
+  --td-bad: 244 67 54;  /* failed, destructive */
+  --td-bad-hover: 211 47 47;  /* hover on a destructive fill */
+  --td-good-hover: 115 193 110;  /* hover on a confirming fill */
+
+  /* Tinted surfaces for inline banners. Dark enough to sit in the page,
+     saturated enough to read as a state rather than another panel. */
+  --td-warn-bg: 58 47 29;
+  --td-warn-line: 90 74 42;
+  --td-bad-bg: 58 29 29;
+  --td-bad-line: 127 29 29;
+
+  /* brand */
+  --td-redis: 216 44 32;  /* Redis brand red */
+  --td-mongo: 77 179 61;  /* MongoDB brand green */
+  --td-mongo-solid: 56 138 52;  /* MongoDB button fill */
+  --td-mongo-solid-hover: 67 160 71;
+
+  /* data syntax */
+  --td-syn-blue: 86 156 214;
+  --td-syn-cyan: 156 220 254;
+  --td-syn-yellow: 229 192 123;
+  --td-syn-teal: 78 201 176;
+  --td-syn-purple: 197 134 192;
+}
