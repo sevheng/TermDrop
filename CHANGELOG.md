@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **MongoDB passwords are no longer stored in the database.** They move to the OS keyring (or the existing encrypted-file fallback) on first launch and the stored URI keeps only the username. Existing rows are migrated automatically; a keyring failure leaves the row untouched and retries next launch rather than losing the password.
+  - Host **exports no longer contain MongoDB passwords**, and importing an older export strips them instead of writing plaintext back
+  - The connection string is no longer written to the log file. `termdrop::mongodb=debug` is no longer on by default, and connection strings in command arguments and tool output are redacted
+  - Credentials are no longer passed on the mongodump/mongorestore command line, where any local user could read them from `ps`. They go in a `--config` file created 0600 and deleted when the operation ends
+  - MongoDB connection strings are no longer rendered into tooltips or list rows; only host and port are shown
+
 ### Fixed
+- **MongoDB dumped the whole database when only some collections were selected.** Only a single-collection selection was filtered, so selecting two of forty collections dumped all forty.
+- **Dumping several databases to an archive kept only the last one**, while reporting success for each. An archive holds one database, and selecting more than one is now refused with a pointer to the folder dump.
+- **MongoDB dump and restore ignored the direction toggle**, always using the remote connection even when the panel was showing local collections. Both now follow the selected direction and name it on the button.
+- **Restoring always dropped the target collections.** `--drop` was hardcoded; it is now a checkbox that defaults to off. **This changes existing behaviour**: a restore now merges and reports duplicate `_id` conflicts unless the box is ticked.
+- **A sync that fell back to the driver silently lost indexes**, collection options and validators, and still reported plain success. The fallback now warns before it runs, says so in the result, recreates indexes, and can be refused.
+- **MongoDB progress was invented from elapsed time.** It now reports the progress mongodump and mongorestore actually print, falling back to an estimate only for the first few seconds, before the tools emit any.
+- **Cancelling a multi-database MongoDB operation could be ignored** between two databases.
+- A panic while holding a MongoDB lock disabled every later MongoDB operation until restart, and a tool process could be orphaned rather than killed.
+
 - **Security audit reported passes it could not verify** — four of the eight checks could return a false pass on a stock RHEL 9 or Ubuntu host, so an insecure server could score 87 "Good". Checks that cannot determine an answer now report `unknown` and are excluded from the score rather than counting as passes, and the panel shows how many checks passed out of how many could be determined.
   - `ufw status` reporting `inactive` matched a `contains("active")` test and was read as active
   - an unset `PasswordAuthentication` or `PermitRootLogin` matched a `contains("no")` test and was read as disabled; absence is now judged against the OpenSSH default
