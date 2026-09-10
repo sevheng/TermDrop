@@ -82,7 +82,7 @@
           @click="$emit('confirm')"
           class="px-3 py-1.5 text-sm text-white rounded transition-colors"
           :class="state.dropFirst
-            ? 'bg-bad hover:bg-bad-hover'
+            ? 'bg-bad-solid hover:bg-bad-solid-hover'
             : 'bg-accent hover:bg-accent-hover'"
         >
           Restore

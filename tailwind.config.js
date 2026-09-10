@@ -34,6 +34,8 @@ export default {
         'warn-soft': 'rgb(var(--td-warn-soft) / <alpha-value>)',
         'bad': 'rgb(var(--td-bad) / <alpha-value>)',
         'bad-hover': 'rgb(var(--td-bad-hover) / <alpha-value>)',
+        'bad-solid': 'rgb(var(--td-bad-solid) / <alpha-value>)',
+        'bad-solid-hover': 'rgb(var(--td-bad-solid-hover) / <alpha-value>)',
         'good-hover': 'rgb(var(--td-good-hover) / <alpha-value>)',
         'warn-bg': 'rgb(var(--td-warn-bg) / <alpha-value>)',
         'warn-line': 'rgb(var(--td-warn-line) / <alpha-value>)',

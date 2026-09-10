@@ -26,7 +26,7 @@
           :class="[
             'px-3 py-1.5 text-sm text-white rounded transition-colors',
             danger
-              ? 'bg-bad hover:bg-bad-hover disabled:bg-bad/30'
+              ? 'bg-bad-solid hover:bg-bad-solid-hover disabled:bg-bad-solid/30'
               : 'bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/30'
           ]"
         >
