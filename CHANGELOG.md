@@ -13,6 +13,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
 
 ### Added
+- **Redis connections.** A Redis server is a host row of its own, like a MongoDB connection, and opens its own tab: browse the keyspace, and back it up or restore it.
+  - **Read-only key browser.** Databases and their key counts on the left, with keys grouped by their `:` prefix; a `MATCH` pattern box and a type filter narrow the scan itself, not just the list on screen. Type-aware viewers for strings, hashes, lists, sets, sorted sets and streams, showing TTL, encoding and size. Nothing in the browser can write: there is no command console and no edit path
+  - **Nothing here can stall a server.** Every read is a `SCAN` variant or an explicit range — never `KEYS`, `HGETALL`, `SMEMBERS` or `LRANGE key 0 -1` — so opening a ten-million-element set costs the same as opening an empty one, and a 5 MB string is previewed rather than fetched whole
+  - **Backup and restore** to a `.tdredis` file, per key via `DUMP`/`RESTORE`. This works on managed Redis where `SYNC` and `BGSAVE` are blocked, works through a tunnel, and can back up a single database or a single `MATCH` pattern. TTLs are preserved as remaining time, so a key dumped with an hour left has an hour left when it is restored
+  - A truncated or damaged backup is **refused rather than half-restored** — the file carries a record count and a checksum, both verified before the first key is written — and a restore the target's Redis version cannot read is refused up front, naming both versions, instead of failing partway through
+  - Restoring will not overwrite by default: a key that already exists is counted as skipped, and the summary says how many. Emptying the database first is a separate, opt-in checkbox
+  - **Optional SSH tunnel.** A Redis that only listens on a private network can be reached through an SSH host already in TermDrop. The tunnel is bound to `127.0.0.1` only, opens and closes with the tab, and reports a bad credential or a bastion with forwarding disabled when it opens rather than on the first command
+  - Passwords are kept in the OS keyring and never written to the database or into a backup file, the same as MongoDB's
+  - Keys that are not valid UTF-8 stay addressable: they are carried as their exact bytes and shown as base64, so a binary key can be opened, backed up and restored rather than silently mangled
+  - Backing up a server in **cluster mode is refused**, because `SCAN` only sees the node it is connected to and the result would be a silently partial backup
+
 - **MongoDB document browser** — double-click any collection in the database tree, or use the browse icon on its row, to read its documents. Documents show as a **table** whose columns are the fields found on the page, so several documents can be compared at a glance; a toggle switches to the JSON view, and clicking a row expands the full document either way. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
   - A 24-character hex `_id` is treated as an ObjectId, so the common shorthand matches instead of silently returning nothing
   - Values are shown without losing precision — large integers and `Decimal128` keep their exact value rather than being rounded through a floating-point number
