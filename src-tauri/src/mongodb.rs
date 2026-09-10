@@ -1064,6 +1064,236 @@ pub async fn build_client(uri: &str) -> Result<Client, String> {
         .map_err(|e| format!("create client: {}", redact_uris_in_text(&e.to_string())))
 }
 
+/// Hard ceiling on documents returned in one page, whatever the caller asks.
+pub const MAX_FIND_LIMIT: i64 = 200;
+/// Hard ceiling on the serialized size of one page.
+const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// One page of documents, each already serialized as canonical extended JSON.
+#[derive(serde::Serialize)]
+pub struct FindResult {
+    /// Pre-serialized so Tauri's own JSON layer cannot re-coerce the BSON
+    /// representations (Int64 vs Double, Decimal128) we just preserved.
+    pub documents: Vec<String>,
+    /// The page was cut short by the size cap.
+    pub truncated: bool,
+    pub elapsed_ms: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct CountResult {
+    pub count: u64,
+    /// An unfiltered count uses collection metadata and is O(1) but may lag.
+    pub estimated: bool,
+}
+
+/// Parse a user-typed filter into a BSON document.
+///
+/// `serde_json::from_str::<Document>` gives true extended-JSON semantics on
+/// this bson version — `{"$oid": ...}` becomes an ObjectId rather than a nested
+/// document — which is what makes `{"_id": {"$oid": "..."}}` match. That
+/// behaviour is pinned by a test.
+pub fn parse_filter(text: &str) -> Result<mongodb::bson::Document, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(mongodb::bson::Document::new());
+    }
+
+    let mut doc: mongodb::bson::Document =
+        serde_json::from_str(trimmed).map_err(|e| format!("filter is not valid JSON: {}", e))?;
+
+    coerce_id_hex(&mut doc);
+    Ok(doc)
+}
+
+/// Treat `{"_id": "<24 hex chars>"}` as an ObjectId.
+///
+/// Typing the bare hex is the single most common mistake, and its failure mode
+/// — zero results and no error — is the most confusing one.
+fn coerce_id_hex(doc: &mut mongodb::bson::Document) {
+    let Some(mongodb::bson::Bson::String(s)) = doc.get("_id") else {
+        return;
+    };
+    if s.len() != 24 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return;
+    }
+    if let Ok(oid) = mongodb::bson::oid::ObjectId::parse_str(s) {
+        doc.insert("_id", oid);
+    }
+}
+
+/// Serialize a document as canonical extended JSON.
+///
+/// Canonical, not relaxed: relaxed collapses Int32/Int64/Double and renders
+/// Decimal128 as a bare JSON number, so the viewer would show a *wrong* value
+/// with no indication that it had been changed.
+fn to_canonical_json(doc: mongodb::bson::Document) -> String {
+    mongodb::bson::Bson::Document(doc)
+        .into_canonical_extjson()
+        .to_string()
+}
+
+/// Read a page of documents from a collection.
+pub async fn find_documents(
+    client: &Client,
+    db: &str,
+    collection: &str,
+    filter: mongodb::bson::Document,
+    sort: Option<mongodb::bson::Document>,
+    projection: Option<mongodb::bson::Document>,
+    skip: u64,
+    limit: i64,
+) -> Result<FindResult, String> {
+    let started = Instant::now();
+    let coll = client
+        .database(db)
+        .collection::<mongodb::bson::Document>(collection);
+
+    let mut find = coll
+        .find(filter)
+        .skip(skip)
+        .limit(limit.clamp(1, MAX_FIND_LIMIT));
+    if let Some(sort) = sort {
+        find = find.sort(sort);
+    }
+    if let Some(projection) = projection {
+        find = find.projection(projection);
+    }
+
+    let mut cursor = find
+        .await
+        .map_err(|e| format!("find: {}", redact_uris_in_text(&e.to_string())))?;
+
+    let mut documents = Vec::new();
+    let mut bytes = 0usize;
+    let mut truncated = false;
+
+    while let Some(doc) = cursor
+        .try_next()
+        .await
+        .map_err(|e| format!("read documents: {}", redact_uris_in_text(&e.to_string())))?
+    {
+        let json = to_canonical_json(doc);
+        bytes += json.len();
+        documents.push(json);
+        // Stop *after* pushing, so a single oversized document is still
+        // returned rather than silently vanishing.
+        if bytes >= MAX_RESPONSE_BYTES {
+            truncated = true;
+            break;
+        }
+    }
+
+    Ok(FindResult {
+        documents,
+        truncated,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// Count documents, exactly when filtered and by metadata when not.
+pub async fn count_documents(
+    client: &Client,
+    db: &str,
+    collection: &str,
+    filter: mongodb::bson::Document,
+) -> Result<CountResult, String> {
+    let coll = client
+        .database(db)
+        .collection::<mongodb::bson::Document>(collection);
+
+    if filter.is_empty() {
+        // O(1) from collection metadata: a real count of a 10M-document
+        // collection would scan it on every page render.
+        let count = coll
+            .estimated_document_count()
+            .await
+            .map_err(|e| format!("count: {}", redact_uris_in_text(&e.to_string())))?;
+        return Ok(CountResult {
+            count,
+            estimated: true,
+        });
+    }
+
+    let count = coll
+        .count_documents(filter)
+        .await
+        .map_err(|e| format!("count: {}", redact_uris_in_text(&e.to_string())))?;
+    Ok(CountResult {
+        count,
+        estimated: false,
+    })
+}
+
+/// A collection's indexes, as canonical extended JSON.
+pub async fn list_indexes(
+    client: &Client,
+    db: &str,
+    collection: &str,
+) -> Result<Vec<String>, String> {
+    let specs = client
+        .database(db)
+        .collection::<mongodb::bson::Document>(collection)
+        .list_indexes()
+        .await
+        .map_err(|e| format!("list indexes: {}", redact_uris_in_text(&e.to_string())))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|e| format!("read indexes: {}", redact_uris_in_text(&e.to_string())))?;
+
+    Ok(specs
+        .into_iter()
+        .map(|ix| {
+            let mut doc = mongodb::bson::doc! { "keys": ix.keys };
+            if let Some(options) = ix.options {
+                if let Ok(mongodb::bson::Bson::Document(o)) = mongodb::bson::to_bson(&options) {
+                    doc.insert("options", o);
+                }
+            }
+            to_canonical_json(doc)
+        })
+        .collect())
+}
+
+/// Storage statistics for one collection.
+pub async fn collection_stats(
+    client: &Client,
+    db: &str,
+    collection: &str,
+) -> Result<String, String> {
+    let pipeline = vec![
+        mongodb::bson::doc! { "$collStats": { "storageStats": {} } },
+        mongodb::bson::doc! { "$project": {
+            "count": "$storageStats.count",
+            "size": "$storageStats.size",
+            "storageSize": "$storageStats.storageSize",
+            "avgObjSize": "$storageStats.avgObjSize",
+            "nindexes": "$storageStats.nindexes",
+            "totalIndexSize": "$storageStats.totalIndexSize",
+        }},
+    ];
+
+    let mut cursor = client
+        .database(db)
+        .collection::<mongodb::bson::Document>(collection)
+        .aggregate(pipeline)
+        .await
+        .map_err(|e| format!("collection stats: {}", redact_uris_in_text(&e.to_string())))?;
+
+    let doc = cursor
+        .try_next()
+        .await
+        .map_err(|e| {
+            format!(
+                "read collection stats: {}",
+                redact_uris_in_text(&e.to_string())
+            )
+        })?
+        .ok_or_else(|| "collection stats returned nothing".to_string())?;
+
+    Ok(to_canonical_json(doc))
+}
+
 /// List database names on an existing client.
 pub async fn list_databases_with(client: &Client) -> Result<Vec<String>, String> {
     client
@@ -2053,6 +2283,74 @@ uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
             }
             other => panic!("expected progress, got {:?}", other),
         }
+    }
+
+    // These pin the extended-JSON behaviour the browser depends on. Getting it
+    // wrong produces filters that silently match nothing, which is the worst
+    // possible failure mode for a query box.
+
+    #[test]
+    fn filter_parsing_understands_extended_json() {
+        use mongodb::bson::Bson;
+
+        let doc = parse_filter(r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"}}"#).unwrap();
+        assert!(
+            matches!(doc.get("_id"), Some(Bson::ObjectId(_))),
+            "$oid must become an ObjectId, not a nested document: {:?}",
+            doc.get("_id")
+        );
+
+        let doc = parse_filter(r#"{"t":{"$date":"2020-01-01T00:00:00Z"}}"#).unwrap();
+        assert!(
+            matches!(doc.get("t"), Some(Bson::DateTime(_))),
+            "$date must become a DateTime: {:?}",
+            doc.get("t")
+        );
+    }
+
+    #[test]
+    fn a_bare_hex_id_is_treated_as_an_object_id() {
+        use mongodb::bson::Bson;
+
+        // The most common user mistake, whose failure mode is zero results
+        // and no error.
+        let doc = parse_filter(r#"{"_id":"507f1f77bcf86cd799439011"}"#).unwrap();
+        assert!(matches!(doc.get("_id"), Some(Bson::ObjectId(_))));
+
+        // A string that merely looks id-ish is left alone.
+        let doc = parse_filter(r#"{"_id":"not-an-object-id"}"#).unwrap();
+        assert!(matches!(doc.get("_id"), Some(Bson::String(_))));
+
+        // 24 characters but not hex.
+        let doc = parse_filter(r#"{"_id":"zzzzzzzzzzzzzzzzzzzzzzzz"}"#).unwrap();
+        assert!(matches!(doc.get("_id"), Some(Bson::String(_))));
+    }
+
+    #[test]
+    fn output_is_canonical_so_numbers_keep_their_type() {
+        use mongodb::bson::{doc, Bson};
+
+        let out = to_canonical_json(doc! {
+            "big": Bson::Int64(9_007_199_254_740_993),
+            "small": Bson::Int32(7),
+            "dec": Bson::Decimal128("1.10".parse().unwrap()),
+        });
+
+        // Relaxed extended JSON would render these as bare numbers and lose the
+        // distinction, showing a wrong value with no indication.
+        assert!(out.contains("$numberLong"), "{}", out);
+        assert!(out.contains("$numberInt"), "{}", out);
+        assert!(out.contains("$numberDecimal"), "{}", out);
+        assert!(out.contains("9007199254740993"), "{}", out);
+    }
+
+    #[test]
+    fn an_empty_filter_is_an_empty_document_and_bad_json_is_reported() {
+        assert!(parse_filter("").unwrap().is_empty());
+        assert!(parse_filter("   ").unwrap().is_empty());
+
+        let err = parse_filter("{not json}").unwrap_err();
+        assert!(err.contains("not valid JSON"), "unexpected: {}", err);
     }
 
     #[test]

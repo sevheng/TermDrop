@@ -1645,6 +1645,104 @@ async fn mongodb_restore_archive(
     .await
 }
 
+/// Read a page of documents from a collection.
+///
+/// Read-only by construction: there is no aggregate command and no write
+/// command, so a pipeline stage like $out or $merge cannot reach the server
+/// from here.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn mongodb_find(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+    db: String,
+    collection: String,
+    filter: Option<String>,
+    sort: Option<String>,
+    projection: Option<String>,
+    skip: u64,
+    limit: i64,
+) -> Result<mongodb::FindResult, String> {
+    let client = mongo_client(&state, host_id, side).await?;
+    let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
+    let sort = parse_optional_doc(sort.as_deref(), "sort")?;
+    let projection = parse_optional_doc(projection.as_deref(), "projection")?;
+
+    with_async_timeout(
+        mongodb::find_documents(
+            &client,
+            &db,
+            &collection,
+            filter,
+            sort,
+            projection,
+            skip,
+            limit,
+        ),
+        60,
+    )
+    .await
+}
+
+/// Count documents matching a filter.
+#[tauri::command]
+async fn mongodb_count(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+    db: String,
+    collection: String,
+    filter: Option<String>,
+) -> Result<mongodb::CountResult, String> {
+    let client = mongo_client(&state, host_id, side).await?;
+    let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
+    with_async_timeout(
+        mongodb::count_documents(&client, &db, &collection, filter),
+        60,
+    )
+    .await
+}
+
+/// A collection's indexes.
+#[tauri::command]
+async fn mongodb_list_indexes(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+    db: String,
+    collection: String,
+) -> Result<Vec<String>, String> {
+    let client = mongo_client(&state, host_id, side).await?;
+    with_async_timeout(mongodb::list_indexes(&client, &db, &collection), 30).await
+}
+
+/// A collection's storage statistics.
+#[tauri::command]
+async fn mongodb_collection_stats(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+    db: String,
+    collection: String,
+) -> Result<String, String> {
+    let client = mongo_client(&state, host_id, side).await?;
+    with_async_timeout(mongodb::collection_stats(&client, &db, &collection), 30).await
+}
+
+/// Parse an optional user-supplied JSON document, naming the field on failure.
+fn parse_optional_doc(
+    text: Option<&str>,
+    field: &str,
+) -> Result<Option<::mongodb::bson::Document>, String> {
+    match text.map(str::trim).filter(|t| !t.is_empty()) {
+        None => Ok(None),
+        Some(t) => serde_json::from_str(t)
+            .map(Some)
+            .map_err(|e| format!("{} is not valid JSON: {}", field, e)),
+    }
+}
+
 /// Release the pooled clients for a host, called when its tab closes.
 #[tauri::command]
 async fn mongodb_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
@@ -1829,6 +1927,10 @@ fn main() {
             mongodb_restore_archive,
             mongodb_cancel,
             mongodb_disconnect,
+            mongodb_find,
+            mongodb_count,
+            mongodb_list_indexes,
+            mongodb_collection_stats,
             mongodb_store_secret,
             mongodb_has_secret,
             mongodb_clear_secret,
