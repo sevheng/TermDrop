@@ -1,14 +1,15 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl max-h-[90vh] overflow-y-auto">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl max-h-[90vh] overflow-y-auto">
+      <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isEditing ? 'Edit MongoDB connection' : 'Add MongoDB connection' }}
       </h3>
 
       <div class="space-y-4">
         <!-- Name -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">
-            Name <span class="text-[#f44336]">*</span>
+          <label class="block text-xs text-ink-2 mb-1.5">
+            Name <span class="text-bad">*</span>
           </label>
           <input
             ref="nameInput"
@@ -19,12 +20,12 @@
             @blur="validateField('name')"
             @keydown.enter="onSave"
           />
-          <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-bad mt-1">{{ errors.name }}</p>
         </div>
 
         <!-- Connection -->
-        <div class="border border-[#3c3c3c] rounded-lg p-4 space-y-3">
-          <h4 class="text-xs font-semibold text-[#cccccc] uppercase tracking-wider">Connection</h4>
+        <div class="border border-line rounded-lg p-4 space-y-3">
+          <h4 class="text-xs font-semibold text-ink uppercase tracking-wider">Connection</h4>
           <MongoConnectionFields
             v-model="fields"
             :errors="fieldErrors"
@@ -43,13 +44,13 @@
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="onClose"
-          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc] rounded hover:bg-[#2a2d2e] transition-colors"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
         >
           Cancel
         </button>
         <button
           @click="onSave"
-          class="px-4 py-2 text-sm text-white rounded bg-[#0e639c] hover:bg-[#1177bb] transition-colors"
+          class="px-4 py-2 text-sm text-white rounded bg-accent-solid hover:bg-accent-solid-hover transition-colors"
         >
           {{ isEditing ? 'Save' : 'Add' }}
         </button>
@@ -149,8 +150,8 @@ function resetForm() {
 }
 
 function inputClass(field) {
-  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
-  const error = errors.value[field] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
+  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }
 

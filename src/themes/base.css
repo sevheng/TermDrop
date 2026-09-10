@@ -1,0 +1,76 @@
+/**
+ * Base element styling that Tailwind utilities cannot reach.
+ *
+ * The colour variables that used to live here are gone: they were read by one
+ * file and duplicated by hand everywhere else. Colour now comes from
+ * tokens.css via Tailwind utilities.
+ */
+
+/* Native widgets — select popups, scrollbars, spinners, the caret — are drawn
+   by the platform, not by our CSS. Without this the engine assumes a light
+   page and paints a light <select>, which our light text then vanishes into.
+   It is set alongside the token blocks so the two can never disagree. */
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background-color: rgb(var(--td-canvas));
+  color: rgb(var(--td-ink));
+  font-family: var(--td-font-ui);
+}
+
+/* Tailwind's font-mono utility, and anything that opts in explicitly. */
+code, kbd, samp, pre, .font-mono {
+  font-family: var(--td-font-mono);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Sits on both canvas and surface, so it is a translucent lift rather than a
+   fixed grey that only reads correctly on one of them. */
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--td-ink-3) / 0.45);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--td-ink-3) / 0.7);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The dropdown list is a separate native surface and does not inherit the
+   closed control's colours in WebKitGTK, so name them explicitly. */
+select option {
+  background-color: rgb(var(--td-overlay));
+  color: rgb(var(--td-ink));
+}
+
+/*
+ * A visible focus ring, everywhere, for keyboard users only.
+ *
+ * The app carried 15 `focus:outline-none` and not one `focus-visible`, so it
+ * removed focus rings and never put one back except on inputs — the whole
+ * interface was keyboard-invisible. `:where()` keeps specificity at zero so
+ * any component that draws its own ring still wins, and `focus-visible` means
+ * a mouse click never shows one, which would be worse than nothing.
+ */
+:where(button, [href], summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid rgb(var(--td-accent));
+  outline-offset: -1px;
+  border-radius: 2px;
+}

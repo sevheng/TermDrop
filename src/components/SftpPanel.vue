@@ -1,9 +1,9 @@
 <template>
-  <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col relative">
+  <div class="w-72 h-full bg-surface border-l border-line flex flex-col relative">
     <!-- Path breadcrumbs -->
     <div
-      class="px-2 py-1.5 border-b border-[#3c3c3c] flex items-center gap-0.5 text-xs overflow-x-auto whitespace-nowrap"
-      style="scrollbar-width: thin; scrollbar-color: #3c3c3c transparent;"
+      class="px-2 py-1.5 border-b border-line flex items-center gap-0.5 text-xs overflow-x-auto whitespace-nowrap"
+      style="scrollbar-width: thin; scrollbar-color: rgb(var(--td-ink-3) / 0.45) transparent;"
     >
       <span
         v-for="(segment, index) in breadcrumbs"
@@ -13,7 +13,7 @@
         <button
           v-if="index === 0"
           @click="navigateTo(segment.path)"
-          class="text-[#858585] hover:text-[#cccccc] p-0.5 rounded shrink-0"
+          class="text-ink-2 hover:text-ink p-0.5 rounded shrink-0"
           title="Go to root"
         >
           <Home :size="12" />
@@ -23,8 +23,8 @@
           @click="index < breadcrumbs.length - 1 && navigateTo(segment.path)"
           class="px-1 py-0.5 rounded truncate max-w-[120px]"
           :class="index === breadcrumbs.length - 1
-            ? 'text-[#cccccc] font-medium cursor-default bg-[#3c3c3c]/50'
-            : 'text-[#858585] hover:text-[#cccccc] hover:bg-[#3c3c3c]/30 cursor-pointer'"
+            ? 'text-ink font-medium cursor-default bg-input/50'
+            : 'text-ink-2 hover:text-ink hover:bg-input/30 cursor-pointer'"
           :title="segment.path"
         >
           {{ segment.name }}
@@ -32,40 +32,39 @@
         <ChevronRight
           v-if="index < breadcrumbs.length - 1"
           :size="10"
-          class="text-[#6e6e6e] shrink-0"
+          class="text-ink-3 shrink-0"
         />
       </span>
     </div>
 
     <!-- Toolbar -->
-    <div class="px-2 py-1.5 border-b border-[#3c3c3c] flex gap-1.5 flex-wrap items-center">
-      <button @click="goUp" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↑ Up</button>
-      <button @click="onUpload" class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-1.5 py-0.5 rounded">Upload</button>
-      <button @click="onMkdir" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">+ Folder</button>
-      <button @click="loadFiles" class="text-xs bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] px-1.5 py-0.5 rounded">↻</button>
+    <div class="px-2 py-1.5 border-b border-line flex gap-1.5 flex-wrap items-center">
+      <IconButton :icon="ArrowUp" label="Go up a directory" @click="goUp" />
+      <button @click="onUpload" class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-1.5 py-0.5 rounded">Upload</button>
+      <button @click="onMkdir" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded">+ Folder</button>
+      <IconButton :icon="RefreshCw" label="Refresh this directory" :pending="loading" @click="loadFiles" />
       <div class="relative ml-auto">
-        <button
+        <IconButton
+          :icon="Columns3"
+          label="Choose columns"
+          :active="showColumnMenu"
           @click.stop="showColumnMenu = !showColumnMenu"
-          class="text-xs text-[#858585] hover:text-[#cccccc] px-1.5 py-0.5"
-          title="Toggle columns"
-        >
-          ☰
-        </button>
+        />
         <div
           v-if="showColumnMenu"
           @click.stop
-          class="absolute right-0 top-full mt-0.5 bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[7rem]"
+          class="absolute right-0 top-full mt-0.5 bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[7rem]"
         >
-          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
-            <input v-model="showColumns.size" type="checkbox" class="accent-[#007acc]" />
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-ink cursor-pointer hover:bg-raised">
+            <input v-model="showColumns.size" type="checkbox" class="accent-accent" />
             Size
           </label>
-          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
-            <input v-model="showColumns.modified" type="checkbox" class="accent-[#007acc]" />
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-ink cursor-pointer hover:bg-raised">
+            <input v-model="showColumns.modified" type="checkbox" class="accent-accent" />
             Modified
           </label>
-          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-[#cccccc] cursor-pointer hover:bg-[#2a2d2e]">
-            <input v-model="showColumns.perms" type="checkbox" class="accent-[#007acc]" />
+          <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-ink cursor-pointer hover:bg-raised">
+            <input v-model="showColumns.perms" type="checkbox" class="accent-accent" />
             Perms
           </label>
         </div>
@@ -73,58 +72,57 @@
     </div>
 
     <!-- Column headers -->
-    <div class="px-2 py-0.5 border-b border-[#3c3c3c] flex items-center text-xs text-[#858585] select-none">
-      <span class="flex-1 min-w-0 cursor-pointer hover:text-[#cccccc]" @click="setSort('name')">
+    <div :class="[LIST_HEAD, 'px-2 py-1 border-b border-line flex items-center select-none']">
+      <span class="flex-1 min-w-0 cursor-pointer hover:text-ink" @click="setSort('name')">
         Name {{ sortIndicator('name') }}
       </span>
-      <span v-if="showColumns.size" class="w-12 shrink-0 text-right cursor-pointer hover:text-[#cccccc]" @click="setSort('size')">
+      <span v-if="showColumns.size" :class="[NUM, 'w-12 shrink-0 cursor-pointer hover:text-ink']" @click="setSort('size')">
         Size {{ sortIndicator('size') }}
       </span>
-      <span v-if="showColumns.modified" class="w-14 shrink-0 text-right cursor-pointer hover:text-[#cccccc] ml-1.5" @click="setSort('modified')">
+      <span v-if="showColumns.modified" class="w-14 shrink-0 text-right tabular-nums cursor-pointer hover:text-ink ml-1.5" @click="setSort('modified')">
         Modified {{ sortIndicator('modified') }}
       </span>
-      <span v-if="showColumns.perms" class="w-16 shrink-0 text-right ml-1.5">Perms</span>
+      <span v-if="showColumns.perms" class="w-16 shrink-0 text-right tabular-nums ml-1.5">Perms</span>
     </div>
 
     <!-- Quick filter -->
-    <div class="px-2 py-1 border-b border-[#3c3c3c]">
+    <div class="px-2 py-1 border-b border-line">
       <input
         v-model="filterQuery"
         type="text"
         placeholder="Filter files..."
-        class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded px-2 py-0.5 text-xs text-[#cccccc] focus:outline-none focus:border-[#007acc] placeholder-[#6e6e6e]"
+        class="w-full bg-input border border-line rounded px-2 py-0.5 text-xs text-ink focus:outline-none focus:border-accent placeholder-ink-3"
       />
     </div>
 
     <!-- File list -->
     <div class="flex-1 overflow-y-auto relative">
-      <div
-        v-if="loading"
-        class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm"
-      >
-        Loading...
-      </div>
-      <div v-else-if="listError" class="flex flex-col items-center justify-center gap-2 py-6 px-3 text-center">
-        <p class="text-xs text-[#f44336]">Could not list this directory</p>
-        <p class="text-[10px] text-[#858585] break-words" :title="listError">{{ listError }}</p>
-        <button
-          @click="loadFiles"
-          class="mt-1 px-3 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded"
-        >
-          Retry
-        </button>
-      </div>
-      <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center h-20 text-[#6e6e6e] text-sm">
-        {{ sortedFiles.length === 0 ? 'Empty directory' : 'No matching files' }}
-      </div>
+      <EmptyState v-if="loading" state="loading" title="Reading directory…" />
+      <EmptyState
+        v-else-if="listError"
+        state="error"
+        title="Could not list this directory"
+        :hint="listError"
+        action-label="Retry"
+        @action="loadFiles"
+      />
+      <EmptyState
+        v-else-if="filteredFiles.length === 0"
+        :state="sortedFiles.length === 0 ? 'empty' : 'filtered'"
+        :icon="Folder"
+        :title="sortedFiles.length === 0 ? 'Empty directory' : 'No matching files'"
+        :hint="sortedFiles.length === 0 ? undefined : `${sortedFiles.length} hidden by the filter`"
+        :action-label="sortedFiles.length === 0 ? undefined : 'Clear filter'"
+        @action="filterQuery = ''"
+      />
       <div v-else>
         <div
           v-for="(file, index) in filteredFiles"
           :key="file.path"
-          class="flex items-center px-2 py-0.5 hover:bg-[#2a2d2e] cursor-pointer text-sm"
+          class="flex items-center px-2 py-0.5 hover:bg-raised cursor-pointer text-xs"
           :class="[
-            file.is_dir ? 'text-[#007acc]' : 'text-[#cccccc]',
-            selectedFiles.has(file.path) ? 'bg-[#094771]' : ''
+            file.is_dir ? 'text-accent' : 'text-ink',
+            selectedFiles.has(file.path) ? 'bg-selected' : ''
           ]"
           @click="handleFileClick(file, index, $event)"
           @dblclick="file.is_dir ? navigateTo(file.path) : onPreviewFile(file)"
@@ -133,16 +131,16 @@
           <input
             type="checkbox"
             :checked="selectedFiles.has(file.path)"
-            class="accent-[#007acc] mr-1.5 shrink-0"
+            class="accent-accent mr-1.5 shrink-0"
             @click.stop
             @change="handleFileClick(file, index, { ctrlKey: true })"
           />
           <Folder v-if="file.is_dir" :size="12" class="shrink-0 mr-1.5" />
-          <FileText v-else :size="12" class="shrink-0 mr-1.5 text-[#6e6e6e]" />
+          <FileText v-else :size="12" class="shrink-0 mr-1.5 text-ink-3" />
           <span class="truncate flex-1 min-w-0">{{ file.name }}</span>
-          <span v-if="showColumns.size" class="w-12 shrink-0 text-right text-xs text-[#6e6e6e]">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
-          <span v-if="showColumns.modified" class="w-14 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5">{{ formatDate(file.modified) }}</span>
-          <span v-if="showColumns.perms" class="w-16 shrink-0 text-right text-xs text-[#6e6e6e] ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
+          <span v-if="showColumns.size" class="w-12 shrink-0 text-right tabular-nums text-xs text-ink-3">{{ file.is_dir ? '-' : formatSize(file.size) }}</span>
+          <span v-if="showColumns.modified" class="w-14 shrink-0 text-right tabular-nums text-xs text-ink-3 ml-1.5">{{ formatDate(file.modified) }}</span>
+          <span v-if="showColumns.perms" class="w-16 shrink-0 text-right tabular-nums text-xs text-ink-3 ml-1.5 font-mono">{{ formatPermissions(file.permissions, file.is_dir) }}</span>
         </div>
       </div>
     </div>
@@ -151,24 +149,24 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[8rem]"
+      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[8rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Multi-selection mode -->
       <template v-if="contextMenu.multi">
-        <button @click="onBulkDownloadFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Selected ({{ selectedFiles.size }})</button>
-        <button @click="onBulkDeleteFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete Selected ({{ selectedFiles.size }})</button>
-        <button @click="clearSelection(); contextMenu.show = false" class="block w-full text-left px-4 py-1.5 text-sm text-[#858585] hover:bg-[#2a2d2e]">Clear Selection</button>
+        <button @click="onBulkDownloadFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Download Selected ({{ selectedFiles.size }})</button>
+        <button @click="onBulkDeleteFromMenu" class="block w-full text-left px-4 py-1.5 text-sm text-bad hover:bg-raised">Delete Selected ({{ selectedFiles.size }})</button>
+        <button @click="clearSelection(); contextMenu.show = false" class="block w-full text-left px-4 py-1.5 text-sm text-ink-2 hover:bg-raised">Clear Selection</button>
       </template>
       <!-- Single-file mode -->
       <template v-else>
-        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onPreview" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Preview</button>
-        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onEdit" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Edit</button>
-        <button v-if="contextMenu.file && contextMenu.file.is_dir" @click="onDownloadDir" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download Folder</button>
-        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Download</button>
-        <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Copy Path</button>
-        <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-[#cccccc] hover:bg-[#2a2d2e]">Rename</button>
-        <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-[#f44336] hover:bg-[#2a2d2e]">Delete</button>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onPreview" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Preview</button>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onEdit" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Edit</button>
+        <button v-if="contextMenu.file && contextMenu.file.is_dir" @click="onDownloadDir" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Download Folder</button>
+        <button v-if="contextMenu.file && !contextMenu.file.is_dir" @click="onDownload" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Download</button>
+        <button @click="copyRemotePath" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Copy Path</button>
+        <button @click="onRename" class="block w-full text-left px-4 py-1.5 text-sm text-ink hover:bg-raised">Rename</button>
+        <button @click="onDelete" class="block w-full text-left px-4 py-1.5 text-sm text-bad hover:bg-raised">Delete</button>
       </template>
     </div>
 
@@ -207,40 +205,40 @@
     <FloatingEditor ref="editorRef" :sftp-session-id="props.sftpSessionId" />
 
     <!-- Transfer progress -->
-    <div v-if="transfers.length > 0" class="border-t border-[#3c3c3c] bg-[#1e1e1e]">
-      <div class="px-2 py-1 text-[10px] text-[#6e6e6e] font-medium uppercase tracking-wider border-b border-[#3c3c3c]/50">
+    <div v-if="transfers.length > 0" class="border-t border-line bg-canvas">
+      <div class="px-2 py-1 text-2xs text-ink-3 font-medium uppercase tracking-wider border-b border-line/50">
         Transfers ({{ transfers.length }})
       </div>
       <div class="p-2 space-y-2 max-h-32 overflow-y-auto">
         <div v-for="t in transfers" :key="t.file" class="text-xs">
-          <div class="flex items-center justify-between text-[#858585] mb-0.5">
+          <div class="flex items-center justify-between text-ink-2 mb-0.5">
             <span class="truncate flex-1 min-w-0 mr-2" :title="t.file">{{ t.fileName }}</span>
-            <span class="shrink-0 text-[#cccccc] font-medium">
+            <span class="shrink-0 text-ink font-medium">
               <template v-if="t.total === 0 && !t.done">
-                <span class="inline-block w-3 h-3 border-2 border-[#007acc] border-t-transparent rounded-full animate-spin align-text-bottom"></span>
+                <span class="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin align-text-bottom"></span>
               </template>
               <template v-else>
                 {{ t.total === 0 ? '100%' : Math.round((t.bytes / t.total) * 100) + '%' }}
               </template>
             </span>
           </div>
-          <div class="flex items-center justify-between text-[10px] text-[#6e6e6e] mb-1">
+          <div class="flex items-center justify-between text-2xs text-ink-3 mb-1">
             <span v-if="t.total === 0 && !t.done">Preparing archive...</span>
             <span v-else>{{ formatSize(t.bytes) }} / {{ formatSize(t.total) }}</span>
-            <span v-if="!t.done && t.speed > 0" class="text-[#89d185]">{{ formatSpeed(t.speed) }}</span>
-            <span v-else-if="t.done && !t.fileName.includes('failed')" class="text-[#007acc]">Done</span>
-            <span v-else-if="t.done && t.fileName.includes('failed')" class="text-[#f44336]">Failed</span>
+            <span v-if="!t.done && t.speed > 0" class="text-good">{{ formatSpeed(t.speed) }}</span>
+            <span v-else-if="t.done && !t.fileName.includes('failed')" class="text-accent">Done</span>
+            <span v-else-if="t.done && t.fileName.includes('failed')" class="text-bad">Failed</span>
           </div>
-          <div class="h-1.5 bg-[#3c3c3c] rounded overflow-hidden">
+          <div class="h-1.5 bg-input rounded overflow-hidden">
             <div
               v-if="t.total === 0 && !t.done"
-              class="h-full rounded bg-[#007acc] animate-pulse"
+              class="h-full rounded bg-accent animate-pulse"
               style="width: 100%"
             ></div>
             <div
               v-else
               class="h-full rounded transition-all duration-300"
-              :class="t.done ? 'bg-[#89d185]' : 'bg-[#007acc]'"
+              :class="t.done ? 'bg-good' : 'bg-accent'"
               :style="{ width: t.total === 0 ? '100%' : Math.min(100, (t.bytes / t.total) * 100) + '%' }"
             ></div>
           </div>
@@ -256,17 +254,20 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivate
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { Folder, FileText, Home, ChevronRight } from 'lucide-vue-next'
+import { Folder, FileText, Home, ChevronRight, ArrowUp, RefreshCw, Columns3 } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import PromptDialog from './PromptDialog.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import FloatingEditor from './FloatingEditor.vue'
+import IconButton from './IconButton.vue'
 import { formatBytes as formatSize, formatSpeed } from '../utils/format.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useSftpTransfers } from '../composables/useSftpTransfers.js'
+import { LIST_HEAD, NUM } from '../utils/listStyles.js'
 
 const props = defineProps({
   sftpSessionId: {

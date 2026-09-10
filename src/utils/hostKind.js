@@ -43,3 +43,17 @@ export function isDatastoreHost(host) {
 export function activateVerb(host) {
   return isDatastoreHost(host) ? 'Open' : 'Connect'
 }
+
+/**
+ * The colour a host's icon takes.
+ *
+ * The row drew every kind in `text-ink-3`, so a Redis host and an SSH host
+ * looked identical until you read the address underneath — even though the
+ * brand tokens existed and the sidebar's Add menu already used them.
+ */
+export function hostKindIconClass(host) {
+  return {
+    [HOST_KIND.REDIS]: 'text-redis',
+    [HOST_KIND.MONGODB]: 'text-mongo',
+  }[hostKind(host)] || 'text-ink-3'
+}

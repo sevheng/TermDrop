@@ -1,11 +1,12 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">{{ isEditing ? 'Edit Port Forward' : 'Add Port Forward' }}</h3>
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
+      <h3 class="text-lg font-semibold text-ink mb-5">{{ isEditing ? 'Edit Port Forward' : 'Add Port Forward' }}</h3>
 
       <div class="space-y-4">
         <!-- Name -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">Name <span class="text-[#f44336]">*</span></label>
+          <label class="block text-xs text-ink-2 mb-1.5">Name <span class="text-bad">*</span></label>
           <input
             v-model="form.name"
             type="text"
@@ -13,18 +14,18 @@
             :class="inputClass('name')"
             @blur="validateField('name')"
           />
-          <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-bad mt-1">{{ errors.name }}</p>
         </div>
 
         <!-- Kind -->
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">Type</label>
-          <div class="flex bg-[#3c3c3c] rounded p-1">
+          <label class="block text-xs text-ink-2 mb-1.5">Type</label>
+          <div class="flex bg-input rounded p-1">
             <button
               type="button"
               @click="form.kind = 'local'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.kind === 'local' ? 'bg-[#0e639c] text-white' : 'text-[#858585] hover:text-[#cccccc]'"
+              :class="form.kind === 'local' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Local
             </button>
@@ -32,7 +33,7 @@
               type="button"
               @click="form.kind = 'dynamic'"
               class="flex-1 py-1.5 text-sm rounded transition-colors"
-              :class="form.kind === 'dynamic' ? 'bg-[#0e639c] text-white' : 'text-[#858585] hover:text-[#cccccc]'"
+              :class="form.kind === 'dynamic' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Dynamic (SOCKS)
             </button>
@@ -42,11 +43,11 @@
         <!-- Local Address -->
         <div class="flex gap-3">
           <div class="flex-[2]">
-            <label class="block text-xs text-[#858585] mb-1.5">Local Host</label>
+            <label class="block text-xs text-ink-2 mb-1.5">Local Host</label>
             <input v-model="form.local_host" type="text" :class="inputClass('local_host')" />
           </div>
           <div class="flex-1">
-            <label class="block text-xs text-[#858585] mb-1.5">Local Port <span class="text-[#f44336]">*</span></label>
+            <label class="block text-xs text-ink-2 mb-1.5">Local Port <span class="text-bad">*</span></label>
             <input
               v-model.number="form.local_port"
               type="number"
@@ -54,14 +55,14 @@
               :class="inputClass('local_port')"
               @blur="validateField('local_port')"
             />
-            <p v-if="errors.local_port" class="text-xs text-[#f44336] mt-1">{{ errors.local_port }}</p>
+            <p v-if="errors.local_port" class="text-xs text-bad mt-1">{{ errors.local_port }}</p>
           </div>
         </div>
 
         <!-- Remote Address (local only) -->
         <div v-if="form.kind === 'local'" class="flex gap-3">
           <div class="flex-[2]">
-            <label class="block text-xs text-[#858585] mb-1.5">Remote Host <span class="text-[#f44336]">*</span></label>
+            <label class="block text-xs text-ink-2 mb-1.5">Remote Host <span class="text-bad">*</span></label>
             <input
               v-model="form.remote_host"
               type="text"
@@ -69,10 +70,10 @@
               :class="inputClass('remote_host')"
               @blur="validateField('remote_host')"
             />
-            <p v-if="errors.remote_host" class="text-xs text-[#f44336] mt-1">{{ errors.remote_host }}</p>
+            <p v-if="errors.remote_host" class="text-xs text-bad mt-1">{{ errors.remote_host }}</p>
           </div>
           <div class="flex-1">
-            <label class="block text-xs text-[#858585] mb-1.5">Remote Port <span class="text-[#f44336]">*</span></label>
+            <label class="block text-xs text-ink-2 mb-1.5">Remote Port <span class="text-bad">*</span></label>
             <input
               v-model.number="form.remote_port"
               type="number"
@@ -80,22 +81,22 @@
               :class="inputClass('remote_port')"
               @blur="validateField('remote_port')"
             />
-            <p v-if="errors.remote_port" class="text-xs text-[#f44336] mt-1">{{ errors.remote_port }}</p>
+            <p v-if="errors.remote_port" class="text-xs text-bad mt-1">{{ errors.remote_port }}</p>
           </div>
         </div>
 
         <!-- Dynamic hint -->
-        <p v-else class="text-xs text-[#858585]">
-          Dynamic forwarding creates a SOCKS5 proxy on the local address. Configure your browser or app to use <code class="bg-[#3c3c3c] px-1 rounded">{{ form.local_host }}:{{ form.local_port }}</code> as a SOCKS5 proxy.
+        <p v-else class="text-xs text-ink-2">
+          Dynamic forwarding creates a SOCKS5 proxy on the local address. Configure your browser or app to use <code class="bg-input px-1 rounded">{{ form.local_host }}:{{ form.local_port }}</code> as a SOCKS5 proxy.
         </p>
       </div>
 
       <div class="flex justify-end gap-2 mt-6">
-        <button @click="onClose" class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]">Cancel</button>
+        <button @click="onClose" class="px-4 py-2 text-sm text-ink-2 hover:text-ink">Cancel</button>
         <button
           @click="onSave"
           :disabled="loading"
-          class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#0e639c]/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Forward') }}
@@ -167,8 +168,8 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
-  const error = errors.value[field] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
+  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }
 

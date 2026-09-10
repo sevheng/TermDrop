@@ -1,38 +1,40 @@
 <template>
-  <div class="w-72 h-full bg-[#252526] border-l border-[#3c3c3c] flex flex-col">
+  <div class="w-72 h-full bg-surface border-l border-line flex flex-col">
     <!-- Header -->
-    <div class="px-3 py-2 border-b border-[#3c3c3c] flex items-center justify-between">
-      <h3 class="text-xs font-semibold text-[#cccccc]">Port Forwards</h3>
-      <button
-        @click="$emit('add')"
-        class="text-[#858585] hover:text-[#cccccc] p-1"
-        title="Add forward"
-      >
-        <Plus :size="12" />
-      </button>
-    </div>
+    <PanelHeader title="Port forwards" :icon="Network" dense :meta="forwards.length || ''">
+      <template #actions>
+        <IconButton :icon="Plus" label="Add a forward" @click="$emit('add')" />
+      </template>
+    </PanelHeader>
 
     <!-- List -->
     <div class="flex-1 overflow-y-auto py-1 px-2">
-      <div v-if="forwards.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
-        <Network :size="20" class="mb-2 opacity-50" />
-        <p class="text-xs">No port forwards</p>
-        <p class="text-xs mt-1">Click + to add one</p>
-      </div>
+      <!-- `loading` exists so this is not shown before the fetch resolves;
+           it used to claim there were none while still asking. -->
+      <EmptyState v-if="loading" state="loading" title="Loading forwards…" />
+      <EmptyState
+        v-else-if="forwards.length === 0"
+        state="empty"
+        :icon="Network"
+        title="No port forwards"
+        hint="Forward a remote port to this machine"
+        action-label="Add a forward"
+        @action="$emit('add')"
+      />
 
       <div v-for="fw in forwards" :key="fw.id" class="mb-2">
-        <div class="bg-[#252526] rounded p-2 border border-[#3c3c3c]">
+        <div class="bg-surface rounded p-2 border border-line">
           <div class="flex items-center justify-between mb-1">
-            <span class="text-xs font-medium text-[#cccccc] truncate">{{ fw.name }}</span>
+            <span class="text-xs font-medium text-ink truncate">{{ fw.name }}</span>
             <span
-              class="text-[10px] px-1.5 py-0.5 rounded font-medium"
-              :class="activeStatus[fw.id] ? 'bg-[#89d185]/20 text-[#89d185]' : 'bg-[#3c3c3c] text-[#858585]'"
+              class="text-2xs px-1.5 py-0.5 rounded font-medium"
+              :class="activeStatus[fw.id] ? 'bg-good/20 text-good' : 'bg-input text-ink-2'"
             >
               {{ activeStatus[fw.id] ? 'Active' : 'Stopped' }}
             </span>
           </div>
 
-          <div class="text-[10px] text-[#858585] space-y-0.5">
+          <div class="text-2xs text-ink-2 space-y-0.5">
             <div class="flex items-center gap-1">
               <ArrowRightLeft :size="9" />
               <span>{{ fw.kind === 'local' ? 'Local' : 'SOCKS' }} → {{ fw.local_host }}:{{ fw.local_port }}</span>
@@ -47,20 +49,20 @@
             <button
               v-if="!activeStatus[fw.id]"
               @click="startForward(fw.id)"
-              class="flex-1 text-[10px] bg-[#0e639c] hover:bg-[#1177bb] text-white py-1 rounded transition-colors"
+              class="flex-1 text-2xs bg-accent-solid hover:bg-accent-solid-hover text-white py-1 rounded transition-colors"
             >
               Start
             </button>
             <button
               v-else
               @click="stopForward(fw.id)"
-              class="flex-1 text-[10px] bg-[#3c3c3c] hover:bg-[#37373d] text-[#cccccc] py-1 rounded transition-colors"
+              class="flex-1 text-2xs bg-input hover:bg-active text-ink py-1 rounded transition-colors"
             >
               Stop
             </button>
             <button
               @click="editForward(fw)"
-              class="text-[10px] bg-[#3c3c3c] hover:bg-[#4c4c4c] text-[#858585] hover:text-[#cccccc] py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-input hover:bg-input-hover text-ink-2 hover:text-ink py-1 px-2 rounded transition-colors"
               title="Edit"
             >
               <Pencil :size="10" />
@@ -68,14 +70,14 @@
             <button
               v-if="activeStatus[fw.id] && fw.kind === 'local'"
               @click="openForward(fw)"
-              class="text-[10px] bg-[#0e639c]/10 hover:bg-[#0e639c]/20 text-[#75beff] py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-accent-solid/10 hover:bg-accent-solid/20 text-accent-soft py-1 px-2 rounded transition-colors"
               title="Open in browser"
             >
               <ExternalLink :size="10" />
             </button>
             <button
               @click="deleteForward(fw.id)"
-              class="text-[10px] bg-[#f44336]/10 hover:bg-[#f44336]/20 text-[#f44336] py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-bad/10 hover:bg-bad/20 text-bad py-1 px-2 rounded transition-colors"
             >
               <Trash2 :size="10" />
             </button>
@@ -90,6 +92,9 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink, Pencil } from 'lucide-vue-next'
+import EmptyState from './EmptyState.vue'
+import PanelHeader from './PanelHeader.vue'
+import IconButton from './IconButton.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { toast } from '../utils/toast.js'
 
@@ -101,14 +106,22 @@ defineEmits(['add'])
 
 const store = useConnectionStore()
 const forwards = ref([])
+const loading = ref(false)
 const activeStatus = ref({})
 
 async function loadForwards() {
   if (!props.hostId) return
-  forwards.value = await store.getPortForwards(props.hostId)
-  // Check status for each
-  for (const fw of forwards.value) {
-    activeStatus.value[fw.id] = await store.getPortForwardStatus(fw.id)
+  // Tracked so the list can say "loading" instead of "none": it used to
+  // render its empty state before the fetch had even resolved.
+  loading.value = true
+  try {
+    forwards.value = await store.getPortForwards(props.hostId)
+    // Check status for each
+    for (const fw of forwards.value) {
+      activeStatus.value[fw.id] = await store.getPortForwardStatus(fw.id)
+    }
+  } finally {
+    loading.value = false
   }
 }
 

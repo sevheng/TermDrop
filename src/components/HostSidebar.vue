@@ -1,70 +1,62 @@
 <template>
   <div class="h-full w-full flex flex-col">
     <!-- Header -->
-    <div class="p-2 border-b border-[#3c3c3c] flex items-center justify-between">
-      <h2 class="text-xs font-semibold text-[#cccccc]">Hosts</h2>
+    <div class="p-2 border-b border-line flex items-center justify-between">
+      <h2 class="text-xs font-semibold text-ink">Hosts</h2>
       <div class="flex items-center gap-0.5">
-        <button
-          @click="toggleView"
-          class="text-[#858585] hover:text-[#cccccc] p-1"
-          :title="viewMode === 'grouped' ? 'Switch to flat view' : 'Switch to grouped view'"
-        >
-          <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
-        </button>
+        <IconButton
+            :icon="viewMode === 'grouped' ? List : LayoutGrid"
+            :label="viewMode === 'grouped' ? 'Show as a flat list' : 'Group by folder'"
+            @click="toggleView"
+          />
         <div class="relative" ref="importMenuRef">
-          <button @click="showImportMenu = !showImportMenu" class="text-[#858585] hover:text-[#cccccc] p-1" title="Import">
-            <Download :size="12" />
-          </button>
+          <IconButton :icon="Download" label="Import hosts" @click="showImportMenu = !showImportMenu" />
           <div
             v-if="showImportMenu"
-            class="absolute left-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[180px] py-1"
+            class="absolute left-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[180px] py-1"
           >
             <button
               @click="importSshConfig(); showImportMenu = false"
-              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
             >
               <FileTerminal :size="12" />
               From ~/.ssh/config
             </button>
             <button
               @click="importHosts(); showImportMenu = false"
-              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
             >
               <Download :size="12" />
               From JSON file
             </button>
           </div>
         </div>
-        <button @click="store.exportHosts" class="text-[#858585] hover:text-[#cccccc] p-1" title="Export hosts">
-          <Upload :size="12" />
-        </button>
+        <IconButton :icon="Upload" label="Export hosts" @click="store.exportHosts" />
         <div class="relative" ref="addMenuRef">
-          <button @click="showAddMenu = !showAddMenu" class="text-[#858585] hover:text-[#cccccc] p-1" title="Add">
-            <Plus :size="12" />
-          </button>
+          <IconButton :icon="Plus" label="Add a host" @click="showAddMenu = !showAddMenu" />
           <div
             v-if="showAddMenu"
-            class="absolute right-0 top-full mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[140px] py-1"
+            class="absolute right-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[140px] py-1"
           >
             <button
               @click="openModal(); showAddMenu = false"
-              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
             >
               <Server :size="12" />
               Host
             </button>
             <button
               @click="openMongoModal(); showAddMenu = false"
-              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
             >
               <Database :size="12" />
               MongoDB
             </button>
             <button
               @click="openRedisModal(); showAddMenu = false"
-              class="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#2a2d2e] flex items-center gap-2"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
             >
-              <Layers :size="12" class="text-[#d82c20]" />
+              <Layers :size="12" class="text-redis" />
               Redis
             </button>
           </div>
@@ -73,29 +65,41 @@
     </div>
 
     <!-- Search -->
-    <div class="px-2 py-1 border-b border-[#3c3c3c]">
+    <div class="px-2 py-1 border-b border-line">
       <div class="relative">
-        <Search :size="12" class="absolute left-2 top-1/2 -translate-y-1/2 text-[#6e6e6e]" />
+        <Search :size="12" class="absolute left-2 top-1/2 -translate-y-1/2 text-ink-3" />
         <input
           v-model="searchQuery"
           type="text"
           placeholder="Search hosts..."
-          class="w-full bg-[#3c3c3c] border border-[#3c3c3c] rounded pl-6 pr-2 py-1 text-xs text-[#cccccc] placeholder-[#6e6e6e] focus:outline-none focus:border-[#007acc]"
+          class="w-full bg-input border border-line rounded pl-6 pr-2 py-1 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent"
         />
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto py-1 px-1" @contextmenu.prevent="showEmptyMenu">
+    <div
+      ref="listEl"
+      class="flex-1 overflow-y-auto py-1 px-1"
+      role="listbox"
+      aria-label="Hosts"
+      tabindex="0"
+      @contextmenu.prevent="showEmptyMenu"
+      @keydown="onListKey"
+    >
       <!-- Empty state -->
-      <div v-if="displayHosts.length === 0" class="flex flex-col items-center justify-center py-8 text-[#6e6e6e]">
-        <Server :size="24" class="mb-2 opacity-50" />
-        <p class="text-xs">
-          {{ store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts' }}
-        </p>
-        <p v-if="store.hosts.length === 0" class="text-xs mt-1">
-          Click + to add your first host
-        </p>
-      </div>
+      <!-- "None yet" wants an add button; "none matching" wants the search
+           cleared. Pointing at the + three icons away served neither. -->
+      <EmptyState
+        v-if="displayHosts.length === 0"
+        :state="store.hosts.length === 0 ? 'empty' : 'filtered'"
+        :icon="Server"
+        :title="store.hosts.length === 0 ? 'No hosts yet' : 'No matching hosts'"
+        :hint="store.hosts.length === 0
+          ? 'Add a server, a MongoDB connection or a Redis connection'
+          : `${store.hosts.length} hidden by the search`"
+        :action-label="store.hosts.length === 0 ? 'Add a host' : 'Clear search'"
+        @action="store.hosts.length === 0 ? openModal() : (searchQuery = '')"
+      />
 
       <!-- Flat view -->
       <template v-if="viewMode === 'flat'">
@@ -103,8 +107,8 @@
           v-for="host in displayHosts"
           :key="host.id"
           :host="host"
-          :is-connected="isHostConnected(host.id)"
-          :is-connecting="store.connectingHostId === host.id"
+          :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
           @connect="connectHost(host.id)"
           @edit="editHost(host)"
           @delete="deleteHost(host)"
@@ -117,16 +121,16 @@
       <template v-else>
         <!-- Favorites section -->
         <div v-if="favoriteHosts.length > 0 && !searchQuery.trim()" class="mb-1">
-          <div class="px-2 py-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider dark:text-gray-500 flex items-center gap-1">
-            <Star :size="10" class="text-[#cca700]" />
+          <div class="px-2 py-0.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider dark:text-ink-3 flex items-center gap-1">
+            <Star :size="10" class="text-warn" />
             Favorites
           </div>
           <HostRow
             v-for="host in favoriteHosts"
             :key="'fav-' + host.id"
             :host="host"
-            :is-connected="isHostConnected(host.id)"
-            :is-connecting="store.connectingHostId === host.id"
+            :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
             @connect="connectHost(host.id)"
             @edit="editHost(host)"
             @delete="deleteHost(host)"
@@ -136,30 +140,33 @@
         </div>
 
         <!-- Grouped hosts -->
-        <template v-for="(groupHosts, groupName) in groupedHosts" :key="groupName">
+        <template v-for="group in groupedHosts" :key="group.name">
           <div class="mb-1">
             <div
-              class="flex items-center justify-between px-2 py-0.5 rounded cursor-pointer select-none"
-              :class="[groupColorClass(groupName), dragOverGroup === groupName ? 'ring-1 ring-blue-400' : '']"
-              @click="toggleGroup(groupName)"
-              @contextmenu.prevent.stop="showGroupMenu($event, groupName)"
-              @dragover.prevent="dragOverGroup = groupName"
+              class="flex items-center justify-between border-l-2 pl-2 pr-2 py-0.5 rounded-r cursor-pointer select-none hover:bg-raised"
+              :class="[
+                groupAccentClass(group.name),
+                dragOverGroup === group.name ? 'ring-1 ring-accent' : '',
+              ]"
+              @click="toggleGroup(group.name)"
+              @contextmenu.prevent.stop="showGroupMenu($event, group.name)"
+              @dragover.prevent="dragOverGroup = group.name"
               @dragleave="dragOverGroup = null"
-              @drop="onGroupDrop($event, groupName)"
+              @drop="onGroupDrop($event, group.name)"
             >
-              <span class="flex items-center gap-1 text-[10px] font-semibold text-[#858585]">
-                <component :is="collapsedGroups.has(groupName) ? Folder : FolderOpen" :size="10" />
-                {{ groupName || 'Ungrouped' }}
+              <span class="flex items-center gap-1 text-2xs font-semibold text-ink-2">
+                <component :is="collapsedGroups.has(group.name) ? Folder : FolderOpen" :size="10" />
+                {{ group.name || 'Ungrouped' }}
               </span>
-              <span class="text-[10px] text-[#6e6e6e]">{{ groupHosts.length }}</span>
+              <span class="text-2xs text-ink-3">{{ group.hosts.length }}</span>
             </div>
-            <div v-show="!collapsedGroups.has(groupName)" class="pl-1">
+            <div v-show="!collapsedGroups.has(group.name)" class="pl-1">
               <HostRow
-                v-for="host in groupHosts"
+                v-for="host in group.hosts"
                 :key="host.id"
                 :host="host"
-                :is-connected="isHostConnected(host.id)"
-                :is-connecting="store.connectingHostId === host.id"
+                :state="rowState(host.id)"
+          :focused="focusedHostId === host.id"
                 @connect="connectHost(host.id)"
                 @edit="editHost(host)"
                 @delete="deleteHost(host)"
@@ -177,52 +184,52 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[10rem] max-h-[calc(100vh-16px)] overflow-y-auto"
+      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[10rem] max-h-[calc(100vh-16px)] overflow-y-auto"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Host menu -->
       <template v-if="contextMenu.type === 'host'">
-        <button @click="menuAction(() => activateHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Zap :size="12" class="text-[#007acc]" />
+        <button @click="menuAction(() => activateHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Zap :size="12" class="text-accent" />
           {{ activateVerb(contextMenu.data) }}
         </button>
-        <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Pencil :size="12" class="text-gray-400" />
+        <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Pencil :size="12" class="text-ink-3" />
           Edit
         </button>
-        <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Star :size="12" class="text-[#cca700]" />
+        <button @click="menuAction(() => toggleFavorite(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Star :size="12" class="text-warn" />
           {{ contextMenu.data.favorite ? 'Unfavorite' : 'Favorite' }}
         </button>
-        <div class="border-t border-[#3c3c3c] my-0.5"></div>
-        <button @click="menuAction(() => deleteHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#f44336] hover:bg-[#2a2d2e]">
+        <div class="border-t border-line my-0.5"></div>
+        <button @click="menuAction(() => deleteHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-bad hover:bg-raised">
           <Trash2 :size="12" />
           Delete
         </button>
-        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-[#3c3c3c] my-0.5"></div>
-        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-[10px] text-[#6e6e6e]">Move to</div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="border-t border-line my-0.5"></div>
+        <div v-if="viewMode === 'grouped' && allGroupNames.length > 0" class="px-3 py-0.5 text-2xs text-ink-3">Move to</div>
         <button
           v-for="g in allGroupNames"
           :key="g"
           @click="menuAction(() => moveHostToGroup(contextMenu.data.id, g))"
-          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#858585] hover:bg-[#2a2d2e]"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink-2 hover:bg-raised"
         >
-          <Folder :size="10" class="text-gray-400" />
+          <Folder :size="10" class="text-ink-3" />
           {{ g || 'Ungrouped' }}
         </button>
       </template>
 
       <!-- Group menu -->
       <template v-if="contextMenu.type === 'group'">
-        <button @click="menuAction(addHostToGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Plus :size="12" class="text-[#89d185]" />
+        <button @click="menuAction(addHostToGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Plus :size="12" class="text-good" />
           Add Host
         </button>
-        <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Pencil :size="12" class="text-gray-400" />
+        <button @click="menuAction(startRenameGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Pencil :size="12" class="text-ink-3" />
           Rename
         </button>
-        <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#f44336] hover:bg-[#2a2d2e]">
+        <button @click="menuAction(deleteGroup)" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-bad hover:bg-raised">
           <Trash2 :size="12" />
           Delete group
         </button>
@@ -233,13 +240,13 @@
         <button
           v-if="viewMode === 'grouped'"
           @click="menuAction(createGroupFromMenu)"
-          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised"
         >
-          <FolderPlus :size="12" class="text-[#007acc]" />
+          <FolderPlus :size="12" class="text-accent" />
           New Group
         </button>
-        <button @click="menuAction(() => { openModal(); })" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">
-          <Plus :size="12" class="text-[#89d185]" />
+        <button @click="menuAction(() => { openModal(); })" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
+          <Plus :size="12" class="text-good" />
           Add Host
         </button>
       </template>
@@ -292,7 +299,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
+import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Plus, Server, Database, Layers, Search, Upload, Download, FileTerminal,
@@ -307,11 +314,17 @@ import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
+import EmptyState from './EmptyState.vue'
+import IconButton from './IconButton.vue'
 import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 import { splitMongoUri } from '../utils/mongoUri.js'
 import { splitRedisUri } from '../utils/redisUri.js'
 import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
+import { groupAccentClass } from '../utils/groupAccent.js'
+import { hostRowState } from '../utils/hostRowState.js'
+import { filterHosts, groupHosts, groupNames } from '../utils/hostGrouping.js'
+import { visibleRows, nextRow, firstRow, lastRow, pageRow, navIntent } from '../utils/listNav.js'
 import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
@@ -324,7 +337,17 @@ const showRedisModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
-const collapsedGroups = ref(new Set())
+// Persisted like host-view-mode and host-custom-groups already are: every
+// relaunch used to expand every group again.
+const collapsedGroups = ref(new Set(loadCollapsed()))
+
+function loadCollapsed() {
+  try {
+    return JSON.parse(localStorage.getItem('host-collapsed-groups') || '[]')
+  } catch {
+    return []
+  }
+}
 
 // Debounce search input to reduce computed recalculations
 let searchDebounceTimer = null
@@ -347,22 +370,18 @@ const groupModalMode = ref('create')
 const sshImportRef = ref(null)
 const showImportMenu = ref(false)
 const importMenuRef = ref(null)
+const listEl = ref(null)
+const focusedHostId = ref(null)
+
 const showAddMenu = ref(false)
 const addMenuRef = ref(null)
 const groupModalCurrentName = ref('')
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
 
-const filteredHosts = computed(() => {
-  const q = debouncedQuery.value.trim().toLowerCase()
-  if (!q) return store.hosts
-  return store.hosts.filter(h =>
-    h.name.toLowerCase().includes(q) ||
-    h.host.toLowerCase().includes(q) ||
-    h.username.toLowerCase().includes(q) ||
-    (h.group && h.group.toLowerCase().includes(q))
-  )
-})
+// Now also matches a datastore host by its address: those rows have empty
+// host/username columns, so they used to be findable only by name.
+const filteredHosts = computed(() => filterHosts(store.hosts, debouncedQuery.value))
 
 const nonFavoriteHosts = computed(() => filteredHosts.value.filter(h => !h.favorite))
 
@@ -375,76 +394,90 @@ const favoriteHosts = computed(() => {
   return filteredHosts.value.filter(h => h.favorite)
 })
 
-const allGroupNames = computed(() => {
-  const groups = new Set()
-  for (const h of store.hosts) {
-    groups.add(h.group || '')
-  }
-  for (const g of customGroups.value) {
-    groups.add(g)
-  }
-  return [...groups].sort((a, b) => {
-    if (!a) return 1
-    if (!b) return -1
-    return a.localeCompare(b)
-  })
-})
+const allGroupNames = computed(() => groupNames(store.hosts, customGroups.value))
 
-const groupedHosts = computed(() => {
-  const groups = {}
-  for (const host of nonFavoriteHosts.value) {
-    const g = host.group || ''
-    if (!groups[g]) groups[g] = []
-    groups[g].push(host)
-  }
-  for (const g of customGroups.value) {
-    if (!(g in groups)) groups[g] = []
-  }
-  const sorted = {}
-  const keys = Object.keys(groups).sort((a, b) => {
-    if (!a) return 1
-    if (!b) return -1
-    return a.localeCompare(b)
-  })
-  for (const k of keys) {
-    sorted[k] = groups[k]
-  }
-  return sorted
-})
+// An array, not an object: v-for over an object hoists integer-like keys, so
+// groups named "2" and "10" ignored the comparator and rendered as 2, 10.
+const groupedHosts = computed(() => groupHosts(nonFavoriteHosts.value, customGroups.value))
 
-const GROUP_COLORS = [
-  'hover:bg-blue-50 dark:hover:bg-blue-900/20',
-  'hover:bg-green-50 dark:hover:bg-green-900/20',
-  'hover:bg-purple-50 dark:hover:bg-purple-900/20',
-  'hover:bg-orange-50 dark:hover:bg-orange-900/20',
-  'hover:bg-pink-50 dark:hover:bg-pink-900/20',
-  'hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
-  'hover:bg-yellow-50 dark:hover:bg-yellow-900/20',
-  'hover:bg-red-50 dark:hover:bg-red-900/20',
-]
-const colorClassCache = new Map()
 
-function groupColorClass(name) {
-  if (colorClassCache.has(name)) {
-    return colorClassCache.get(name)
-  }
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash) + name.charCodeAt(i)
-    hash |= 0
-  }
-  const result = GROUP_COLORS[Math.abs(hash) % GROUP_COLORS.length]
-  colorClassCache.set(name, result)
-  return result
-}
 
 function toggleView() {
   viewMode.value = viewMode.value === 'grouped' ? 'flat' : 'grouped'
   localStorage.setItem('host-view-mode', viewMode.value)
 }
 
-function isHostConnected(hostId) {
-  return store.tabs.some(t => t.hostId === hostId)
+/**
+ * What a row should show. `isHostConnected` used to be "a tab exists", so a
+ * session that had dropped still rendered a green dot — the store knows
+ * better, and hostRowState reads it.
+ */
+function rowState(hostId) {
+  return hostRowState(
+    { tabs: store.tabs, activeTabId: store.activeTabId, connectingHostId: store.connectingHostId },
+    hostId,
+  )
+}
+
+/**
+ * Arrow-key navigation of the host list.
+ *
+ * Bound on the container rather than on each row: a row is `draggable`, and a
+ * keydown on a draggable element interacts badly with Space. The logic itself
+ * is in utils/listNav.js so it can be tested without a DOM.
+ */
+function navRows() {
+  return viewMode.value === 'flat'
+    ? displayHosts.value.map(host => ({ kind: 'host', host }))
+    : visibleRows(groupedHosts.value, collapsedGroups.value)
+}
+
+function focusedIndex(rows) {
+  return rows.findIndex(r => r.kind === 'host' && r.host.id === focusedHostId.value)
+}
+
+function onListKey(e) {
+  const rows = navRows()
+  if (rows.length === 0) return
+
+  const i = focusedIndex(rows)
+  const intent = navIntent(e.key)
+  if (!intent) return
+
+  if (intent.type === 'activate') {
+    const row = rows[i]
+    if (row?.kind === 'host') {
+      e.preventDefault()
+      activateHost(row.host)
+    }
+    return
+  }
+  if (intent.type === 'delete') {
+    const row = rows[i]
+    if (row?.kind === 'host') {
+      e.preventDefault()
+      deleteHost(row.host)
+    }
+    return
+  }
+
+  let next = i
+  if (intent.type === 'move') next = nextRow(rows, i, intent.dir)
+  else if (intent.type === 'first') next = firstRow(rows)
+  else if (intent.type === 'last') next = lastRow(rows)
+  else if (intent.type === 'page') next = pageRow(rows, i, intent.dir, 10)
+  else return
+
+  if (next >= 0 && rows[next]?.kind === 'host') {
+    e.preventDefault()
+    focusedHostId.value = rows[next].host.id
+    // The row is not itself focusable, so bring it into view by hand.
+    nextTick(() => {
+      listEl.value
+        ?.querySelector(`[data-host-id="${rows[next].host.id}"]`)
+        ?.scrollIntoView({ block: 'nearest' })
+    })
+  }
 }
 
 function toggleGroup(name) {
@@ -452,6 +485,11 @@ function toggleGroup(name) {
   if (set.has(name)) set.delete(name)
   else set.add(name)
   collapsedGroups.value = set
+  try {
+    localStorage.setItem('host-collapsed-groups', JSON.stringify([...set]))
+  } catch {
+    // Blocked storage only costs the collapse state on the next launch.
+  }
 }
 
 async function toggleFavorite(host) {
@@ -577,10 +615,14 @@ function onWindowClick(e) {
 onMounted(() => {
   store.loadHosts()
   window.addEventListener('click', onWindowClick)
+  // MainWindow's front-door empty state asks for the add dialog this way,
+  // following the existing open-port-forward-modal precedent.
+  window.addEventListener('open-host-modal', openModal)
 })
 
 onUnmounted(() => {
   window.removeEventListener('click', onWindowClick)
+  window.removeEventListener('open-host-modal', openModal)
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 })
 

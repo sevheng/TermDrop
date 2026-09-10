@@ -28,14 +28,14 @@ let timerMap = new Map()
 function toastClass(type) {
   switch (type) {
     case 'error':
-      return 'bg-red-600 text-white'
+      return 'bg-bad-solid text-white'
     case 'success':
-      return 'bg-green-600 text-white'
+      return 'bg-good-solid text-white'
     case 'warning':
-      return 'bg-yellow-600 text-white'
+      return 'bg-warn-solid text-white'
     case 'info':
     default:
-      return 'bg-blue-600 text-white'
+      return 'bg-accent-solid text-white'
   }
 }
 

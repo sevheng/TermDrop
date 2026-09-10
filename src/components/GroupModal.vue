@@ -1,13 +1,14 @@
 <template>
-  <ModalShell :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-80 shadow-xl">
-      <h3 class="text-lg font-semibold text-[#cccccc] mb-5">
+  <ModalShell
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-80 shadow-xl">
+      <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isRename ? 'Rename Group' : 'New Group' }}
       </h3>
 
       <div class="space-y-4">
         <div>
-          <label class="block text-xs text-[#858585] mb-1.5">
-            Group Name <span class="text-[#f44336]">*</span>
+          <label class="block text-xs text-ink-2 mb-1.5">
+            Group Name <span class="text-bad">*</span>
           </label>
           <input
             v-model="form.name"
@@ -18,20 +19,20 @@
             @blur="validateField('name')"
             @keydown.enter="onSave"
           />
-          <p v-if="errors.name" class="text-xs text-[#f44336] mt-1">{{ errors.name }}</p>
+          <p v-if="errors.name" class="text-xs text-bad mt-1">{{ errors.name }}</p>
         </div>
       </div>
 
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="onClose"
-          class="px-4 py-2 text-sm text-[#858585] hover:text-[#cccccc]"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink"
         >
           Cancel
         </button>
         <button
           @click="onSave"
-          class="px-4 py-2 text-sm bg-[#0e639c] hover:bg-[#1177bb] text-white rounded"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded"
         >
           {{ isRename ? 'Rename' : 'Create' }}
         </button>
@@ -76,8 +77,8 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-[#3c3c3c] border rounded px-3 py-2 text-sm text-[#cccccc] focus:outline-none transition-colors'
-  const error = errors.value[field] ? 'border-[#f44336] focus:border-[#f44336]' : 'border-[#3c3c3c] focus:border-[#007acc]'
+  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }
 

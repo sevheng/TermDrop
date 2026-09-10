@@ -5,17 +5,17 @@
     <!-- Docker Bottom Pane -->
     <div
       v-if="dockerPane.show"
-      class="shrink-0 border-t border-[#3c3c3c] flex flex-col bg-[#1e1e1e]"
+      class="shrink-0 border-t border-line flex flex-col bg-canvas"
       :style="{ height: dockerPane.height + 'px' }"
     >
       <!-- Resize handle -->
       <div
-        class="h-1.5 cursor-row-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors"
+        class="h-1.5 cursor-row-resize bg-input hover:bg-accent transition-colors"
         @mousedown="startResizeDockerPane"
       ></div>
       <!-- Header -->
-      <div class="flex items-center justify-between px-2 py-1 border-b border-[#3c3c3c] shrink-0">
-        <span class="text-[10px] text-[#cccccc] flex items-center gap-1.5">
+      <div class="flex items-center justify-between px-2 py-1 border-b border-line shrink-0">
+        <span class="text-2xs text-ink flex items-center gap-1.5">
           <FileText v-if="dockerPane.type === 'logs'" :size="10" />
           <TerminalIcon v-else :size="10" />
           {{ dockerPane.title }}
@@ -24,16 +24,16 @@
           <button
             v-if="dockerPane.type === 'logs'"
             @click="toggleFollow"
-            class="text-[10px] px-2 py-0.5 rounded font-medium transition-colors"
+            class="text-2xs px-2 py-0.5 rounded font-medium transition-colors"
             :class="dockerPane.following
-              ? 'bg-[#89d185]/20 text-[#89d185] hover:bg-[#89d185]/30'
-              : 'bg-[#3c3c3c] text-[#858585] hover:bg-[#4c4c4c] hover:text-[#cccccc]'"
+              ? 'bg-good/20 text-good hover:bg-good/30'
+              : 'bg-input text-ink-2 hover:bg-input-hover hover:text-ink'"
           >
             {{ dockerPane.following ? '● Following' : 'Follow' }}
           </button>
           <button
             @click="closeDockerPane"
-            class="text-[#858585] hover:text-[#cccccc] px-1 text-xs leading-none"
+            class="text-ink-2 hover:text-ink px-1 text-xs leading-none"
           >
             ×
           </button>
@@ -46,16 +46,16 @@
     <!-- Expanded System Panel -->
     <div
       v-if="props.hostId && statusExpanded"
-      class="shrink-0 border-t border-[#3c3c3c] bg-[#1e1e1e] h-48 flex flex-col"
+      class="shrink-0 border-t border-line bg-canvas h-48 flex flex-col"
     >
       <!-- Sub-tabs -->
-      <div class="flex border-b border-[#3c3c3c] px-2">
+      <div class="flex border-b border-line px-2">
         <button
           v-for="t in ['processes', 'network', 'disk']"
           :key="t"
           @click="sysTab = t"
-          class="px-2 py-0.5 text-[10px] font-medium capitalize transition-colors"
-          :class="sysTab === t ? 'text-[#007acc]' : 'text-[#858585] hover:text-[#cccccc]'"
+          class="px-2 py-0.5 text-2xs font-medium capitalize transition-colors"
+          :class="sysTab === t ? 'text-accent' : 'text-ink-2 hover:text-ink'"
         >
           {{ t }}
         </button>
@@ -64,88 +64,88 @@
       <!-- Content -->
       <div class="flex-1 overflow-y-auto p-1">
         <div v-if="sysLoading" class="flex items-center justify-center h-full">
-          <Loader2 :size="14" class="animate-spin text-[#858585]" />
+          <Loader2 :size="14" class="animate-spin text-ink-2" />
         </div>
 
         <!-- Processes -->
-        <div v-else-if="sysTab === 'processes'" class="text-[10px]">
-          <div class="grid grid-cols-12 gap-1 text-[#6e6e6e] font-medium border-b border-[#3c3c3c] pb-0.5 mb-0.5">
+        <div v-else-if="sysTab === 'processes'" class="text-2xs">
+          <div class="grid grid-cols-12 gap-1 text-ink-3 font-medium border-b border-line pb-0.5 mb-0.5">
             <span class="col-span-1">PID</span>
             <span class="col-span-5">Command</span>
-            <span class="col-span-2 text-right">CPU</span>
-            <span class="col-span-2 text-right">Mem</span>
-            <span class="col-span-2 text-right">Time</span>
+            <span class="col-span-2 text-right tabular-nums">CPU</span>
+            <span class="col-span-2 text-right tabular-nums">Mem</span>
+            <span class="col-span-2 text-right tabular-nums">Time</span>
           </div>
           <div
             v-for="p in processes"
             :key="p.pid"
-            class="grid grid-cols-12 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+            class="grid grid-cols-12 gap-1 text-ink hover:bg-raised py-0.5"
           >
             <span class="col-span-1 font-mono">{{ p.pid }}</span>
             <span class="col-span-5 truncate">{{ p.command }}</span>
-            <span class="col-span-2 text-right" :class="parseFloat(p.cpu) > 50 ? 'text-[#f44336]' : ''">{{ p.cpu }}%</span>
-            <span class="col-span-2 text-right">{{ p.mem }}%</span>
-            <span class="col-span-2 text-right text-[#858585]">{{ p.uptime }}</span>
+            <span class="col-span-2 text-right tabular-nums" :class="parseFloat(p.cpu) > 50 ? 'text-bad' : ''">{{ p.cpu }}%</span>
+            <span class="col-span-2 text-right tabular-nums">{{ p.mem }}%</span>
+            <span class="col-span-2 text-right tabular-nums text-ink-2">{{ p.uptime }}</span>
           </div>
         </div>
 
         <!-- Network -->
-        <div v-else-if="sysTab === 'network'" class="text-[10px]">
+        <div v-else-if="sysTab === 'network'" class="text-2xs">
           <div class="mb-1">
-            <span class="text-[#858585]">Established:</span>
-            <span class="text-[#cccccc] ml-1">{{ network?.established_count || 0 }}</span>
+            <span class="text-ink-2">Established:</span>
+            <span class="text-ink ml-1">{{ network?.established_count || 0 }}</span>
           </div>
           <div v-if="visiblePorts.length" class="mb-1">
-            <div class="text-[#6e6e6e] font-medium mb-0.5">Listening Ports</div>
+            <div class="text-ink-3 font-medium mb-0.5">Listening Ports</div>
             <div
               v-for="p in visiblePorts"
               :key="p.local"
-              class="grid grid-cols-3 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+              class="grid grid-cols-3 gap-1 text-ink hover:bg-raised py-0.5"
             >
               <span>{{ p.proto }}</span>
               <span class="truncate">{{ p.local }}</span>
-              <span class="truncate text-[#858585]">{{ p.process }}</span>
+              <span class="truncate text-ink-2">{{ p.process }}</span>
             </div>
           </div>
           <div v-if="visibleInterfaces.length">
-            <div class="text-[#6e6e6e] font-medium mb-0.5">Interfaces</div>
+            <div class="text-ink-3 font-medium mb-0.5">Interfaces</div>
             <div
               v-for="iface in visibleInterfaces"
               :key="iface.name"
-              class="grid grid-cols-4 gap-1 text-[#cccccc] py-0.5"
+              class="grid grid-cols-4 gap-1 text-ink py-0.5"
             >
               <span>{{ iface.name }}</span>
-              <span class="text-[#858585]">RX: {{ formatBytes(iface.rx_bytes) }}</span>
-              <span class="text-[#858585]">TX: {{ formatBytes(iface.tx_bytes) }}</span>
+              <span class="text-ink-2">RX: {{ formatBytes(iface.rx_bytes) }}</span>
+              <span class="text-ink-2">TX: {{ formatBytes(iface.tx_bytes) }}</span>
             </div>
           </div>
         </div>
 
         <!-- Disk -->
-        <div v-else-if="sysTab === 'disk'" class="text-[10px]">
+        <div v-else-if="sysTab === 'disk'" class="text-2xs">
           <div v-if="diskInfo?.mounts?.length" class="mb-1">
-            <div class="text-[#6e6e6e] font-medium mb-0.5">Filesystems</div>
+            <div class="text-ink-3 font-medium mb-0.5">Filesystems</div>
             <div
               v-for="m in diskInfo.mounts"
               :key="m.mount"
-              class="grid grid-cols-6 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+              class="grid grid-cols-6 gap-1 text-ink hover:bg-raised py-0.5"
             >
               <span class="col-span-2 truncate">{{ m.mount }}</span>
               <span class="col-span-1">{{ m.size }}</span>
               <span class="col-span-1">{{ m.used }}</span>
-              <span class="col-span-1" :class="parseInt(m.percent) > 80 ? 'text-[#f44336]' : parseInt(m.percent) > 60 ? 'text-[#cca700]' : 'text-[#89d185]'">{{ m.percent }}%</span>
-              <span class="col-span-1 text-[#858585] truncate">{{ m.filesystem }}</span>
+              <span class="col-span-1" :class="parseInt(m.percent) > 80 ? 'text-bad' : parseInt(m.percent) > 60 ? 'text-warn' : 'text-good'">{{ m.percent }}%</span>
+              <span class="col-span-1 text-ink-2 truncate">{{ m.filesystem }}</span>
             </div>
           </div>
           <div v-if="diskInfo?.dirs?.length">
-            <div class="text-[#6e6e6e] font-medium mb-0.5 mt-1">Top Directories</div>
+            <div class="text-ink-3 font-medium mb-0.5 mt-1">Top Directories</div>
             <div
               v-for="d in diskInfo.dirs"
               :key="d.path"
-              class="grid grid-cols-2 gap-1 text-[#cccccc] hover:bg-[#2a2d2e] py-0.5"
+              class="grid grid-cols-2 gap-1 text-ink hover:bg-raised py-0.5"
             >
               <span class="truncate">{{ d.path }}</span>
-              <span class="text-[#858585]">{{ d.size }}</span>
+              <span class="text-ink-2">{{ d.size }}</span>
             </div>
           </div>
         </div>
@@ -155,18 +155,18 @@
     <!-- System Status Bar -->
     <div
       v-if="props.hostId"
-      class="shrink-0 border-t border-[#3c3c3c] bg-[#1e1e1e] cursor-pointer hover:bg-[#252526] transition-colors"
+      class="shrink-0 border-t border-line bg-canvas cursor-pointer hover:bg-surface transition-colors"
       @click="statusExpanded = !statusExpanded"
     >
       <div class="flex items-center justify-between px-2 py-0.5">
         <div class="flex items-center gap-3 overflow-x-auto">
           <!-- Disconnected -->
-          <div v-if="isDisconnected" class="flex items-center gap-1 text-[10px] text-[#f44336] whitespace-nowrap">
-            <span class="w-1.5 h-1.5 rounded-full bg-[#f44336] animate-pulse" />
+          <div v-if="isDisconnected" class="flex items-center gap-1 text-2xs text-bad whitespace-nowrap">
+            <span class="w-1.5 h-1.5 rounded-full bg-bad animate-pulse" />
             <span class="font-medium">Disconnected</span>
           </div>
           <!-- Loading -->
-          <div v-else-if="statusLoading && !status.load" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
+          <div v-else-if="statusLoading && !status.load" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
             <Loader2 :size="10" class="animate-spin" />
             <span>Loading stats…</span>
           </div>
@@ -174,51 +174,51 @@
           <template v-else>
             <div
               v-if="status.os"
-              class="flex items-center gap-1 text-[10px] text-[#858585] max-w-[140px] cursor-default"
+              class="flex items-center gap-1 text-2xs text-ink-2 max-w-[140px] cursor-default"
               @mouseenter="showTooltip($event, status.os)"
               @mouseleave="hideTooltip"
             >
-              <Monitor :size="10" class="text-[#4ec9b0] shrink-0" />
+              <Monitor :size="10" class="text-syn-teal shrink-0" />
               <span class="truncate">{{ status.os }}</span>
             </div>
-            <div v-if="status.load" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <Cpu :size="10" class="text-[#569cd6]" />
+            <div v-if="status.load" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <Cpu :size="10" class="text-syn-blue" />
               <span class="font-medium">CPU:</span>
               <span>{{ status.load }}<span v-if="status.cores"> / {{ status.cores }} cores</span></span>
             </div>
-            <div v-if="status.ram" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <MemoryStick :size="10" class="text-[#89d185]" />
+            <div v-if="status.ram" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <MemoryStick :size="10" class="text-good" />
               <span class="font-medium">RAM:</span>
               <span>{{ status.ram }}</span>
             </div>
-            <div v-if="status.disk" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <HardDrive :size="10" class="text-[#cca700]" />
+            <div v-if="status.disk" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <HardDrive :size="10" class="text-warn" />
               <span class="font-medium">Disk:</span>
               <span>{{ status.disk }}</span>
             </div>
-            <div v-if="status.uptime" class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <Clock :size="10" class="text-[#c586c0]" />
+            <div v-if="status.uptime" class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <Clock :size="10" class="text-syn-purple" />
               <span class="font-medium">Up:</span>
               <span>{{ status.uptime }}</span>
             </div>
-            <div class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <ArrowDown :size="10" class="text-[#89d185]" />
+            <div class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <ArrowDown :size="10" class="text-good" />
               <span>{{ status.netDown || '—' }}</span>
             </div>
-            <div class="flex items-center gap-1 text-[10px] text-[#858585] whitespace-nowrap">
-              <ArrowUp :size="10" class="text-[#569cd6]" />
+            <div class="flex items-center gap-1 text-2xs text-ink-2 whitespace-nowrap">
+              <ArrowUp :size="10" class="text-syn-blue" />
               <span>{{ status.netUp || '—' }}</span>
             </div>
           </template>
           <!-- Error -->
-          <div v-if="statusError" class="flex items-center gap-1 text-[10px] text-[#f44336] whitespace-nowrap" :title="statusError">
-            <span class="w-1.5 h-1.5 rounded-full bg-[#f44336]" />
+          <div v-if="statusError" class="flex items-center gap-1 text-2xs text-bad whitespace-nowrap" :title="statusError">
+            <span class="w-1.5 h-1.5 rounded-full bg-bad" />
             <span class="truncate max-w-[200px]">{{ statusError }}</span>
           </div>
         </div>
         <button
           @click.stop="statusExpanded = !statusExpanded"
-          class="text-[#858585] hover:text-[#cccccc] shrink-0 ml-2"
+          class="text-ink-2 hover:text-ink shrink-0 ml-2"
           :title="statusExpanded ? 'Hide system panel' : 'Show system panel'"
         >
           <ChevronUp v-if="statusExpanded" :size="12" />
@@ -230,7 +230,7 @@
     <!-- Custom tooltip -->
     <div
       v-if="tooltip.show"
-      class="fixed z-50 px-2 py-1 bg-[#252526] text-[#cccccc] text-xs rounded shadow-lg pointer-events-none whitespace-nowrap border border-[#3c3c3c]"
+      class="fixed z-50 px-2 py-1 bg-surface text-ink text-xs rounded shadow-lg pointer-events-none whitespace-nowrap border border-line"
       :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
     >
       {{ tooltip.text }}
@@ -239,49 +239,49 @@
     <!-- Search bar -->
     <div
       v-if="searchVisible"
-      class="absolute top-2 right-2 bg-[#252526] border border-[#3c3c3c] rounded shadow-lg p-2 z-20 flex items-center gap-2"
+      class="absolute top-2 right-2 bg-surface border border-line rounded shadow-lg p-2 z-20 flex items-center gap-2"
     >
       <input
         ref="searchInput"
         v-model="searchQuery"
         type="text"
         placeholder="Find..."
-        class="bg-[#3c3c3c] border border-[#3c3c3c] rounded px-2 py-1 text-xs text-[#cccccc] w-40 focus:outline-none focus:border-[#007acc] placeholder-[#6e6e6e]"
+        class="bg-input border border-line rounded px-2 py-1 text-xs text-ink w-40 focus:outline-none focus:border-accent placeholder-ink-3"
         @keydown.enter="findNext"
         @keydown.shift.enter="findPrevious"
         @keydown.esc="closeSearch"
       />
       <button
         @click="findPrevious"
-        class="text-[#858585] hover:text-[#cccccc] px-1"
+        class="text-ink-2 hover:text-ink px-1"
         title="Previous"
       >
         ↑
       </button>
       <button
         @click="findNext"
-        class="text-[#858585] hover:text-[#cccccc] px-1"
+        class="text-ink-2 hover:text-ink px-1"
         title="Next"
       >
         ↓
       </button>
-      <label class="flex items-center gap-1 text-xs text-[#858585] cursor-pointer select-none">
-        <input v-model="searchCaseSensitive" type="checkbox" class="accent-[#007acc]" />
+      <label class="flex items-center gap-1 text-xs text-ink-2 cursor-pointer select-none">
+        <input v-model="searchCaseSensitive" type="checkbox" class="accent-accent" />
         Aa
       </label>
-      <button @click="closeSearch" class="text-[#858585] hover:text-[#cccccc] px-1">×</button>
+      <button @click="closeSearch" class="text-ink-2 hover:text-ink px-1">×</button>
     </div>
 
     <!-- Disconnect banner -->
     <div
       v-if="isDisconnected"
-      class="absolute inset-0 bg-[#1e1e1e]/90 flex flex-col items-center justify-center z-10"
+      class="absolute inset-0 bg-canvas/90 flex flex-col items-center justify-center z-10"
     >
-      <p class="text-[#f44336] text-base font-semibold mb-3">Connection lost</p>
+      <p class="text-bad text-base font-semibold mb-3">Connection lost</p>
       <button
         @click="reconnect"
         :disabled="isReconnecting"
-        class="px-4 py-1.5 bg-[#0e639c] hover:bg-[#1177bb] disabled:bg-[#3c3c3c] text-[#cccccc] rounded text-xs font-medium"
+        class="px-4 py-1.5 bg-accent-solid hover:bg-accent-solid-hover disabled:bg-input text-ink rounded text-xs font-medium"
       >
         {{ isReconnecting ? 'Reconnecting...' : 'Reconnect' }}
       </button>
@@ -291,17 +291,17 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-[#252526] border border-[#3c3c3c] rounded shadow-lg py-1 z-50 min-w-[8rem]"
+      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[8rem]"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <button @click="copySelection" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Copy</button>
-      <button @click="pasteFromClipboard" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Paste</button>
-      <button @click="selectAll" class="block w-full text-left px-3 py-1 text-xs text-[#cccccc] hover:bg-[#2a2d2e]">Select All</button>
-      <div v-if="contextMenuForward" class="border-t border-[#3c3c3c] my-1"></div>
+      <button @click="copySelection" class="block w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">Copy</button>
+      <button @click="pasteFromClipboard" class="block w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">Paste</button>
+      <button @click="selectAll" class="block w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">Select All</button>
+      <div v-if="contextMenuForward" class="border-t border-line my-1"></div>
       <button
         v-if="contextMenuForward"
         @click="createForwardFromSelection"
-        class="block w-full text-left px-3 py-1 text-xs text-[#75beff] hover:bg-[#2a2d2e]"
+        class="block w-full text-left px-3 py-1 text-xs text-accent-soft hover:bg-raised"
       >
         {{ contextMenuForward.label }}
       </button>
@@ -315,7 +315,7 @@ import { invoke } from '../utils/invoke.js'
 import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { isInsertableCommand, stripSubmit } from '../utils/terminalInsert.js'
 import { Cpu, MemoryStick, HardDrive, Clock, Monitor, ChevronUp, ChevronDown, Loader2, ArrowDown, ArrowUp, FileText, Terminal as TerminalIcon } from 'lucide-vue-next'
-import { TERMINAL_THEME } from '../themes/index.js'
+import { currentTerminalTheme } from '../composables/useTheme.js'
 import { formatBytes } from '../utils/format.js'
 import { shellEscape } from '../utils/shell.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -370,7 +370,7 @@ let dockerKeyFlushTimer = null
 const isReconnecting = ref(false)
 const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl)
 const contextMenuForward = ref(null) // { port, label } or null
-const terminalBgClass = ref('bg-gray-900')
+const terminalBgClass = ref('bg-canvas')
 
 const searchVisible = ref(false)
 const searchQuery = ref('')
@@ -403,8 +403,10 @@ function applySettings(settings) {
   if (settings.fontSize !== undefined) {
     term.options.fontSize = settings.fontSize
   }
-  term.options.theme = TERMINAL_THEME
-  terminalBgClass.value = 'bg-[#1e1e1e]'
+  // Re-read rather than cache: this runs on every settings change,
+  // which is exactly when the theme may have flipped.
+  term.options.theme = currentTerminalTheme()
+  terminalBgClass.value = 'bg-canvas'
   if (fitAddon) {
     setTimeout(() => fitAddon.fit(), 50)
   }
@@ -733,7 +735,7 @@ function onVisibilityChange() {
 
 async function initTerminal() {
   const fontSize = await loadTerminalFontSize()
-  terminalBgClass.value = 'bg-[#1e1e1e]'
+  terminalBgClass.value = 'bg-canvas'
 
   terminal = createTerminalInstance(terminalContainer.value, { fontSize, search: true })
   term = terminal.term

@@ -1,10 +1,10 @@
 <template>
   <div
-    class="flex h-screen bg-[#1e1e1e] text-[#cccccc]"
+    class="flex h-screen bg-canvas text-ink"
   >
     <!-- Host Sidebar -->
     <div
-      class="h-full bg-[#252526] border-r border-[#3c3c3c] flex flex-col shrink-0"
+      class="h-full bg-surface border-r border-line flex flex-col shrink-0"
       :style="{ width: sidebarWidth + 'px' }"
     >
       <HostSidebar />
@@ -12,53 +12,53 @@
 
     <!-- Sidebar resize handle -->
     <div
-      class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
+      class="w-1.5 shrink-0 cursor-col-resize bg-input hover:bg-accent transition-colors z-10"
       @mousedown="startResizeSidebar"
     ></div>
 
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Header with tabs and settings -->
-      <div class="flex border-b border-[#3c3c3c] bg-[#252526] items-center justify-between">
+      <div class="flex border-b border-line bg-surface items-center justify-between">
         <div class="flex overflow-x-auto">
           <button
             v-for="tab in store.tabs"
             :key="tab.id"
             @click="store.setActiveTab(tab.id)"
-            class="px-3 py-1.5 text-xs border-r border-[#3c3c3c] flex items-center gap-1.5 whitespace-nowrap transition-colors"
+            class="px-3 py-1.5 text-xs border-r border-line flex items-center gap-1.5 whitespace-nowrap transition-colors"
             :class="tab.id === store.activeTabId
-              ? 'bg-[#37373d] text-[#cccccc]'
-              : 'text-[#858585] hover:text-[#cccccc]'"
+              ? 'bg-active text-ink'
+              : 'text-ink-2 hover:text-ink'"
           >
             <Database
               v-if="tabKind(tab) === 'mongodb'"
               :size="12"
-              class="shrink-0 text-[#007acc]"
+              class="shrink-0 text-accent"
             />
-            <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-[#d82c20]" />
+            <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-redis" />
             <span
               v-else
               class="w-2 h-2 rounded-full shrink-0"
-              :class="tab.connected !== false ? 'bg-green-500' : 'bg-red-500'"
+              :class="tab.connected !== false ? 'bg-good' : 'bg-bad'"
             ></span>
             <span>{{ tab.name }}</span>
             <span
               v-if="tab.connecting"
-              class="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0"
+              class="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0"
             ></span>
             <span
               v-else
               @click.stop="confirmDisconnect(tab.id, tab.name)"
-              class="hover:text-red-400 cursor-pointer ml-1"
+              class="hover:text-bad cursor-pointer ml-1"
             >
               <X :size="14" />
             </span>
           </button>
         </div>
         <div class="flex items-center shrink-0">
-          <button @click="showShortcuts = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Keyboard shortcuts">
+          <button @click="showShortcuts = true" class="px-2 py-1.5 text-ink-2 hover:text-ink" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
-          <button @click="showSettings = true" class="px-2 py-1.5 text-[#858585] hover:text-[#cccccc]" title="Settings">
+          <button @click="showSettings = true" class="px-2 py-1.5 text-ink-2 hover:text-ink" title="Settings">
             <Settings :size="14" />
           </button>
         </div>
@@ -90,44 +90,52 @@
             :hostId="tab.hostId"
             class="w-full h-full absolute top-0 left-0"
           />
-          <div
-            v-if="!store.activeTabId"
-            class="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 absolute inset-0"
-          >
-            <div class="text-center">
-              <TerminalIcon :size="40" class="mx-auto mb-3 opacity-50" />
-              <p class="text-base">Select a host to connect</p>
-            </div>
+          <!-- The app's front door. It offered a new user nothing to do; the
+               sidebar owns HostModal, so the action goes there as an event,
+               the way open-port-forward-modal already does. -->
+          <div v-if="!store.activeTabId" class="absolute inset-0 flex items-center justify-center">
+            <EmptyState
+              state="empty"
+              size="md"
+              :icon="TerminalIcon"
+              :title="store.hosts.length === 0 ? 'No hosts yet' : 'No connection open'"
+              :hint="store.hosts.length === 0
+                ? 'Add a server, a MongoDB connection or a Redis connection to begin'
+                : 'Pick a host on the left, or add another'"
+              :action-label="store.hosts.length === 0 ? 'Add your first host' : 'Add a host'"
+              :action-icon="Plus"
+              @action="openHostModal"
+            />
           </div>
         </div>
 
         <!-- SFTP panel resize handle -->
         <div
           v-if="hasRightPanel(store.activeTab)"
-          class="w-1.5 shrink-0 cursor-col-resize bg-[#3c3c3c] hover:bg-[#007acc] transition-colors z-10"
+          class="w-1.5 shrink-0 cursor-col-resize bg-input hover:bg-accent transition-colors z-10"
           @mousedown="startResizeSftp"
         ></div>
 
         <div
           v-if="hasRightPanel(store.activeTab)"
-          class="border-l border-[#3c3c3c] shrink-0 bg-[#1e1e1e] flex flex-col"
+          class="border-l border-line shrink-0 bg-canvas flex flex-col"
           :style="{ width: sftpWidth + 'px' }"
         >
           <!-- Panel tabs -->
-          <div class="flex border-b border-[#3c3c3c]">
+          <div class="flex border-b border-line">
             <button
               v-for="tab in PANEL_TABS"
               :key="tab.id"
               @click="rightPanelTab = tab.id"
               class="flex-1 py-1.5 text-xs font-medium transition-colors relative"
               :class="rightPanelTab === tab.id
-                ? 'text-[#007acc]'
-                : 'text-[#858585] hover:text-[#cccccc]'"
+                ? 'text-accent'
+                : 'text-ink-2 hover:text-ink'"
             >
               {{ tab.label }}
               <span
                 v-if="rightPanelTab === tab.id"
-                class="absolute bottom-0 left-2 right-2 h-0.5 bg-[#007acc] rounded-full"
+                class="absolute bottom-0 left-2 right-2 h-0.5 bg-accent rounded-full"
               />
             </button>
           </div>
@@ -163,7 +171,7 @@
               />
               <div
                 v-else-if="rightPanelTab === 'sftp' && store.activeTab && !store.activeTab.sftpSessionId"
-                class="flex-1 flex flex-col items-center justify-center text-[#6e6e6e] h-full"
+                class="flex-1 flex flex-col items-center justify-center text-ink-3 h-full"
               >
                 <Loader2 :size="24" class="animate-spin mb-2" />
                 <span class="text-sm">Connecting SFTP...</span>
@@ -225,6 +233,7 @@ import HostSidebar from '../components/HostSidebar.vue'
 import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Terminal as TerminalIcon,
@@ -234,6 +243,7 @@ import {
   X,
   Database,
   Layers,
+  Plus,
 } from 'lucide-vue-next'
 import {
   TAB_KIND,
@@ -286,6 +296,11 @@ const promptDialog = ref({
   placeholder: '',
   type: 'text',
 })
+
+/** The sidebar owns HostModal, so ask it to open one. */
+function openHostModal() {
+  window.dispatchEvent(new CustomEvent('open-host-modal'))
+}
 
 function confirmDisconnect(sessionId, name) {
   const tab = store.tabs.find(t => t.id === sessionId)
@@ -492,7 +507,12 @@ onMounted(() => {
   const savedSftpWidth = localStorage.getItem('sftp-width')
   if (savedSftpWidth) sftpWidth.value = parseInt(savedSftpWidth)
 
-  document.documentElement.classList.add('dark')
+  // Settings are the record for the theme, the terminal font size and the
+  // download path. Nothing loaded them at startup, so the persisted theme was
+  // never applied until the Settings dialog happened to be opened. (This used
+  // to force `classList.add('dark')` here unconditionally, which overrode the
+  // choice even once it was loaded.)
+  store.loadSettings().catch(() => {})
 
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)

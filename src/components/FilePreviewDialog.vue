@@ -7,12 +7,12 @@
   >
     <div
       ref="modalRef"
-      class="bg-[#252526] border border-[#3c3c3c] rounded shadow-xl flex flex-col max-w-[90vw] max-h-[80vh]"
+      class="bg-surface border border-line rounded shadow-xl flex flex-col max-w-[90vw] max-h-[80vh]"
       :style="{ width: modalWidth + 'px', height: modalHeight + 'px', minWidth: '320px', minHeight: '200px' }"
     >
       <!-- Header -->
-      <div class="flex items-center justify-between px-3 py-2 border-b border-[#3c3c3c] shrink-0 select-none">
-        <span class="text-xs text-[#cccccc] truncate flex-1 mr-2">
+      <div class="flex items-center justify-between px-3 py-2 border-b border-line shrink-0 select-none">
+        <span class="text-xs text-ink truncate flex-1 mr-2">
           <template v-if="fileType === 'image'">🖼 Image:</template>
           <template v-else-if="fileType === 'binary'">📦 Binary:</template>
           <template v-else>📄 Preview:</template>
@@ -21,51 +21,51 @@
         <div class="flex items-center gap-1.5 shrink-0">
           <!-- Search (text only) -->
           <template v-if="fileType === 'text'">
-            <div class="flex items-center gap-1 bg-[#3c3c3c] rounded px-1.5 py-0.5">
-              <Search :size="10" class="text-[#858585]" />
+            <div class="flex items-center gap-1 bg-input rounded px-1.5 py-0.5">
+              <Search :size="10" class="text-ink-2" />
               <input
                 v-model="searchQuery"
                 type="text"
                 placeholder="Find..."
-                class="bg-transparent text-[10px] text-[#cccccc] w-24 focus:outline-none placeholder-[#6e6e6e]"
+                class="bg-transparent text-2xs text-ink w-24 focus:outline-none placeholder-ink-3"
                 @keydown.esc="searchQuery = ''"
               />
-              <span v-if="searchQuery" class="text-[10px] text-[#858585]">
+              <span v-if="searchQuery" class="text-2xs text-ink-2">
                 {{ matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : '0/0' }}
               </span>
               <button
                 v-if="searchQuery && matchCount > 0"
                 @click="prevMatch"
-                class="text-[#858585] hover:text-[#cccccc] text-[10px] px-0.5"
+                class="text-ink-2 hover:text-ink text-2xs px-0.5"
                 title="Previous"
               >▲</button>
               <button
                 v-if="searchQuery && matchCount > 0"
                 @click="nextMatch"
-                class="text-[#858585] hover:text-[#cccccc] text-[10px] px-0.5"
+                class="text-ink-2 hover:text-ink text-2xs px-0.5"
                 title="Next"
               >▼</button>
             </div>
           </template>
-          <button @click="$emit('download')" class="text-[10px] text-[#858585] hover:text-[#cccccc] px-1.5 py-0.5 bg-[#3c3c3c] rounded" title="Download">
+          <button @click="$emit('download')" class="text-2xs text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded" title="Download">
             ⬇
           </button>
-          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-[10px] text-white bg-[#007acc] hover:bg-[#1177bb] px-2 py-0.5 rounded" title="Edit">
+          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-2xs text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
             Edit
           </button>
-          <button @click="$emit('close')" class="text-[#858585] hover:text-[#cccccc] leading-none">×</button>
+          <button @click="$emit('close')" class="text-ink-2 hover:text-ink leading-none">×</button>
         </div>
       </div>
 
       <!-- Content -->
       <div class="flex-1 overflow-hidden relative">
         <!-- Loading -->
-        <div v-if="loading" class="flex items-center justify-center h-full text-[#858585] text-sm">
+        <div v-if="loading" class="flex items-center justify-center h-full text-ink-2 text-sm">
           <Loader2 :size="16" class="animate-spin mr-2" /> Loading...
         </div>
 
         <!-- Error -->
-        <div v-else-if="error" class="flex items-center justify-center h-full text-[#f44336] text-sm p-4 text-center">
+        <div v-else-if="error" class="flex items-center justify-center h-full text-bad text-sm p-4 text-center">
           {{ error }}
         </div>
 
@@ -81,22 +81,22 @@
         </div>
 
         <!-- Binary -->
-        <div v-else-if="fileType === 'binary'" class="flex flex-col items-center justify-center h-full text-[#858585] p-4">
-          <FileArchive :size="48" class="text-[#6e6e6e] mb-3" />
-          <p class="text-sm text-[#cccccc] mb-1">Binary file</p>
-          <p class="text-xs text-[#858585] mb-4">This file cannot be previewed.</p>
+        <div v-else-if="fileType === 'binary'" class="flex flex-col items-center justify-center h-full text-ink-2 p-4">
+          <FileArchive :size="48" class="text-ink-3 mb-3" />
+          <p class="text-sm text-ink mb-1">Binary file</p>
+          <p class="text-xs text-ink-2 mb-4">This file cannot be previewed.</p>
           <button
             @click="$emit('download')"
-            class="text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-3 py-1.5 rounded"
+            class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-3 py-1.5 rounded"
           >
             Download File
           </button>
         </div>
 
         <!-- Text with line numbers and search -->
-        <div v-else class="flex h-full overflow-auto font-mono text-[11px] leading-5">
+        <div v-else class="flex h-full overflow-auto font-mono text-xs leading-5">
           <!-- Line numbers -->
-          <div class="shrink-0 bg-[#1e1e1e] text-[#6e6e6e] text-right select-none px-2 py-3 border-r border-[#3c3c3c]" style="min-width: 3rem;">
+          <div class="shrink-0 bg-canvas text-ink-3 text-right tabular-nums select-none px-2 py-3 border-r border-line" style="min-width: 3rem;">
             <div v-for="n in lineCount" :key="n" class="px-1">{{ n }}</div>
           </div>
           <!-- Content -->
@@ -105,7 +105,7 @@
               v-for="(line, idx) in highlightedLines"
               :key="idx"
               class="px-1"
-              :class="{ 'bg-[#cca700]/20': matchLines.has(idx) }"
+              :class="{ 'bg-warn/20': matchLines.has(idx) }"
             >
               <span v-html="line"></span>
             </div>
@@ -116,7 +116,7 @@
       <!-- Resize handle -->
       <div
         class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-        style="background: linear-gradient(135deg, transparent 50%, #6e6e6e 50%);"
+        style="background: linear-gradient(135deg, transparent 50%, rgb(var(--td-ink-3)) 50%);"
         @mousedown="startResize"
         title="Resize"
       ></div>
@@ -187,7 +187,7 @@ const highlightedLines = computed(() => {
     let idx = lowerLine.indexOf(lowerQ)
     while (idx !== -1) {
       parts.push(escapeHtml(line.slice(lastIndex, idx)))
-      parts.push(`<mark class="bg-[#cca700]/40 text-[#cccccc]">${escapeHtml(line.slice(idx, idx + q.length))}</mark>`)
+      parts.push(`<mark class="bg-warn/40 text-ink">${escapeHtml(line.slice(idx, idx + q.length))}</mark>`)
       lastIndex = idx + q.length
       idx = lowerLine.indexOf(lowerQ, lastIndex)
     }

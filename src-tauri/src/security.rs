@@ -720,11 +720,9 @@ fn classify_security_updates(
 fn score_report(checks: Vec<SecurityCheck>) -> SecurityReport {
     let scored = checks.iter().filter(|c| c.status != UNKNOWN).count() as u16;
     let passed = checks.iter().filter(|c| c.status == PASS).count() as u16;
-    let score = if scored > 0 {
-        ((passed * 100) / scored) as u8
-    } else {
-        0
-    };
+    // checked_div rather than an `if scored > 0` guard: clippy 1.98 flags the
+    // guard-plus-divide shape as a manual reimplementation of exactly this.
+    let score = (passed * 100).checked_div(scored).unwrap_or(0) as u8;
 
     SecurityReport {
         // Stamped by the caller that actually ran the probes, so scoring stays

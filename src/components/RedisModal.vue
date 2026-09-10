@@ -1,24 +1,25 @@
 <template>
   <ModalShell
+    @close="$emit('close')"
     :show="show"
     panel-class="p-6 w-[30rem] shadow-xl max-h-[90vh] overflow-y-auto"
   >
-    <h3 class="text-base font-medium text-[#cccccc] mb-4">
+    <h3 class="text-base font-medium text-ink mb-4">
       {{ host ? 'Edit' : 'Add' }} Redis connection
     </h3>
 
     <div class="mb-4">
-      <label class="block text-xs text-[#858585] mb-1">Name</label>
+      <label class="block text-xs text-ink-2 mb-1">Name</label>
       <input
         v-model="form.name"
         placeholder="Production cache"
-        class="w-full bg-[#3c3c3c] text-[#cccccc] text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#007acc]"
+        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
       />
-      <p v-if="errors.name" class="text-[10px] text-red-400 mt-1">{{ errors.name }}</p>
+      <p v-if="errors.name" class="text-2xs text-bad mt-1">{{ errors.name }}</p>
     </div>
 
-    <fieldset class="border border-[#3c3c3c] rounded p-3 mb-5">
-      <legend class="text-xs text-[#858585] px-1">Connection</legend>
+    <fieldset class="border border-line rounded p-3 mb-5">
+      <legend class="text-xs text-ink-2 px-1">Connection</legend>
       <!--
         Not `v-model`: `form` is a const reactive object, so reassigning it is
         what the compiler warns about. Merging keeps the same object, which is
@@ -39,13 +40,13 @@
     <div class="flex justify-end gap-2">
       <button
         @click="$emit('close')"
-        class="px-3 py-1.5 text-xs rounded text-[#cccccc] hover:bg-[#3c3c3c]"
+        class="px-3 py-1.5 text-xs rounded text-ink hover:bg-input"
       >
         Cancel
       </button>
       <button
         @click="submit"
-        class="px-3 py-1.5 text-xs rounded bg-[#0e639c] hover:bg-[#1177bb] text-white"
+        class="px-3 py-1.5 text-xs rounded bg-accent-solid hover:bg-accent-solid-hover text-white"
       >
         Save
       </button>
