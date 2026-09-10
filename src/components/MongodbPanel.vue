@@ -79,10 +79,12 @@
           :expanded-dbs="sourceExpandedDbs"
           :selected-collections="selectedCollections"
           :selectable="true"
+          :browsable="true"
           :loading="isRemoteToLocal ? loadingRemote : loadingLocal"
           @toggle-db="toggleSourceDb"
           @toggle-db-selection="toggleDbSelection"
           @toggle-collection="toggleCollection"
+          @open-collection="(db, coll) => openDocuments(sourceSideName, db, coll)"
         />
       </div>
 
@@ -135,8 +137,10 @@
             :expanded-dbs="destExpandedDbs"
             :selected-collections="new Map()"
             :selectable="false"
+            :browsable="true"
             :loading="isRemoteToLocal ? loadingLocal : loadingRemote"
             @toggle-db="toggleDestDb"
+            @open-collection="(db, coll) => openDocuments(destSideName, db, coll)"
           />
         </div>
       </template>
@@ -273,6 +277,15 @@
       </div>
     </div>
 
+    <MongoDocumentsPanel
+      :show="documentsView.show"
+      :host-id="hostId"
+      :side="documentsView.side"
+      :db="documentsView.db"
+      :collection="documentsView.collection"
+      @close="documentsView.show = false"
+    />
+
     <!-- Restore confirmation modal -->
     <ModalShell :show="restoreConfirm.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
         <h3 class="text-base font-semibold text-[#cccccc] mb-3">
@@ -386,6 +399,7 @@ import { toast } from '../utils/toast.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useMongoSide, fetchCollections } from '../composables/useMongoSide.js'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'
+import MongoDocumentsPanel from './MongoDocumentsPanel.vue'
 import {
   dbSelectionState,
   countSelected,
@@ -434,6 +448,13 @@ const aborting = ref(false)
 
 const EMPTY_PROGRESS = { db: '', collection: '', stage: '', synced: 0, total: 0, percent: 0, detail: '' }
 const syncProgress = ref({ ...EMPTY_PROGRESS })
+
+/** The collection being browsed, if any. */
+const documentsView = ref({ show: false, side: 'remote', db: '', collection: '' })
+
+function openDocuments(side, db, collection) {
+  documentsView.value = { show: true, side, db, collection }
+}
 
 const restoreConfirm = ref({
   show: false,

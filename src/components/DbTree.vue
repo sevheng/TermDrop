@@ -41,7 +41,7 @@
           <label
             v-for="coll in db.collections"
             :key="coll"
-            class="flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
+            class="group flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
             :class="selectable ? 'cursor-pointer' : ''"
           >
             <input
@@ -52,7 +52,15 @@
               class="accent-[#007acc]"
             />
             <Table :size="10" class="shrink-0 text-[#6e6e6e]" />
-            <span class="truncate">{{ coll }}</span>
+            <span class="truncate flex-1">{{ coll }}</span>
+            <button
+              v-if="browsable"
+              class="opacity-0 group-hover:opacity-100 text-[#75beff] hover:text-white px-1 shrink-0"
+              title="Browse documents"
+              @click.stop.prevent="$emit('open-collection', db.name, coll)"
+            >
+              <Eye :size="11" />
+            </button>
           </label>
           <div v-if="db.collections.length === 0" class="text-[10px] text-[#6e6e6e] px-1">
             No collections
@@ -64,7 +72,7 @@
 </template>
 
 <script setup>
-import { Database, Table, ChevronRight, Loader2 } from 'lucide-vue-next'
+import { Database, Table, ChevronRight, Loader2, Eye } from 'lucide-vue-next'
 import { isSelected as isSelectedIn, dbSelectionState as dbSelectionStateIn } from '../utils/mongoSelection.js'
 
 const props = defineProps({
@@ -72,10 +80,12 @@ const props = defineProps({
   expandedDbs: { type: Set, required: true },
   selectedCollections: { type: Map, required: true },
   selectable: { type: Boolean, default: true },
+  /** Show the per-collection "browse documents" affordance. */
+  browsable: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
 })
 
-defineEmits(['toggle-db', 'toggle-db-selection', 'toggle-collection'])
+defineEmits(['toggle-db', 'toggle-db-selection', 'toggle-collection', 'open-collection'])
 
 function isSelected(db, coll) {
   return isSelectedIn(props.selectedCollections, db, coll)
