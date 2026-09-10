@@ -8,14 +8,36 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 
+/// Lock through a poisoned mutex instead of panicking.
+///
+/// These mutexes guard a registry of cancel flags and child handles and a
+/// buffer of stderr lines — a panic elsewhere does not make either
+/// semantically corrupt. Propagating the poison would disable every later
+/// MongoDB operation for the lifetime of the process, which is worse than
+/// carrying on.
+pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn set_mongo_child(
     mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: &str,
-    child: Child,
+    mut child: Child,
 ) {
-    let mut ops = mongo_ops.lock().unwrap();
-    if let Some(handle) = ops.get_mut(op_id) {
-        handle.child = Some(child);
+    let mut ops = lock_or_recover(mongo_ops);
+    match ops.get_mut(op_id) {
+        Some(handle) => handle.child = Some(child),
+        None => {
+            // The op was unregistered while this child was running. Dropping a
+            // Child does not kill it on Unix, so it would keep running with
+            // nothing able to cancel it.
+            tracing::warn!(
+                op_id = op_id,
+                "mongo child has no registry entry; killing it"
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -23,7 +45,7 @@ fn take_mongo_child(
     mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: &str,
 ) -> Option<Child> {
-    let mut ops = mongo_ops.lock().unwrap();
+    let mut ops = lock_or_recover(mongo_ops);
     ops.get_mut(op_id).and_then(|h| h.child.take())
 }
 
@@ -471,7 +493,7 @@ where
             // Stop at the first read error; `flatten()` would spin forever on a
             // persistently failing pipe.
             for line in reader.lines().map_while(Result::ok) {
-                stderr_lines_clone.lock().unwrap().push(line);
+                lock_or_recover(&stderr_lines_clone).push(line);
             }
         });
 
@@ -493,7 +515,7 @@ where
                 Ok(Some(status)) => {
                     let _ = stderr_thread.join();
                     if status.success() {
-                        let lines = stderr_lines.lock().unwrap();
+                        let lines = lock_or_recover(&stderr_lines);
                         let recent: Vec<_> = lines
                             .iter()
                             .rev()
@@ -509,7 +531,7 @@ where
                         );
                         return Ok(());
                     }
-                    let lines = stderr_lines.lock().unwrap();
+                    let lines = lock_or_recover(&stderr_lines);
                     // Redact here so neither the log, the retry decision, nor the
                     // toast this becomes can carry the connection string.
                     let err = lines
@@ -1533,6 +1555,25 @@ uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
     fn redact_leaves_text_without_uris_alone() {
         let plain = "mongorestore failed: no such file or directory";
         assert_eq!(redact_uris_in_text(plain), plain);
+    }
+
+    #[test]
+    fn a_poisoned_lock_does_not_disable_later_operations() {
+        let m = Arc::new(Mutex::new(vec!["before".to_string()]));
+
+        let m2 = Arc::clone(&m);
+        let panicked = std::thread::spawn(move || {
+            let _guard = m2.lock().unwrap();
+            panic!("poison the mutex while holding it");
+        })
+        .join();
+        assert!(panicked.is_err(), "the thread was supposed to panic");
+        assert!(m.lock().is_err(), "the mutex was supposed to be poisoned");
+
+        // The recovering lock still hands back usable state.
+        let mut guard = lock_or_recover(&m);
+        guard.push("after".to_string());
+        assert_eq!(guard.len(), 2);
     }
 
     #[test]

@@ -76,12 +76,12 @@ fn register_mongo_op(state: &State<'_, AppState>, op_id: String) -> Arc<AtomicBo
         cancelled: cancelled.clone(),
         child: None,
     };
-    state.mongo_ops.lock().unwrap().insert(op_id, handle);
+    mongodb::lock_or_recover(&state.mongo_ops).insert(op_id, handle);
     cancelled
 }
 
 fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
-    state.mongo_ops.lock().unwrap().remove(op_id);
+    mongodb::lock_or_recover(&state.mongo_ops).remove(op_id);
 }
 
 /// Register `op_id` so mongodb_cancel can reach it, run `f`, then unregister.
