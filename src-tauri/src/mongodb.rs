@@ -1043,17 +1043,42 @@ fn strip_mongo_uri_database(uri: &str) -> String {
     }
 }
 
-pub async fn list_databases(uri: &str) -> Result<Vec<String>, String> {
+/// How long to wait for a server before giving up. The driver's own default is
+/// 30s, which is a long time to stare at a spinner for a host that is simply
+/// not there.
+const SERVER_SELECTION_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Build a driver client with explicit timeouts.
+///
+/// Clients are pooled by the caller: each one owns a connection pool and a
+/// background topology monitor, so creating one per call is wasteful.
+pub async fn build_client(uri: &str) -> Result<Client, String> {
     let uri = normalize_mongo_uri(uri);
-    let options = ClientOptions::parse(&uri)
+    let mut options = ClientOptions::parse(&uri)
         .await
-        .map_err(|e| format!("parse uri: {}", e))?;
-    let client = Client::with_options(options).map_err(|e| format!("create client: {}", e))?;
-    let dbs = client
+        .map_err(|e| format!("parse uri: {}", redact_uris_in_text(&e.to_string())))?;
+    options.server_selection_timeout = Some(SERVER_SELECTION_TIMEOUT);
+    options.connect_timeout = Some(SERVER_SELECTION_TIMEOUT);
+    options.app_name = Some("TermDrop".to_string());
+    Client::with_options(options)
+        .map_err(|e| format!("create client: {}", redact_uris_in_text(&e.to_string())))
+}
+
+/// List database names on an existing client.
+pub async fn list_databases_with(client: &Client) -> Result<Vec<String>, String> {
+    client
         .list_database_names()
         .await
-        .map_err(|e| format!("list databases: {}", e))?;
-    Ok(dbs)
+        .map_err(|e| format!("list databases: {}", redact_uris_in_text(&e.to_string())))
+}
+
+/// List collection names in one database on an existing client.
+pub async fn list_collections_with(client: &Client, db: &str) -> Result<Vec<String>, String> {
+    client
+        .database(db)
+        .list_collection_names()
+        .await
+        .map_err(|e| format!("list collections: {}", redact_uris_in_text(&e.to_string())))
 }
 
 pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String> {

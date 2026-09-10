@@ -53,6 +53,12 @@ pub struct AppState {
     security_report_fetching: FetchLocks,
     forward_manager: port_forward::ForwardManager,
     pub mongo_ops: Arc<Mutex<HashMap<String, MongoOpHandle>>>,
+    /// One driver client per `host_id:side`, so browsing a database does not
+    /// open a fresh connection pool and topology monitor per call.
+    ///
+    /// Keyed by host and side rather than by URI: a URI key would put a
+    /// credential into a long-lived map and into any Debug output.
+    mongo_clients: Arc<tokio::sync::Mutex<HashMap<String, ::mongodb::Client>>>,
 }
 
 fn db_err(e: r2d2::Error) -> String {
@@ -151,6 +157,58 @@ fn load_mongo_uri(
         // No user in the URI, so no password is expected.
         Err(_) => Ok(uri),
     }
+}
+
+/// A pooled driver client for one side of a host, created on first use.
+///
+/// `Client` is internally reference-counted, so callers get a cheap clone and
+/// the pool outlives any single command.
+async fn mongo_client(
+    state: &State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+) -> Result<::mongodb::Client, String> {
+    let key = format!("{}:{}", host_id, side.as_str());
+
+    if let Some(client) = state.mongo_clients.lock().await.get(&key) {
+        return Ok(client.clone());
+    }
+
+    // Resolve and connect outside the lock is tempting, but two tabs opening at
+    // once would then build two clients; holding it keeps exactly one per key.
+    let uri = load_mongo_uri(state, host_id, side)?;
+    let mut clients = state.mongo_clients.lock().await;
+    if let Some(client) = clients.get(&key) {
+        return Ok(client.clone());
+    }
+    let client = mongodb::build_client(&uri).await?;
+    clients.insert(key, client.clone());
+    Ok(client)
+}
+
+/// Drop the pooled clients for a host, closing their connection pools.
+///
+/// Called when the MongoDB tab closes and when the host is edited — without the
+/// latter, a changed URI would stay invisible until the app restarted.
+async fn forget_mongo_clients(state: &State<'_, AppState>, host_id: i64) {
+    let mut clients = state.mongo_clients.lock().await;
+    for side in [MongoSide::Remote, MongoSide::Local] {
+        clients.remove(&format!("{}:{}", host_id, side.as_str()));
+    }
+}
+
+/// Await a future with a timeout, for the async driver calls that
+/// `with_timeout` (which wraps a blocking closure) cannot cover.
+///
+/// Deliberately not applied to sync, dump or restore: those legitimately run
+/// for hours.
+async fn with_async_timeout<T>(
+    fut: impl std::future::Future<Output = Result<T, String>>,
+    secs: u64,
+) -> Result<T, String> {
+    tokio::time::timeout(Duration::from_secs(secs), fut)
+        .await
+        .map_err(|_| format!("MongoDB operation timed out after {} seconds", secs))?
 }
 
 /// Move MongoDB passwords out of the database and into the keyring.
@@ -447,13 +505,17 @@ fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String
 }
 
 #[tauri::command]
-fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host(conn, id, &host)).map(|_| ())
+async fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
+    with_db(&state, |conn| db::update_host(conn, id, &host))?;
+    // The URI may have changed; a cached client would keep using the old one.
+    forget_mongo_clients(&state, id).await;
+    Ok(())
 }
 
 #[tauri::command]
-fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+async fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     with_db(&state, |conn| db::delete_host(conn, id))?;
+    forget_mongo_clients(&state, id).await;
     crypto::delete_password(id).ok();
     crypto::delete_secret(&mongo_account(id, MongoSide::Remote)).ok();
     crypto::delete_secret(&mongo_account(id, MongoSide::Local)).ok();
@@ -1447,8 +1509,8 @@ async fn mongodb_list_databases(
     host_id: i64,
     side: MongoSide,
 ) -> Result<Vec<String>, String> {
-    let uri = load_mongo_uri(&state, host_id, side)?;
-    mongodb::list_databases(&uri).await
+    let client = mongo_client(&state, host_id, side).await?;
+    with_async_timeout(mongodb::list_databases_with(&client), 30).await
 }
 
 #[tauri::command]
@@ -1458,8 +1520,8 @@ async fn mongodb_list_collections(
     side: MongoSide,
     db: String,
 ) -> Result<Vec<String>, String> {
-    let uri = load_mongo_uri(&state, host_id, side)?;
-    mongodb::list_collections(&uri, &db).await
+    let client = mongo_client(&state, host_id, side).await?;
+    with_async_timeout(mongodb::list_collections_with(&client, &db), 30).await
 }
 
 #[tauri::command]
@@ -1583,6 +1645,13 @@ async fn mongodb_restore_archive(
     .await
 }
 
+/// Release the pooled clients for a host, called when its tab closes.
+#[tauri::command]
+async fn mongodb_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
+    forget_mongo_clients(&state, host_id).await;
+    Ok(())
+}
+
 /// Store the password for one side of a MongoDB host.
 ///
 /// Only ever *sets* a secret. Clearing one is `mongodb_clear_secret`, so an
@@ -1691,6 +1760,7 @@ fn main() {
             security_report_fetching: Arc::new(Mutex::new(HashMap::new())),
             forward_manager: port_forward::ForwardManager::new(),
             mongo_ops: Arc::new(Mutex::new(HashMap::new())),
+            mongo_clients: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
@@ -1758,6 +1828,7 @@ fn main() {
             mongodb_restore,
             mongodb_restore_archive,
             mongodb_cancel,
+            mongodb_disconnect,
             mongodb_store_secret,
             mongodb_has_secret,
             mongodb_clear_secret,

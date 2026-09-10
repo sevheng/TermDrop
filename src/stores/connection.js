@@ -309,7 +309,13 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   function closeMongoTab(sessionId) {
+    const tab = tabs.value.find(t => t.id === sessionId)
     tabs.value = tabs.value.filter(t => t.id !== sessionId)
+    // Release the backend's pooled driver clients for this host, mirroring the
+    // per-host cleanup the SSH tabs do on disconnect.
+    if (tab && !tabs.value.some(t => t.hostId === tab.hostId)) {
+      invoke('mongodb_disconnect', { hostId: tab.hostId }).catch(() => {})
+    }
     if (activeTabId.value === sessionId) {
       activeTabId.value = tabs.value.length > 0 ? tabs.value[0].id : null
     }
