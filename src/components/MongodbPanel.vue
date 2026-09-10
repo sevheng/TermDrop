@@ -220,7 +220,7 @@
         {{ syncButtonLabel }}
       </button>
 
-      <!-- Dump/Restore buttons (always available, operate on Remote) -->
+      <!-- Dump and restore act on the connection whose tree is selectable. -->
       <div class="grid grid-cols-2 gap-2">
         <div class="flex flex-col gap-2">
           <button
@@ -233,7 +233,7 @@
           >
             <Download v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'dump-folder' ? 'Dumping...' : `Dump folder (${dumpSourceLabel})` }}
+            {{ syncing && currentAction === 'dump-folder' ? 'Dumping...' : `Dump folder (${activeSideLabel})` }}
           </button>
           <button
             @click="startDumpArchive"
@@ -245,7 +245,7 @@
           >
             <Download v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'dump-archive' ? 'Dumping...' : `Dump archive (${dumpSourceLabel})` }}
+            {{ syncing && currentAction === 'dump-archive' ? 'Dumping...' : `Dump archive (${activeSideLabel})` }}
           </button>
         </div>
         <div class="flex flex-col gap-2">
@@ -259,7 +259,7 @@
           >
             <Upload v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'restore-folder' ? 'Restoring...' : `Restore folder → ${restoreTargetLabel}` }}
+            {{ syncing && currentAction === 'restore-folder' ? 'Restoring...' : `Restore folder → ${activeSideLabel}` }}
           </button>
           <button
             @click="startRestoreFile"
@@ -271,7 +271,7 @@
           >
             <Upload v-if="!syncing" :size="12" />
             <Loader2 v-else :size="12" class="animate-spin" />
-            {{ syncing && currentAction === 'restore-archive' ? 'Restoring...' : `Restore file → ${restoreTargetLabel}` }}
+            {{ syncing && currentAction === 'restore-archive' ? 'Restoring...' : `Restore file → ${activeSideLabel}` }}
           </button>
         </div>
       </div>
@@ -289,7 +289,7 @@
     <!-- Restore confirmation modal -->
     <ModalShell :show="restoreConfirm.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
         <h3 class="text-base font-semibold text-[#cccccc] mb-3">
-          Confirm restore into <span class="text-[#75beff]">{{ restoreTargetLabel }}</span>
+          Confirm restore into <span class="text-[#75beff]">{{ activeSideLabel }}</span>
         </h3>
         <div class="space-y-2 text-sm text-[#cccccc]">
           <p>
@@ -399,6 +399,7 @@ import { toast } from '../utils/toast.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useMongoSide, fetchCollections } from '../composables/useMongoSide.js'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'
+import { resolveSides, sideLabel } from '../utils/mongoDirection.js'
 import MongoDocumentsPanel from './MongoDocumentsPanel.vue'
 import {
   dbSelectionState,
@@ -508,13 +509,20 @@ function handleOperationError(err, cancelledMessage, failedPrefix) {
   return false
 }
 
-// Source/dest computed based on direction
-const sourceSide = computed(() => isRemoteToLocal.value ? remote : local)
-const destSide = computed(() => isRemoteToLocal.value ? local : remote)
-const sourceUri = computed(() => isRemoteToLocal.value ? remoteUri.value : localUri.value)
-const destUri = computed(() => isRemoteToLocal.value ? localUri.value : remoteUri.value)
-const sourceSideName = computed(() => (isRemoteToLocal.value ? 'remote' : 'local'))
-const destSideName = computed(() => (isRemoteToLocal.value ? 'local' : 'remote'))
+// Every role resolves from one place, so they cannot disagree: a host with
+// only a remote connection has no second side, and restore used to resolve to
+// the empty local URI here and disable itself.
+const sides = computed(() => resolveSides(hasLocalUri.value, isRemoteToLocal.value))
+const sourceSideName = computed(() => sides.value.source)
+const destSideName = computed(() => sides.value.dest)
+
+const sideByName = (name) => (name === 'local' ? local : remote)
+const uriByName = (name) => (name === 'local' ? localUri.value : remoteUri.value)
+
+const sourceSide = computed(() => sideByName(sourceSideName.value))
+const destSide = computed(() => sideByName(destSideName.value))
+const sourceUri = computed(() => uriByName(sourceSideName.value))
+const destUri = computed(() => uriByName(destSideName.value))
 const sourceDatabases = computed(() => sourceSide.value.databases.value)
 const destDatabases = computed(() => destSide.value.databases.value)
 const sourceExpandedDbs = computed(() => sourceSide.value.expandedDbs.value)
@@ -523,22 +531,32 @@ const destExpandedDbs = computed(() => destSide.value.expandedDbs.value)
 const selectedCount = computed(() => countSelected(selectedCollections.value))
 
 const canSync = computed(() => {
-  return sourceUri.value && destUri.value && selectedCount.value > 0 && !syncing.value
+  // Without a second connection source and dest are the same side, and a
+  // sync into itself is meaningless. The button is hidden then anyway.
+  return (
+    hasLocalUri.value &&
+    sourceUri.value &&
+    destUri.value &&
+    selectedCount.value > 0 &&
+    !syncing.value
+  )
 })
 
 const canDumpRestore = computed(() => {
-  // Dump reads from whichever side the selection tree is showing.
   return sourceUri.value && selectedCount.value > 0 && !syncing.value
 })
 
 const canRestore = computed(() => {
-  // Restore writes into the destination side; the folder/archive decides what.
-  return destUri.value && !syncing.value
+  // The folder or archive decides what is restored; this only needs somewhere
+  // to put it. No selection is required.
+  return sourceUri.value && !syncing.value
 })
 
-/** Names the side dump reads from / restore writes to, for button labels. */
-const dumpSourceLabel = computed(() => (isRemoteToLocal.value ? 'Remote' : 'Local'))
-const restoreTargetLabel = computed(() => (isRemoteToLocal.value ? 'Local' : 'Remote'))
+/**
+ * The connection dump and restore act on: the one whose tree is selectable.
+ * With a single connection that is the remote one.
+ */
+const activeSideLabel = computed(() => sideLabel(sourceSideName.value))
 
 const syncButtonLabel = computed(() => {
   if (syncing.value) return 'Syncing...'
@@ -760,7 +778,7 @@ async function confirmRestore() {
 }
 
 async function startRestoreFolder() {
-  if (!destUri.value) return
+  if (!sourceUri.value) return
 
   const inputDir = await open({
     directory: true,
@@ -778,7 +796,7 @@ async function startRestoreFolder() {
 }
 
 async function startRestoreFile() {
-  if (!destUri.value) return
+  if (!sourceUri.value) return
 
   const inputFile = await open({
     directory: false,
@@ -831,7 +849,7 @@ function folderRestoreJobs(entries, sourceDbs) {
 }
 
 async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFirst = false) {
-  if (!destUri.value) return
+  if (!sourceUri.value) return
 
   beginOperation(isArchive ? 'restore-archive' : 'restore-folder')
 
@@ -849,7 +867,7 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
     try {
       await invoke('mongodb_restore_archive', {
         hostId: props.hostId,
-        side: destSideName.value,
+        side: sourceSideName.value,
         includes,
         inputPath,
         dropFirst,
@@ -866,7 +884,7 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
       try {
         await invoke('mongodb_restore', {
           hostId: props.hostId,
-          side: destSideName.value,
+          side: sourceSideName.value,
           db: job.db,
           collections: job.collections,
           inputDir: inputPath,
@@ -882,8 +900,9 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
   }
 
   resetOperationState()
-  // Refresh the side we restored into so restored databases appear.
-  await destSide.value.loadDatabases()
+  // Refresh the side we restored into — the tree on screen — so the restored
+  // databases appear without reopening the tab.
+  await sourceSide.value.loadDatabases()
 }
 
 async function cancelOperation() {

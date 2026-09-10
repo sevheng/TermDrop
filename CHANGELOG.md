@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - **MongoDB dumped the whole database when only some collections were selected.** Only a single-collection selection was filtered, so selecting two of forty collections dumped all forty.
 - **Dumping several databases to an archive kept only the last one**, while reporting success for each. An archive holds one database, and selecting more than one is now refused with a pointer to the folder dump.
-- **MongoDB dump and restore ignored the direction toggle**, always using the remote connection even when the panel was showing local collections. Both now follow the selected direction and name it on the button.
+- **MongoDB dump and restore ignored the direction toggle**, always using the remote connection even when the panel was showing local collections. Both now act on the connection whose tree is selectable and name it on the button, and a restore refreshes that tree so the restored databases appear without reopening the tab.
 - **Restoring always dropped the target collections.** `--drop` was hardcoded; it is now a checkbox that defaults to off. **This changes existing behaviour**: a restore now merges and reports duplicate `_id` conflicts unless the box is ticked.
 - **A sync that fell back to the driver silently lost indexes**, collection options and validators, and still reported plain success. The fallback now warns before it runs, says so in the result, recreates indexes, and can be refused.
 - **MongoDB progress was invented from elapsed time.** It now reports the progress mongodump and mongorestore actually print, falling back to an estimate only for the first few seconds, before the tools emit any.
