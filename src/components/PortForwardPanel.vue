@@ -1,16 +1,11 @@
 <template>
   <div class="w-72 h-full bg-surface border-l border-line flex flex-col">
     <!-- Header -->
-    <div class="px-3 py-2 border-b border-line flex items-center justify-between">
-      <h3 class="text-xs font-semibold text-ink">Port Forwards</h3>
-      <button
-        @click="$emit('add')"
-        class="text-ink-2 hover:text-ink p-1"
-        title="Add forward"
-      >
-        <Plus :size="12" />
-      </button>
-    </div>
+    <PanelHeader title="Port forwards" :icon="Network" dense :meta="forwards.length || ''">
+      <template #actions>
+        <IconButton :icon="Plus" label="Add a forward" @click="$emit('add')" />
+      </template>
+    </PanelHeader>
 
     <!-- List -->
     <div class="flex-1 overflow-y-auto py-1 px-2">
@@ -98,6 +93,8 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { Plus, Network, ArrowRightLeft, ArrowRight, Trash2, ExternalLink, Pencil } from 'lucide-vue-next'
 import EmptyState from './EmptyState.vue'
+import PanelHeader from './PanelHeader.vue'
+import IconButton from './IconButton.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { toast } from '../utils/toast.js'
 

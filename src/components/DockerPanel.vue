@@ -3,13 +3,7 @@
     <!-- Toolbar -->
     <div class="flex items-center justify-between px-2 py-1 border-b border-line">
       <div class="flex items-center gap-2">
-        <button
-          @click="loadContainers"
-          class="text-ink-2 hover:text-ink p-1"
-          title="Refresh"
-        >
-          <RefreshCw :size="12" />
-        </button>
+        <IconButton :icon="RefreshCw" label="Refresh containers" :pending="loading" @click="loadContainers" />
         <label class="flex items-center gap-1 text-2xs text-ink-2 cursor-pointer select-none">
           <input
             v-model="showAll"
@@ -172,6 +166,7 @@ import {
 import VirtualList from './VirtualList.vue'
 import EmptyState from './EmptyState.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import IconButton from './IconButton.vue'
 import { shellEscape } from '../utils/shell.js'
 import { toast } from '../utils/toast.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'

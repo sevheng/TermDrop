@@ -4,17 +4,13 @@
     <div class="p-2 border-b border-line flex items-center justify-between">
       <h2 class="text-xs font-semibold text-ink">Hosts</h2>
       <div class="flex items-center gap-0.5">
-        <button
-          @click="toggleView"
-          class="text-ink-2 hover:text-ink p-1"
-          :title="viewMode === 'grouped' ? 'Switch to flat view' : 'Switch to grouped view'"
-        >
-          <component :is="viewMode === 'grouped' ? List : LayoutGrid" :size="12" />
-        </button>
+        <IconButton
+            :icon="viewMode === 'grouped' ? List : LayoutGrid"
+            :label="viewMode === 'grouped' ? 'Show as a flat list' : 'Group by folder'"
+            @click="toggleView"
+          />
         <div class="relative" ref="importMenuRef">
-          <button @click="showImportMenu = !showImportMenu" class="text-ink-2 hover:text-ink p-1" title="Import">
-            <Download :size="12" />
-          </button>
+          <IconButton :icon="Download" label="Import hosts" @click="showImportMenu = !showImportMenu" />
           <div
             v-if="showImportMenu"
             class="absolute left-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[180px] py-1"
@@ -35,13 +31,9 @@
             </button>
           </div>
         </div>
-        <button @click="store.exportHosts" class="text-ink-2 hover:text-ink p-1" title="Export hosts">
-          <Upload :size="12" />
-        </button>
+        <IconButton :icon="Upload" label="Export hosts" @click="store.exportHosts" />
         <div class="relative" ref="addMenuRef">
-          <button @click="showAddMenu = !showAddMenu" class="text-ink-2 hover:text-ink p-1" title="Add">
-            <Plus :size="12" />
-          </button>
+          <IconButton :icon="Plus" label="Add a host" @click="showAddMenu = !showAddMenu" />
           <div
             v-if="showAddMenu"
             class="absolute right-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[140px] py-1"
@@ -323,6 +315,7 @@ import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
 import EmptyState from './EmptyState.vue'
+import IconButton from './IconButton.vue'
 import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 import { splitMongoUri } from '../utils/mongoUri.js'
@@ -344,7 +337,17 @@ const showRedisModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
-const collapsedGroups = ref(new Set())
+// Persisted like host-view-mode and host-custom-groups already are: every
+// relaunch used to expand every group again.
+const collapsedGroups = ref(new Set(loadCollapsed()))
+
+function loadCollapsed() {
+  try {
+    return JSON.parse(localStorage.getItem('host-collapsed-groups') || '[]')
+  } catch {
+    return []
+  }
+}
 
 // Debounce search input to reduce computed recalculations
 let searchDebounceTimer = null
@@ -482,6 +485,11 @@ function toggleGroup(name) {
   if (set.has(name)) set.delete(name)
   else set.add(name)
   collapsedGroups.value = set
+  try {
+    localStorage.setItem('host-collapsed-groups', JSON.stringify([...set]))
+  } catch {
+    // Blocked storage only costs the collapse state on the next launch.
+  }
 }
 
 async function toggleFavorite(host) {
