@@ -25,13 +25,14 @@
     <p v-if="warning" class="text-xs text-warn-soft mb-4">{{ warning }}</p>
 
     <label class="block text-xs text-ink-2 mb-1">Restore into database</label>
-    <select
-      :value="state.targetDb"
-      @change="$emit('update:targetDb', Number($event.target.value))"
-      class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 mb-4 outline-none"
-    >
-      <option v-for="i in 16" :key="i - 1" :value="i - 1">db{{ i - 1 }}</option>
-    </select>
+    <div class="mb-4">
+      <SelectMenu
+        block
+        :modelValue="state.targetDb"
+        :options="dbOptions"
+        @update:modelValue="$emit('update:targetDb', $event)"
+      />
+    </div>
 
     <label class="flex items-start gap-2 mb-3 cursor-pointer">
       <input
@@ -91,6 +92,7 @@
  */
 import { computed } from 'vue'
 import ModalShell from './ModalShell.vue'
+import SelectMenu from './SelectMenu.vue'
 import { restoreWarning } from '../utils/redisBackup.js'
 
 const props = defineProps({
@@ -102,4 +104,6 @@ const props = defineProps({
 defineEmits(['confirm', 'cancel', 'update:replace', 'update:flushFirst', 'update:targetDb'])
 
 const warning = computed(() => restoreWarning(props.state.header, props.serverInfo))
+
+const dbOptions = Array.from({ length: 16 }, (_, i) => ({ value: i, label: `db${i}` }))
 </script>

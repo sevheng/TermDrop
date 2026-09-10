@@ -81,16 +81,12 @@
 
     <div>
       <label class="block text-xs text-ink-2 mb-1">Connect through SSH host</label>
-      <select
-        :value="tunnelHostId ?? ''"
-        @change="$emit('update:tunnelHostId', $event.target.value === '' ? null : Number($event.target.value))"
-        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none"
-      >
-        <option value="">Connect directly</option>
-        <option v-for="h in sshHosts" :key="h.id" :value="h.id">
-          {{ h.name }} ({{ h.username }}@{{ h.host }})
-        </option>
-      </select>
+      <SelectMenu
+        block
+        :modelValue="tunnelHostId ?? ''"
+        :options="tunnelOptions"
+        @update:modelValue="$emit('update:tunnelHostId', $event === '' ? null : Number($event))"
+      />
       <p class="text-[10px] text-ink-3 mt-1">
         For a Redis that only listens on a private network. The host and port above are
         resolved from the SSH host, not from this machine.
@@ -118,6 +114,7 @@
  */
 import { ref, computed } from 'vue'
 import { Eye, EyeOff } from 'lucide-vue-next'
+import SelectMenu from './SelectMenu.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -135,6 +132,17 @@ const emit = defineEmits([
 ])
 
 const showPassword = ref(false)
+
+/** The bastion choices, with the address as a hint so two hosts sharing a
+ *  name are still tellable apart. */
+const tunnelOptions = computed(() => [
+  { value: '', label: 'Connect directly' },
+  ...props.sshHosts.map(h => ({
+    value: h.id,
+    label: h.name,
+    hint: `${h.username}@${h.host}`,
+  })),
+])
 
 /** One writable computed per field, so v-model works without a watcher. */
 function field(key) {

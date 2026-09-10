@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
 
 ### Added
+- **Dropdowns are drawn by the app now.** The native control could not be themed — its list was a separate platform surface that ignored the app's colours entirely, and on Linux its text was close to unreadable. The replacement matches the rest of the interface in both themes and keeps the keyboard behaviour: arrows and Home/End to move, Enter to choose, Escape to dismiss, and type a few letters to jump.
+
 - **A light theme, and a way to choose it.** Settings now has an Appearance control beside the font size, previewed live as you pick it. The terminal follows the app, so a light window no longer frames a black terminal.
 
 - **Redis connections.** A Redis server is a host row of its own, like a MongoDB connection, and opens its own tab: browse the keyspace, and back it up or restore it.

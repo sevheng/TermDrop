@@ -12,14 +12,12 @@
           class="w-full bg-input text-ink text-xs rounded pl-7 pr-2 py-1 outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
-      <select
-        :value="typeFilter"
-        @change="$emit('update:typeFilter', $event.target.value); $emit('search')"
-        class="bg-input text-ink text-xs rounded px-2 py-1 outline-none"
-      >
-        <option value="">All types</option>
-        <option v-for="t in TYPES" :key="t" :value="t">{{ formatKeyKind(t) }}</option>
-      </select>
+      <SelectMenu
+        :modelValue="typeFilter"
+        :options="typeOptions"
+        @update:modelValue="$emit('update:typeFilter', $event)"
+        @change="$emit('search')"
+      />
       <button
         @click="$emit('search')"
         class="text-xs px-2 py-1 rounded bg-accent-solid hover:bg-accent-solid-hover text-white"
@@ -126,11 +124,18 @@
  * provide either: it hands out a cursor, and the only honest controls are
  * "the page before this one" and "the next one".
  */
+import { computed } from 'vue'
 import { Search, Loader2 } from 'lucide-vue-next'
+import SelectMenu from './SelectMenu.vue'
 import { formatKeyKind, formatTtl } from '../utils/redisKeys.js'
 import { formatBytes } from '../utils/format.js'
 
 const TYPES = ['string', 'list', 'set', 'zset', 'hash', 'stream']
+
+const typeOptions = computed(() => [
+  { value: '', label: 'All types' },
+  ...TYPES.map(t => ({ value: t, label: formatKeyKind(t) })),
+])
 
 defineProps({
   keys: { type: Array, required: true },

@@ -191,16 +191,13 @@
       <div class="flex items-center gap-2">
         <label class="text-[10px] text-ink-2">
           Page size
-          <select
-            v-model.number="pageSize"
-            class="ml-1 bg-input border border-line rounded px-1 py-0.5 text-[10px] text-ink focus:outline-none"
+          <SelectMenu
+            size="xs"
+            class="ml-1"
+            v-model="pageSize"
+            :options="pageSizeOptions"
             @change="runQuery(0)"
-          >
-            <option :value="25">25</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
-            <option :value="200">200</option>
-          </select>
+          />
         </label>
         <button
           @click="runQuery(page - 1)"
@@ -230,6 +227,7 @@ import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { prettyPrintDocument, summarizeDocument } from '../utils/bsonDisplay.js'
 import { parseDocuments, deriveColumns, cellText } from '../utils/mongoTable.js'
+import SelectMenu from './SelectMenu.vue'
 import {
   validateJsonInput,
   clampPageSize,
@@ -249,6 +247,7 @@ const viewMode = ref('table')
 const filterText = ref('')
 const sortText = ref('')
 const pageSize = ref(DEFAULT_PAGE_SIZE)
+const pageSizeOptions = [25, 50, 100, 200].map(n => ({ value: n, label: String(n) }))
 const page = ref(0)
 
 const documents = ref([])
