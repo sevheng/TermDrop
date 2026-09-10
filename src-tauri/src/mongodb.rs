@@ -875,6 +875,49 @@ fn userinfo_range(uri: &str) -> Option<(usize, usize)> {
     Some((start, at))
 }
 
+/// Split a URI into a password-free URI and its password.
+///
+/// The password is returned **still percent-encoded**, exactly as it appeared,
+/// so putting it back is a pure splice with no encoding decisions to get wrong
+/// and a password containing a literal `%40` round-trips unchanged.
+pub fn split_mongo_password(uri: &str) -> (String, Option<String>) {
+    let Some((start, at)) = userinfo_range(uri) else {
+        return (uri.to_string(), None);
+    };
+    let userinfo = &uri[start..at];
+    // The first `:` separates user from password; any later one is inside the
+    // password and must be left alone.
+    let Some(colon) = userinfo.find(':') else {
+        return (uri.to_string(), None);
+    };
+    let password = &userinfo[colon + 1..];
+    if password.is_empty() {
+        return (uri.to_string(), None);
+    }
+    let stripped = format!("{}{}{}", &uri[..start], &userinfo[..colon], &uri[at..]);
+    (stripped, Some(password.to_string()))
+}
+
+/// Whether a URI names a user, and so expects a password to go with it.
+pub fn uri_expects_password(uri: &str) -> bool {
+    userinfo_range(uri).is_some_and(|(start, at)| !uri[start..at].is_empty())
+}
+
+/// Splice a password back into a URI produced by [`split_mongo_password`].
+///
+/// If the URI already carries a password it is left alone, and a URI with no
+/// username has nowhere to put one.
+pub fn with_mongo_password(uri: &str, password: &str) -> String {
+    let Some((start, at)) = userinfo_range(uri) else {
+        return uri.to_string();
+    };
+    let userinfo = &uri[start..at];
+    if userinfo.contains(':') || userinfo.is_empty() {
+        return uri.to_string();
+    }
+    format!("{}{}:{}{}", &uri[..start], userinfo, password, &uri[at..])
+}
+
 /// Replace a URI's credentials with `***` so it can be logged.
 ///
 /// Connection strings reach the log through command arguments and through
@@ -1780,6 +1823,66 @@ mod tests {
     #[test]
     fn yaml_escape_escapes_backslash_before_quote() {
         assert_eq!(yaml_escape(r#"a\b"c"#), r#"a\\b\"c"#);
+    }
+
+    #[test]
+    fn split_and_rejoin_a_password_round_trips() {
+        // Passwords are deliberately distinctive: a single character would
+        // appear incidentally in the host name and make the assertion useless.
+        let cases = [
+            "mongodb://user:hunter2@localhost:27017/db",
+            "mongodb+srv://u:swordfish@cluster.example.net/db?retryWrites=true",
+            "mongodb://u:swordfish@h1:27017,h2:27017/db",
+            "mongodb://u:swordfish@[::1]:27017/db",
+            // A percent-encoded password containing an encoded @ and :
+            "mongodb://u:p%40ss%3Aw%2Frd@localhost:27017/?authSource=admin",
+        ];
+        for uri in cases {
+            let (stripped, password) = split_mongo_password(uri);
+            let password = password.unwrap_or_else(|| panic!("no password found in {}", uri));
+            assert!(
+                !stripped.contains(&password),
+                "password survived in {}",
+                stripped
+            );
+            assert_eq!(with_mongo_password(&stripped, &password), uri);
+        }
+    }
+
+    #[test]
+    fn split_password_stores_the_encoded_form_verbatim() {
+        let (_, password) =
+            split_mongo_password("mongodb://u:p%40ss%3Aw%2Frd@localhost:27017/?authSource=admin");
+        // Not decoded: re-inserting is then a pure splice.
+        assert_eq!(password.unwrap(), "p%40ss%3Aw%2Frd");
+    }
+
+    #[test]
+    fn split_password_leaves_uris_without_one_alone() {
+        for uri in [
+            "mongodb://localhost:27017/db",
+            "mongodb://user@localhost:27017/db",
+            "mongodb://user:@localhost:27017/db",
+            "not-a-uri",
+        ] {
+            let (stripped, password) = split_mongo_password(uri);
+            assert_eq!(stripped, uri, "{} was modified", uri);
+            assert!(password.is_none(), "{} yielded a password", uri);
+        }
+    }
+
+    #[test]
+    fn with_password_does_not_double_up_or_invent_a_user() {
+        // Already has one: unchanged.
+        assert_eq!(
+            with_mongo_password("mongodb://u:existing@h:27017", "new"),
+            "mongodb://u:existing@h:27017"
+        );
+        // No userinfo at all: nowhere to put it.
+        assert_eq!(
+            with_mongo_password("mongodb://h:27017", "new"),
+            "mongodb://h:27017"
+        );
     }
 
     #[test]

@@ -4,23 +4,10 @@ import { invokeWithSlowWarning as invoke } from '../utils/invoke.js'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
+import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
+import { showPromptDialog } from '../composables/usePromptDialog.js'
 
 
-/**
- * Show the global PromptDialog and return the user's input.
- */
-function showPromptDialog(title, message, placeholder = '', type = 'text') {
-  return new Promise((resolve) => {
-    const responseHandler = (event) => {
-      window.removeEventListener('prompt-dialog-response', responseHandler)
-      resolve(event.detail)
-    }
-    window.addEventListener('prompt-dialog-response', responseHandler)
-    window.dispatchEvent(new CustomEvent('prompt-dialog-open', {
-      detail: { title, message, placeholder, type },
-    }))
-  })
-}
 
 export const useConnectionStore = defineStore('connection', () => {
   const hosts = ref([])
@@ -212,12 +199,6 @@ export const useConnectionStore = defineStore('connection', () => {
       cols: Math.max(80, Math.floor((window.innerWidth - 48) / 8)),
       rows: Math.max(24, Math.floor((window.innerHeight - 200) / 16)),
     }
-  }
-
-  /** The backend could not find a stored password for a password host. */
-  function isMissingKeyringPassword(err) {
-    const errStr = String(err)
-    return errStr.includes('keyring retrieve failed') || errStr.includes('No matching entry')
   }
 
   /** Open the SFTP side channel for a tab; failure only warns, the tab stays. */

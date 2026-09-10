@@ -50,6 +50,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { mongoDisplayUri } from '../utils/mongoDisplay.js'
 import {
   Server,
   Star,
@@ -100,19 +101,7 @@ const rowIcon = computed(() => {
 
 const subtitle = computed(() => {
   if (isMongoOnly.value) {
-    // Show truncated MongoDB URI (hide password)
-    const uri = props.host.mongo_uri || ''
-    const isSrv = uri.trim().startsWith('mongodb+srv://')
-    // Try to extract host:port from URI
-    try {
-      const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, 'http://'))
-      if (isSrv) {
-        return `mongodb+srv://${url.hostname}`
-      }
-      return `mongodb://${url.hostname}${url.port ? ':' + url.port : ''}`
-    } catch {
-      return uri.length > 35 ? uri.slice(0, 35) + '…' : uri
-    }
+    return mongoDisplayUri(props.host.mongo_uri)
   }
   return `${props.host.username}@${props.host.host}:${props.host.port}`
 })

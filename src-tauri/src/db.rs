@@ -389,6 +389,36 @@ pub struct ExportHost {
     pub mongo_local_uri: Option<String>,
 }
 
+/// One host's stored MongoDB URIs: `(id, remote, local)`.
+pub type MongoUriRow = (i64, Option<String>, Option<String>);
+
+/// Every host's stored MongoDB URIs, for the credential migration.
+pub fn all_mongo_uris(conn: &Connection) -> SqlResult<Vec<MongoUriRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, mongo_uri, mongo_local_uri FROM hosts \
+         WHERE mongo_uri IS NOT NULL OR mongo_local_uri IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    rows.collect()
+}
+
+/// Replace one host's stored MongoDB URI. `column` is chosen by the caller from
+/// a fixed pair, never from user input.
+pub fn set_mongo_uri(conn: &Connection, id: i64, remote: bool, uri: &str) -> SqlResult<()> {
+    let sql = if remote {
+        "UPDATE hosts SET mongo_uri = ?1 WHERE id = ?2"
+    } else {
+        "UPDATE hosts SET mongo_local_uri = ?1 WHERE id = ?2"
+    };
+    conn.execute(sql, rusqlite::params![uri, id])?;
+    Ok(())
+}
+
+/// Reclaim free pages so overwritten plaintext does not linger in the file.
+pub fn vacuum(conn: &Connection) -> SqlResult<()> {
+    conn.execute_batch("VACUUM")
+}
+
 pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
     let mut stmt = conn.prepare(
         "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri FROM hosts ORDER BY name ASC"
@@ -403,8 +433,15 @@ pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
             key_path: row.get(5)?,
             group: row.get(6)?,
             favorite: row.get(7)?,
-            mongo_uri: row.get(8)?,
-            mongo_local_uri: row.get(9)?,
+            // Defensive: after the credential migration these columns hold no
+            // password, but an export must never carry one even if a row was
+            // written before the migration ran.
+            mongo_uri: row
+                .get::<_, Option<String>>(8)?
+                .map(|u| crate::mongodb::split_mongo_password(&u).0),
+            mongo_local_uri: row
+                .get::<_, Option<String>>(9)?
+                .map(|u| crate::mongodb::split_mongo_password(&u).0),
         })
     })?;
     hosts.collect()
@@ -460,6 +497,51 @@ mod tests {
         h.port = 0;
         h.mongo_uri = Some("mongodb://localhost".to_string());
         assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn mongo_uri_migration_queries_read_and_rewrite_the_right_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let mut h = sample("mongo");
+        h.mongo_uri = Some("mongodb://u:pw@remote:27017".to_string());
+        h.mongo_local_uri = Some("mongodb://u:pw@local:27017".to_string());
+        let id = add_host(&conn, &h).unwrap();
+
+        // A host with no MongoDB URIs at all is not offered to the migration.
+        add_host(&conn, &sample("ssh-only")).unwrap();
+
+        let rows = all_mongo_uris(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, id);
+
+        set_mongo_uri(&conn, id, true, "mongodb://u@remote:27017").unwrap();
+        set_mongo_uri(&conn, id, false, "mongodb://u@local:27017").unwrap();
+
+        let after = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(after.mongo_uri.unwrap(), "mongodb://u@remote:27017");
+        assert_eq!(after.mongo_local_uri.unwrap(), "mongodb://u@local:27017");
+    }
+
+    #[test]
+    fn export_never_carries_a_mongo_password() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        // A row written before the migration ran.
+        let mut h = sample("legacy");
+        h.mongo_uri = Some("mongodb://admin:hunter2@localhost:27017".to_string());
+        add_host(&conn, &h).unwrap();
+
+        let exported = export_hosts(&conn).unwrap();
+        let uri = exported[0].mongo_uri.clone().unwrap();
+        assert!(
+            !uri.contains("hunter2"),
+            "export leaked a password: {}",
+            uri
+        );
+        assert_eq!(uri, "mongodb://admin@localhost:27017");
     }
 
     #[test]

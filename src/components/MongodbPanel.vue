@@ -16,7 +16,7 @@
         <template v-if="!hasLocalUri">
           <span
             class="px-1.5 py-0.5 rounded bg-[#0e639c]/20 text-[#75beff] truncate max-w-[16rem]"
-            :title="remoteUri"
+            :title="remoteDisplay"
           >
             Remote
           </span>
@@ -24,7 +24,7 @@
         <template v-else>
           <div
             class="flex items-center gap-1 px-2 py-1 rounded bg-[#3c3c3c] text-[#cccccc]"
-            :title="`Remote: ${remoteUri}\nLocal: ${localUri}`"
+            :title="`Remote: ${remoteDisplay}\nLocal: ${localDisplay}`"
           >
             <span :class="isRemoteToLocal ? 'text-[#75beff]' : 'text-[#89d185]'">
               {{ isRemoteToLocal ? 'Remote' : 'Local' }}
@@ -385,6 +385,7 @@ import ModalShell from './ModalShell.vue'
 import { toast } from '../utils/toast.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useMongoSide, fetchCollections } from '../composables/useMongoSide.js'
+import { mongoDisplayUri } from '../utils/mongoDisplay.js'
 import {
   dbSelectionState,
   countSelected,
@@ -402,10 +403,17 @@ const host = ref(null)
 const remoteUri = computed(() => host.value?.mongo_uri || '')
 const localUri = computed(() => host.value?.mongo_local_uri || '')
 const hasLocalUri = computed(() => !!localUri.value)
+// Host and port only: a connection string is never rendered verbatim.
+const remoteDisplay = computed(() => mongoDisplayUri(remoteUri.value))
+const localDisplay = computed(() => mongoDisplayUri(localUri.value))
 
 // The two physical sides. "Source" and "dest" are roles that flip with the direction.
-const remote = useMongoSide(remoteUri, 'remote')
-const local = useMongoSide(localUri, 'local')
+// The panel keeps only side names; the backend resolves each side's full
+// connection string, so the password never reaches the frontend.
+const remoteHostId = computed(() => (remoteUri.value ? props.hostId : null))
+const localHostId = computed(() => (localUri.value ? props.hostId : null))
+const remote = useMongoSide(remoteHostId, 'remote', 'remote')
+const local = useMongoSide(localHostId, 'local', 'local')
 const loadingRemote = remote.loading
 const loadingLocal = local.loading
 const loadRemoteDatabases = remote.loadDatabases
@@ -484,6 +492,8 @@ const sourceSide = computed(() => isRemoteToLocal.value ? remote : local)
 const destSide = computed(() => isRemoteToLocal.value ? local : remote)
 const sourceUri = computed(() => isRemoteToLocal.value ? remoteUri.value : localUri.value)
 const destUri = computed(() => isRemoteToLocal.value ? localUri.value : remoteUri.value)
+const sourceSideName = computed(() => (isRemoteToLocal.value ? 'remote' : 'local'))
+const destSideName = computed(() => (isRemoteToLocal.value ? 'local' : 'remote'))
 const sourceDatabases = computed(() => sourceSide.value.databases.value)
 const destDatabases = computed(() => destSide.value.databases.value)
 const sourceExpandedDbs = computed(() => sourceSide.value.expandedDbs.value)
@@ -529,7 +539,7 @@ async function toggleDbSelection(db) {
     side.expandedDbs.value = newExpanded
   }
   if (db.collections.length === 0 && !db.loading) {
-    await fetchCollections(sourceUri.value, db, 'source')
+    await fetchCollections(props.hostId, sourceSideName.value, db, 'source')
   }
   selectedCollections.value = withAllCollections(selectedCollections.value, db)
 }
@@ -547,7 +557,7 @@ function clearSelection() {
 }
 
 /** Expand or collapse a database on one side, loading its collections on first expand. */
-function toggleExpanded(side, dbName, uriValue, roleLabel) {
+function toggleExpanded(side, dbName, sideName, roleLabel) {
   const newSet = new Set(side.expandedDbs.value)
   if (newSet.has(dbName)) {
     newSet.delete(dbName)
@@ -555,18 +565,18 @@ function toggleExpanded(side, dbName, uriValue, roleLabel) {
     newSet.add(dbName)
     const db = side.databases.value.find(d => d.name === dbName)
     if (db && db.collections.length === 0 && !db.loading) {
-      fetchCollections(uriValue, db, roleLabel)
+      fetchCollections(props.hostId, sideName, db, roleLabel)
     }
   }
   side.expandedDbs.value = newSet
 }
 
 function toggleSourceDb(dbName) {
-  toggleExpanded(sourceSide.value, dbName, sourceUri.value, 'source')
+  toggleExpanded(sourceSide.value, dbName, sourceSideName.value, 'source')
 }
 
 function toggleDestDb(dbName) {
-  toggleExpanded(destSide.value, dbName, destUri.value, 'dest')
+  toggleExpanded(destSide.value, dbName, destSideName.value, 'dest')
 }
 
 function flipDirection() {
@@ -602,8 +612,9 @@ async function startSync() {
     nextOpId()
     try {
       await invoke('mongodb_sync', {
-        remoteUri: sourceUri.value,
-        localUri: destUri.value,
+        hostId: props.hostId,
+        from: sourceSideName.value,
+        to: destSideName.value,
         db: entry.db,
         collections: entry.collections,
         dropFirst: dropFirst.value,
@@ -689,7 +700,8 @@ async function runDump(outputPath, isArchive) {
     nextOpId()
     try {
       await invoke('mongodb_dump', {
-        remoteUri: sourceUri.value,
+        hostId: props.hostId,
+        side: sourceSideName.value,
         db: entry.db,
         collections: entry.collections,
         outputDir: outputPath,
@@ -815,7 +827,8 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
 
     try {
       await invoke('mongodb_restore_archive', {
-        remoteUri: destUri.value,
+        hostId: props.hostId,
+        side: destSideName.value,
         includes,
         inputPath,
         dropFirst,
@@ -831,7 +844,8 @@ async function runRestore(inputPath, isArchive, entries, sourceDbs = [], dropFir
       nextOpId()
       try {
         await invoke('mongodb_restore', {
-          remoteUri: destUri.value,
+          hostId: props.hostId,
+          side: destSideName.value,
           db: job.db,
           collections: job.collections,
           inputDir: inputPath,

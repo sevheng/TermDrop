@@ -84,6 +84,137 @@ fn unregister_mongo_op(state: &State<'_, AppState>, op_id: &str) {
     mongodb::lock_or_recover(&state.mongo_ops).remove(op_id);
 }
 
+/// The keyring account holding one side's MongoDB password.
+///
+/// Non-numeric by construction, so it cannot collide with an SSH host password
+/// in the shared fallback file.
+fn mongo_account(host_id: i64, side: MongoSide) -> String {
+    format!("mongo-{}-{}", side.as_str(), host_id)
+}
+
+/// Which of a host's two MongoDB connections is meant.
+#[derive(Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum MongoSide {
+    Remote,
+    Local,
+}
+
+impl MongoSide {
+    fn as_str(self) -> &'static str {
+        match self {
+            MongoSide::Remote => "remote",
+            MongoSide::Local => "local",
+        }
+    }
+
+    fn is_remote(self) -> bool {
+        self == MongoSide::Remote
+    }
+}
+
+/// The full connection URI for one side of a MongoDB host.
+///
+/// The stored URI carries no password; the secret is spliced in here so the
+/// credential never crosses the IPC boundary and the frontend never holds it.
+///
+/// When the URI names a user but no secret is stored, this reports the same
+/// "keyring retrieve failed" wording the SSH path uses, so one frontend
+/// detector can drive the prompt-and-retry for both.
+fn load_mongo_uri(
+    state: &State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+) -> Result<String, String> {
+    let host = with_db(state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+
+    let uri = match side {
+        MongoSide::Remote => host.mongo_uri,
+        MongoSide::Local => host.mongo_local_uri,
+    }
+    .filter(|u| !u.trim().is_empty())
+    .ok_or_else(|| format!("no {} MongoDB connection configured", side.as_str()))?;
+
+    // Already carries a password (a row the migration could not rewrite).
+    if mongodb::split_mongo_password(&uri).1.is_some() {
+        return Ok(uri);
+    }
+
+    match crypto::get_secret(&mongo_account(host_id, side)) {
+        Ok(password) => Ok(mongodb::with_mongo_password(&uri, &password)),
+        Err(e) if mongodb::uri_expects_password(&uri) => Err(format!(
+            "keyring retrieve failed for the {} MongoDB connection: {}",
+            side.as_str(),
+            e
+        )),
+        // No user in the URI, so no password is expected.
+        Err(_) => Ok(uri),
+    }
+}
+
+/// Move MongoDB passwords out of the database and into the keyring.
+///
+/// Runs on every launch and is idempotent: a URI with no credentials is
+/// skipped, so once migrated a row is never touched again.
+///
+/// The secret is stored *before* the row is rewritten. If the keyring is
+/// unavailable and the encrypted fallback also fails, the plaintext row is left
+/// intact and the migration retries next launch — losing the password would be
+/// far worse than leaving it where it already is.
+fn migrate_mongo_credentials(conn: &rusqlite::Connection) {
+    let rows = match db::all_mongo_uris(conn) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(
+                "could not read hosts for MongoDB credential migration: {}",
+                e
+            );
+            return;
+        }
+    };
+
+    let mut migrated = 0usize;
+    for (id, remote_uri, local_uri) in rows {
+        for (side, uri) in [
+            (MongoSide::Remote, remote_uri),
+            (MongoSide::Local, local_uri),
+        ] {
+            let Some(uri) = uri else { continue };
+            let (stripped, Some(password)) = mongodb::split_mongo_password(&uri) else {
+                continue;
+            };
+
+            if let Err(e) = crypto::store_secret(&mongo_account(id, side), &password) {
+                tracing::warn!(
+                    host_id = id,
+                    side = side.as_str(),
+                    "could not store MongoDB password, leaving it in the database: {}",
+                    e
+                );
+                continue;
+            }
+            if let Err(e) = db::set_mongo_uri(conn, id, side.is_remote(), &stripped) {
+                tracing::warn!(host_id = id, "could not rewrite MongoDB URI: {}", e);
+                continue;
+            }
+            migrated += 1;
+        }
+    }
+
+    if migrated > 0 {
+        // An UPDATE leaves the old plaintext in free pages; without this the
+        // secrets would still be recoverable from the file.
+        tracing::info!(
+            "migrated {} MongoDB password(s) out of the database",
+            migrated
+        );
+        if let Err(e) = db::vacuum(conn) {
+            tracing::warn!("could not vacuum after migration: {}", e);
+        }
+    }
+}
+
 /// Register `op_id` so mongodb_cancel can reach it, run `f`, then unregister.
 async fn with_mongo_op<Fut>(
     state: &State<'_, AppState>,
@@ -311,6 +442,8 @@ fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result
 fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     with_db(&state, |conn| db::delete_host(conn, id))?;
     crypto::delete_password(id).ok();
+    crypto::delete_secret(&mongo_account(id, MongoSide::Remote)).ok();
+    crypto::delete_secret(&mongo_account(id, MongoSide::Local)).ok();
     Ok(())
 }
 
@@ -1296,12 +1429,23 @@ fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result
 }
 
 #[tauri::command]
-async fn mongodb_list_databases(uri: String) -> Result<Vec<String>, String> {
+async fn mongodb_list_databases(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+) -> Result<Vec<String>, String> {
+    let uri = load_mongo_uri(&state, host_id, side)?;
     mongodb::list_databases(&uri).await
 }
 
 #[tauri::command]
-async fn mongodb_list_collections(uri: String, db: String) -> Result<Vec<String>, String> {
+async fn mongodb_list_collections(
+    state: State<'_, AppState>,
+    host_id: i64,
+    side: MongoSide,
+    db: String,
+) -> Result<Vec<String>, String> {
+    let uri = load_mongo_uri(&state, host_id, side)?;
     mongodb::list_collections(&uri, &db).await
 }
 
@@ -1310,21 +1454,26 @@ async fn mongodb_sync(
     window: Window,
     state: State<'_, AppState>,
     op_id: String,
-    remote_uri: String,
-    local_uri: String,
+    host_id: i64,
+    from: MongoSide,
+    to: MongoSide,
     db: String,
     collections: Vec<String>,
     drop_first: bool,
     allow_driver_fallback: bool,
 ) -> Result<(), String> {
+    // Direction is decided here rather than by the caller picking URIs, so the
+    // two sides cannot be mismatched by a call site forgetting to swap them.
+    let source_uri = load_mongo_uri(&state, host_id, from)?;
+    let dest_uri = load_mongo_uri(&state, host_id, to)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::sync_collections(
             window,
             cancelled,
             mongo_ops,
             op_id.clone(),
-            &remote_uri,
-            &local_uri,
+            &source_uri,
+            &dest_uri,
             &db,
             collections,
             drop_first,
@@ -1339,19 +1488,21 @@ async fn mongodb_dump(
     window: Window,
     state: State<'_, AppState>,
     op_id: String,
-    remote_uri: String,
+    host_id: i64,
+    side: MongoSide,
     db: String,
     collections: Vec<String>,
     output_dir: String,
     is_archive: bool,
 ) -> Result<(), String> {
+    let uri = load_mongo_uri(&state, host_id, side)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::dump_collections(
             window,
             cancelled,
             mongo_ops,
             op_id.clone(),
-            &remote_uri,
+            &uri,
             &db,
             collections,
             &output_dir,
@@ -1366,20 +1517,22 @@ async fn mongodb_restore(
     window: Window,
     state: State<'_, AppState>,
     op_id: String,
-    remote_uri: String,
+    host_id: i64,
+    side: MongoSide,
     db: String,
     collections: Vec<String>,
     input_dir: String,
     is_archive: bool,
     drop_first: bool,
 ) -> Result<(), String> {
+    let uri = load_mongo_uri(&state, host_id, side)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_collections(
             window,
             cancelled,
             mongo_ops,
             op_id.clone(),
-            &remote_uri,
+            &uri,
             &db,
             collections,
             &input_dir,
@@ -1395,24 +1548,50 @@ async fn mongodb_restore_archive(
     window: Window,
     state: State<'_, AppState>,
     op_id: String,
-    remote_uri: String,
+    host_id: i64,
+    side: MongoSide,
     includes: Vec<String>,
     input_path: String,
     drop_first: bool,
 ) -> Result<(), String> {
+    let uri = load_mongo_uri(&state, host_id, side)?;
     with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
         mongodb::restore_archive(
             window,
             cancelled,
             mongo_ops,
             op_id.clone(),
-            &remote_uri,
+            &uri,
             includes,
             &input_path,
             drop_first,
         )
     })
     .await
+}
+
+/// Store the password for one side of a MongoDB host.
+///
+/// Only ever *sets* a secret. Clearing one is `mongodb_clear_secret`, so an
+/// empty password field in the edit dialog can never silently delete it.
+#[tauri::command]
+fn mongodb_store_secret(host_id: i64, side: MongoSide, password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("refusing to store an empty MongoDB password".to_string());
+    }
+    crypto::store_secret(&mongo_account(host_id, side), &password)
+}
+
+/// Whether a password is stored, so the UI can say so without revealing it.
+#[tauri::command]
+fn mongodb_has_secret(host_id: i64, side: MongoSide) -> bool {
+    crypto::get_secret(&mongo_account(host_id, side)).is_ok()
+}
+
+/// Forget the stored password for one side.
+#[tauri::command]
+fn mongodb_clear_secret(host_id: i64, side: MongoSide) -> Result<(), String> {
+    crypto::delete_secret(&mongo_account(host_id, side))
 }
 
 #[tauri::command]
@@ -1471,6 +1650,7 @@ fn main() {
         db::init_db(&conn).expect("Failed to initialize database");
         db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
         db::init_settings(&conn).expect("Failed to initialize settings");
+        migrate_mongo_credentials(&conn);
     }
 
     tauri::Builder::default()
@@ -1565,6 +1745,9 @@ fn main() {
             mongodb_restore,
             mongodb_restore_archive,
             mongodb_cancel,
+            mongodb_store_secret,
+            mongodb_has_secret,
+            mongodb_clear_secret,
             mongodb::scan_restore_folder,
         ])
         .run(tauri::generate_context!())

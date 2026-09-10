@@ -1,23 +1,28 @@
 import { ref } from 'vue'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
+import { withMongoSecret } from './useMongoSecret.js'
 
 /**
  * One side of the MongoDB panel (remote or local): its database list,
  * which databases are expanded, and the loading flag for the list.
- * `uri` is a ref to the connection string; `label` names the side in
- * error toasts.
+ *
+ * The side is named rather than passed as a URI: the stored URI carries no
+ * password, so the backend resolves the full connection string itself.
+ * `label` names the side in error toasts.
  */
-export function useMongoSide(uri, label) {
+export function useMongoSide(hostId, side, label) {
   const databases = ref([])
   const expandedDbs = ref(new Set())
   const loading = ref(false)
 
   async function loadDatabases() {
-    if (!uri.value) return
+    if (!hostId.value) return
     loading.value = true
     try {
-      const dbNames = await invoke('mongodb_list_databases', { uri: uri.value })
+      const dbNames = await withMongoSecret(hostId.value, side, () =>
+        invoke('mongodb_list_databases', { hostId: hostId.value, side }),
+      )
       databases.value = dbNames.map(name => ({
         name,
         collections: [],
@@ -42,14 +47,12 @@ export function useMongoSide(uri, label) {
  * Load a database's collections in place. `roleLabel` ('source'/'dest')
  * names the role in the error toast, matching the panel's wording.
  */
-export async function fetchCollections(uriValue, db, roleLabel) {
+export async function fetchCollections(hostId, side, db, roleLabel) {
   db.loading = true
   try {
-    const colls = await invoke('mongodb_list_collections', {
-      uri: uriValue,
-      db: db.name,
-    })
-    db.collections = colls
+    db.collections = await withMongoSecret(hostId, side, () =>
+      invoke('mongodb_list_collections', { hostId, side, db: db.name }),
+    )
   } catch (err) {
     toast(`Failed to list ${roleLabel} collections for ${db.name}: ${err}`, 'error')
   } finally {

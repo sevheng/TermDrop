@@ -294,6 +294,8 @@ import HostRow from './HostRow.vue'
 import SshConfigImportDialog from './SshConfigImportDialog.vue'
 import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
+import { splitMongoUri } from '../utils/mongoUri.js'
+import { invoke } from '../utils/invoke.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 
@@ -610,6 +612,11 @@ async function handleSave({ id, hostData, password }) {
 }
 
 async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
+  // Passwords are kept in the keyring, never in the database, so split them out
+  // before the row is written.
+  const remote = splitMongoUri(mongo_uri)
+  const local = splitMongoUri(mongo_local_uri)
+
   const hostData = {
     name,
     host: '',
@@ -619,14 +626,27 @@ async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
     key_path: null,
     group: null,
     favorite: null,
-    mongo_uri,
-    mongo_local_uri,
+    mongo_uri: remote.uri,
+    mongo_local_uri: local.uri,
   }
-  if (id) {
-    await store.updateHost(id, hostData)
-  } else {
-    await store.addHost(hostData)
+
+  try {
+    const hostId = id || (await store.addHost(hostData))
+    if (id) await store.updateHost(id, hostData)
+
+    // Only ever store a password that was actually supplied. On edit the field
+    // renders empty because the stored URI has none, and an empty field must
+    // not be read as "delete the stored password".
+    for (const [side, { password }] of [['remote', remote], ['local', local]]) {
+      if (password) {
+        await invoke('mongodb_store_secret', { hostId, side, password })
+      }
+    }
+  } catch (err) {
+    toast(`Failed to save MongoDB connection: ${err}`, 'error')
+    return
   }
+
   showMongoModal.value = false
   await store.loadHosts()
 }
