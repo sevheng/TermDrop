@@ -15,6 +15,8 @@
  * this is a second, independent check at the boundary that writes to the shell.
  */
 
+import { acceptsCommands } from './tabKinds.js'
+
 /** Longer than this is not reviewable at a glance, so it is not offered. */
 export const MAX_INSERT_LENGTH = 512
 
@@ -60,6 +62,9 @@ export function stripSubmit(text) {
  */
 export function canReceiveCommand(tab) {
   if (!tab) return false
-  if (tab.type === 'mongodb') return false
+  // Asks the kind table rather than naming one type: a datastore tab has no
+  // shell, and typing a remediation command into one must stay impossible as
+  // kinds are added.
+  if (!acceptsCommands(tab)) return false
   return tab.connected === true
 }

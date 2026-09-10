@@ -1,30 +1,20 @@
-import { invoke } from '../utils/invoke.js'
-import { shouldPromptForSecret } from '../utils/secretPrompt.js'
-import { showPromptDialog } from './usePromptDialog.js'
+import { withStoredSecret } from './useSecretRetry.js'
 
 /**
  * Run a MongoDB call, prompting once for the password if none is stored.
  *
- * MongoDB URIs no longer carry their password, so the backend splices it in
- * from the keyring. When there is nothing stored it reports the same
- * "keyring retrieve failed" wording the SSH path uses; ask the user, store it,
- * and run the call again exactly once.
+ * A thin wrapper over {@link withStoredSecret} so the Mongo call sites keep the
+ * name they already use; the prompt-and-retry logic itself is shared with
+ * Redis rather than copied.
  */
-export async function withMongoSecret(hostId, fn) {
-  try {
-    return await fn()
-  } catch (err) {
-    if (!shouldPromptForSecret(err, false)) throw err
-
-    const password = await showPromptDialog(
-      'MongoDB password required',
-      'No stored password for this MongoDB connection. Enter it to continue:',
-      '',
-      'password',
-    )
-    if (!password) throw err
-
-    await invoke('mongodb_store_secret', { hostId, password })
-    return await fn()
-  }
+export function withMongoSecret(hostId, fn) {
+  return withStoredSecret(
+    {
+      hostId,
+      storeCommand: 'mongodb_store_secret',
+      title: 'MongoDB password required',
+      message: 'No stored password for this MongoDB connection. Enter it to continue:',
+    },
+    fn,
+  )
 }

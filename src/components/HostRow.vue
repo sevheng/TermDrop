@@ -51,6 +51,8 @@
 <script setup>
 import { computed } from 'vue'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'
+import { redisDisplayUri } from '../utils/redisUri.js'
+import { hostKind, HOST_KIND } from '../utils/hostKind.js'
 import {
   Server,
   Star,
@@ -58,6 +60,7 @@ import {
   Trash2,
   Loader2,
   Database,
+  Layers,
   // OS icons
   Apple,
 } from 'lucide-vue-next'
@@ -70,7 +73,16 @@ const props = defineProps({
 
 const emit = defineEmits(['connect', 'edit', 'delete', 'toggle-favorite', 'drag-start', 'drag-end', 'context-menu'])
 
-const isMongoOnly = computed(() => !!props.host.mongo_uri && !props.host.host)
+const kind = computed(() => hostKind(props.host))
+const isMongoOnly = computed(() => kind.value === HOST_KIND.MONGODB)
+const isRedisOnly = computed(() => kind.value === HOST_KIND.REDIS)
+
+/** What the row is, for the drag ghost and the accessible label. */
+const kindLabel = computed(
+  () =>
+    ({ [HOST_KIND.MONGODB]: 'MongoDB', [HOST_KIND.REDIS]: 'Redis' })[kind.value] ||
+    `${props.host.username}@${props.host.host}`,
+)
 
 function onDragStart(event) {
   event.dataTransfer.setData('application/json', JSON.stringify({ hostId: props.host.id }))
@@ -78,7 +90,7 @@ function onDragStart(event) {
 
   // Compact drag ghost — mini host row
   const ghost = document.createElement('div')
-  ghost.innerHTML = `<span style="opacity:0.6">${isMongoOnly.value ? 'MongoDB' : props.host.username + '@' + props.host.host}</span> <strong>${props.host.name}</strong>`
+  ghost.innerHTML = `<span style="opacity:0.6">${kindLabel.value}</span> <strong>${props.host.name}</strong>`
   ghost.style.cssText = 'padding: 2px 8px; background: #1f2937; color: #e5e7eb; border-radius: 3px; font-size: 10px; white-space: nowrap; font-family: system-ui; position: fixed; top: -9999px; pointer-events: none;'
   document.body.appendChild(ghost)
   event.dataTransfer.setDragImage(ghost, 8, 10)
@@ -89,6 +101,7 @@ function onDragStart(event) {
 
 const rowIcon = computed(() => {
   if (isMongoOnly.value) return Database
+  if (isRedisOnly.value) return Layers
 
   const name = (props.host.name || '').toLowerCase()
   const host = (props.host.host || '').toLowerCase()
@@ -100,8 +113,12 @@ const rowIcon = computed(() => {
 })
 
 const subtitle = computed(() => {
-  if (isMongoOnly.value) {
-    return mongoDisplayUri(props.host.mongo_uri)
+  if (isMongoOnly.value) return mongoDisplayUri(props.host.mongo_uri)
+  if (isRedisOnly.value) {
+    // Naming the bastion matters: two rows can carry the same private address
+    // and mean different machines.
+    const via = props.host.redis_tunnel_host_id ? ' · tunnelled' : ''
+    return redisDisplayUri(props.host.redis_uri) + via
   }
   return `${props.host.username}@${props.host.host}:${props.host.port}`
 })

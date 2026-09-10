@@ -59,6 +59,10 @@ describe('canReceiveCommand', () => {
     expect(canReceiveCommand({ id: 'mongo-1', type: 'mongodb', connected: true })).toBe(false)
   })
 
+  it('refuses a Redis tab, which has no shell either', () => {
+    expect(canReceiveCommand({ id: 'redis-1', type: 'redis', connected: true })).toBe(false)
+  })
+
   it('refuses a disconnected tab and a missing tab', () => {
     expect(canReceiveCommand({ id: 's1', connected: false })).toBe(false)
     expect(canReceiveCommand({ id: 's1' })).toBe(false)
