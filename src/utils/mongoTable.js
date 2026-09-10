@@ -3,7 +3,7 @@
  *
  * A MongoDB collection has no schema, so the columns are whatever the documents
  * on the current page happen to contain. Deriving them here, rather than in the
- * component, is what makes the behaviour testable — MongoDocumentsPanel.vue
+ * component, is what makes the behaviour testable — MongoDocumentsView.vue
  * cannot be mounted in tests because @vue/test-utils is not installed.
  */
 

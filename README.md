@@ -43,13 +43,12 @@ Recommended captures:
 - **Copy remote path** to clipboard
 - **Progress bars** for active transfers
 
-### MongoDB Browse, Sync, Dump & Restore
-- **Browse documents** — open any collection to read its data as a table or as
-  JSON, with a filter, sort and pagination. Read-only
-- **Side-by-side** Remote/Local database tree view with bidirectional sync toggle
-- **Sync** selected collections via bundled `mongodump`/`mongorestore` CLI tools
-- **Dump** to compressed BSON files when no local URI is configured
-- **Restore** from BSON dump folders back to remote
+### MongoDB Browse, Backup & Restore
+- **Browse** — click a collection to read its documents beside the tree, as a
+  table or as JSON, with a filter, sort and pagination. Read-only
+- **Backup** — dump selected collections to a compressed folder or a single
+  archive file
+- **Restore** — load a backup folder or archive back into the connection
 - **Database-level** checkbox to select all collections at once
 - **Bundled MongoDB Database Tools** — no external installation required
 
@@ -152,11 +151,9 @@ Output:
 
 | Shortcut | Action |
 |----------|--------|
-| Double-click a collection | Browse its documents |
-| Click DB checkbox | Select/deselect all collections |
-| Click ↔ arrow | Swap sync direction (Remote↔Local) |
-| Ctrl/Cmd+Enter | Run the query, in the document browser |
-| Escape | Close the document browser |
+| Click a collection | View its documents |
+| Click DB checkbox | Select/deselect all collections for a backup |
+| Ctrl/Cmd+Enter | Run the query, in the document view |
 
 ### Global
 

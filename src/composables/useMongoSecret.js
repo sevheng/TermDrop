@@ -2,9 +2,6 @@ import { invoke } from '../utils/invoke.js'
 import { shouldPromptForSecret } from '../utils/secretPrompt.js'
 import { showPromptDialog } from './usePromptDialog.js'
 
-/** Human wording for a side, used in the prompt. */
-const SIDE_LABEL = { remote: 'remote', local: 'local' }
-
 /**
  * Run a MongoDB call, prompting once for the password if none is stored.
  *
@@ -13,7 +10,7 @@ const SIDE_LABEL = { remote: 'remote', local: 'local' }
  * "keyring retrieve failed" wording the SSH path uses; ask the user, store it,
  * and run the call again exactly once.
  */
-export async function withMongoSecret(hostId, side, fn) {
+export async function withMongoSecret(hostId, fn) {
   try {
     return await fn()
   } catch (err) {
@@ -21,13 +18,13 @@ export async function withMongoSecret(hostId, side, fn) {
 
     const password = await showPromptDialog(
       'MongoDB password required',
-      `No stored password for the ${SIDE_LABEL[side] || side} MongoDB connection. Enter it to continue:`,
+      'No stored password for this MongoDB connection. Enter it to continue:',
       '',
       'password',
     )
     if (!password) throw err
 
-    await invoke('mongodb_store_secret', { hostId, side, password })
+    await invoke('mongodb_store_secret', { hostId, password })
     return await fn()
   }
 }

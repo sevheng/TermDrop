@@ -611,11 +611,10 @@ async function handleSave({ id, hostData, password }) {
   await store.loadHosts()
 }
 
-async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
-  // Passwords are kept in the keyring, never in the database, so split them out
+async function handleMongoSave({ id, name, mongo_uri }) {
+  // The password is kept in the keyring, never in the database, so split it out
   // before the row is written.
-  const remote = splitMongoUri(mongo_uri)
-  const local = splitMongoUri(mongo_local_uri)
+  const { uri, password } = splitMongoUri(mongo_uri)
 
   const hostData = {
     name,
@@ -626,8 +625,8 @@ async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
     key_path: null,
     group: null,
     favorite: null,
-    mongo_uri: remote.uri,
-    mongo_local_uri: local.uri,
+    mongo_uri: uri,
+    mongo_local_uri: null,
   }
 
   try {
@@ -637,10 +636,8 @@ async function handleMongoSave({ id, name, mongo_uri, mongo_local_uri }) {
     // Only ever store a password that was actually supplied. On edit the field
     // renders empty because the stored URI has none, and an empty field must
     // not be read as "delete the stored password".
-    for (const [side, { password }] of [['remote', remote], ['local', local]]) {
-      if (password) {
-        await invoke('mongodb_store_secret', { hostId, side, password })
-      }
+    if (password) {
+      await invoke('mongodb_store_secret', { hostId, password })
     }
   } catch (err) {
     toast(`Failed to save MongoDB connection: ${err}`, 'error')

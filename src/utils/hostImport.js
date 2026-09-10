@@ -67,6 +67,10 @@ export function normalizeImportHost(raw) {
   // An export written before credentials moved to the keyring still carries
   // them. Importing it verbatim would write plaintext passwords straight back
   // into the database and undo the migration.
+  //
+  // `mongo_local_uri` is still accepted so importing an older file is not
+  // silently lossy: a host that had two connections gets its second one moved
+  // to its own host on the next launch.
   for (const field of ['mongo_uri', 'mongo_local_uri']) {
     if (host[field]) host[field] = stripMongoPassword(host[field])
   }

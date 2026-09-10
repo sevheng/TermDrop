@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **A MongoDB connection is now one connection.** A host used to hold a "remote" and a "local" URI so the two could be synced; it now holds one, and the panel offers **Browse**, **Backup** and **Restore** against it.
+  - **Sync has been removed.** A configured second connection is not discarded: on first launch it becomes its own host, named `"<name> (local)"`, taking its stored password with it
+  - The panel is now **two panes** — databases on the left, documents on the right. Clicking a collection shows its data immediately; ticking it includes it in a backup
+  - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
+
 ### Added
 - **MongoDB document browser** — double-click any collection in the database tree, or use the browse icon on its row, to read its documents. Documents show as a **table** whose columns are the fields found on the page, so several documents can be compared at a glance; a toggle switches to the JSON view, and clicking a row expands the full document either way. A JSON filter and sort, pagination, expandable pretty-printed documents, per-document copy, and collection size and index count in the header. Read-only: there are no write or aggregation commands, so nothing typed here can modify the database.
   - A 24-character hex `_id` is treated as an ObjectId, so the common shorthand matches instead of silently returning nothing

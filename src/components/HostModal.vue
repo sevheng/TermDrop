@@ -178,7 +178,6 @@ const form = ref({
   key_path: '',
   password: '',
   mongo_uri: '',
-  mongo_local_uri: '',
 })
 
 const errors = ref({})
@@ -196,7 +195,6 @@ function resetForm() {
       key_path: props.host.key_path || '',
       password: '',
       mongo_uri: props.host.mongo_uri || '',
-      mongo_local_uri: props.host.mongo_local_uri || '',
     }
   } else {
     form.value = {
@@ -208,7 +206,6 @@ function resetForm() {
       key_path: '',
       password: '',
       mongo_uri: '',
-      mongo_local_uri: '',
     }
   }
   errors.value = {}
@@ -292,7 +289,8 @@ async function onSave() {
       auth_type: form.value.auth_type,
       key_path: form.value.auth_type === 'key' ? form.value.key_path.trim() : null,
       mongo_uri: form.value.mongo_uri.trim() || null,
-      mongo_local_uri: form.value.mongo_local_uri.trim() || null,
+      // A MongoDB connection is its own host; this column is legacy.
+      mongo_local_uri: null,
     }
 
     const password = form.value.auth_type === 'password' ? form.value.password : null

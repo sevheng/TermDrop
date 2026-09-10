@@ -46,10 +46,11 @@
             v-for="coll in db.collections"
             :key="coll"
             class="group flex items-center gap-1.5 text-[11px] text-[#cccccc] hover:bg-[#2a2d2e] px-1 py-0.5 rounded"
-            :class="selectable || browsable ? 'cursor-pointer' : ''"
-            :title="browsable ? 'Double-click to browse documents' : undefined"
-            @dblclick="browsable && $emit('open-collection', db.name, coll)"
-            @click="!selectable && browsable && $emit('open-collection', db.name, coll)"
+            :class="[
+              selectable || browsable ? 'cursor-pointer' : '',
+              isActive(db.name, coll) ? 'bg-[#094771] hover:bg-[#094771]' : '',
+            ]"
+            :title="browsable ? 'Click to view documents' : undefined"
           >
             <input
               v-if="selectable"
@@ -59,15 +60,13 @@
               class="accent-[#007acc]"
             />
             <Table :size="10" class="shrink-0 text-[#6e6e6e]" />
-            <span class="truncate flex-1">{{ coll }}</span>
-            <button
-              v-if="browsable"
-              class="text-[#6e6e6e] hover:text-white focus-visible:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#007acc] rounded px-1 shrink-0"
-              title="Browse documents"
-              @click.stop.prevent="$emit('open-collection', db.name, coll)"
+            <span
+              class="truncate flex-1"
+              :class="isActive(db.name, coll) ? 'text-white' : ''"
+              @click.stop.prevent="browsable && $emit('open-collection', db.name, coll)"
             >
-              <Eye :size="11" />
-            </button>
+              {{ coll }}
+            </span>
           </label>
           <div v-if="db.collections.length === 0" class="text-[10px] text-[#6e6e6e] px-1">
             No collections
@@ -79,7 +78,7 @@
 </template>
 
 <script setup>
-import { Database, Table, ChevronRight, Loader2, Eye } from 'lucide-vue-next'
+import { Database, Table, ChevronRight, Loader2 } from 'lucide-vue-next'
 import { isSelected as isSelectedIn, dbSelectionState as dbSelectionStateIn } from '../utils/mongoSelection.js'
 
 const props = defineProps({
@@ -87,8 +86,11 @@ const props = defineProps({
   expandedDbs: { type: Set, required: true },
   selectedCollections: { type: Map, required: true },
   selectable: { type: Boolean, default: true },
-  /** Show the per-collection "browse documents" affordance. */
+  /** Clicking a collection name opens it. */
   browsable: { type: Boolean, default: false },
+  /** The collection currently open, highlighted in the tree. */
+  activeDb: { type: String, default: '' },
+  activeCollection: { type: String, default: '' },
   loading: { type: Boolean, default: false },
 })
 
@@ -100,5 +102,9 @@ function isSelected(db, coll) {
 
 function dbSelectionState(db) {
   return dbSelectionStateIn(props.selectedCollections, db)
+}
+
+function isActive(db, coll) {
+  return props.activeDb === db && props.activeCollection === coll
 }
 </script>

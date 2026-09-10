@@ -1,12 +1,5 @@
 <template>
-  <!-- .self so only the backdrop closes, never a click inside the panel. -->
-  <ModalShell
-    :show="show"
-    dim="bg-black/60"
-    z="z-[95]"
-    panel-class="w-[56rem] h-[80vh] flex flex-col shadow-xl"
-    @click.self="$emit('close')"
-  >
+  <div class="flex flex-col h-full min-w-0">
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-[#3c3c3c] shrink-0">
       <div class="min-w-0">
@@ -14,17 +7,10 @@
           <span class="text-[#75beff]">{{ db }}</span>.{{ collection }}
         </h3>
         <p class="text-[10px] text-[#6e6e6e] mt-0.5">
-          {{ sideLabel }} · read-only
+          read-only
           <span v-if="stats"> · {{ stats }}</span>
         </p>
       </div>
-      <button
-        @click="$emit('close')"
-        class="text-[#858585] hover:text-[#cccccc] p-1 rounded hover:bg-[#2a2d2e] shrink-0"
-        title="Close"
-      >
-        <X :size="16" />
-      </button>
     </div>
 
     <!-- Query controls -->
@@ -232,14 +218,14 @@
         </button>
       </div>
     </div>
-  </ModalShell>
+  </div>
 </template>
 
+
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
-import { X, Loader2, ChevronRight, Copy, FileSearch } from 'lucide-vue-next'
+import { ref, computed, watch } from 'vue'
+import { Loader2, ChevronRight, Copy, FileSearch } from 'lucide-vue-next'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import ModalShell from './ModalShell.vue'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { prettyPrintDocument, summarizeDocument } from '../utils/bsonDisplay.js'
@@ -254,38 +240,11 @@ import {
 } from '../utils/mongoQuery.js'
 
 const props = defineProps({
-  show: { type: Boolean, default: false },
   hostId: { type: Number, required: true },
-  side: { type: String, required: true },
   db: { type: String, default: '' },
   collection: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close'])
-
-/**
- * Escape and backdrop click close this panel.
- *
- * Handled here rather than in ModalShell: that overlay is shared with the
- * restore confirm and the delete dialogs, and giving those backdrop-dismiss
- * would quietly weaken a destructive confirmation.
- */
-function onKeydown(e) {
-  if (e.key === 'Escape' && props.show) emit('close')
-}
-
-watch(
-  () => props.show,
-  (visible) => {
-    if (visible) window.addEventListener('keydown', onKeydown)
-    else window.removeEventListener('keydown', onKeydown)
-  },
-)
-
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
-
-// Table by default: it answers "what is in here?" faster than a list of JSON.
-// Kept across collections for the life of the panel, so the choice sticks.
 const viewMode = ref('table')
 const filterText = ref('')
 const sortText = ref('')
@@ -302,7 +261,6 @@ const total = ref(0)
 const estimated = ref(false)
 const stats = ref('')
 
-const sideLabel = computed(() => (props.side === 'local' ? 'Local' : 'Remote'))
 const filterError = computed(() => validateJsonInput(filterText.value, 'filter'))
 const sortError = computed(() => validateJsonInput(sortText.value, 'sort'))
 const inputError = computed(() => filterError.value || sortError.value)
@@ -359,7 +317,6 @@ async function runQuery(targetPage) {
   try {
     const args = {
       hostId: props.hostId,
-      side: props.side,
       db: props.db,
       collection: props.collection,
       filter: filterText.value.trim() || null,
@@ -370,7 +327,6 @@ async function runQuery(targetPage) {
     // Count first so the page can be clamped to something that exists.
     const counted = await invoke('mongodb_count', {
       hostId: args.hostId,
-      side: args.side,
       db: args.db,
       collection: args.collection,
       filter: args.filter,
@@ -405,7 +361,6 @@ async function loadStats() {
   try {
     const raw = await invoke('mongodb_collection_stats', {
       hostId: props.hostId,
-      side: props.side,
       db: props.db,
       collection: props.collection,
     })
@@ -434,9 +389,9 @@ function formatBytes(bytes) {
 }
 
 watch(
-  () => [props.show, props.db, props.collection],
-  ([visible]) => {
-    if (!visible || !props.collection) return
+  () => [props.db, props.collection],
+  () => {
+    if (!props.collection) return
     filterText.value = ''
     sortText.value = ''
     page.value = 0
