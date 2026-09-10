@@ -226,6 +226,64 @@ fn push_ns_includes(cmd: &mut std::process::Command, db: &str, collections: &[St
     }
 }
 
+/// How to restrict a mongodump to a subset of a database's collections.
+///
+/// mongodump 100.9.4 has no `--nsInclude` (only mongorestore does), so a
+/// multi-collection subset has to be expressed as its complement: exclude
+/// everything that was not selected. A per-collection `-c` loop would be exact
+/// but cannot work for `--archive`, where each run truncates the file, so
+/// excludes keep folder and archive dumps on one code path.
+#[derive(Debug, PartialEq, Eq)]
+enum DumpFilter {
+    /// Dump the whole database.
+    None,
+    /// Exactly one collection: `-c`.
+    Only(String),
+    /// Everything except these.
+    Exclude(Vec<String>),
+}
+
+/// Roughly the point at which a Windows command line (32767 chars) is at risk.
+const MAX_EXCLUDE_ARG_BYTES: usize = 24_000;
+
+/// Choose the narrowest filter expressing `selected` out of `all`.
+///
+/// Note: a collection created between listing `all` and mongodump starting is
+/// not in the exclusion set and will be included. That is strictly better than
+/// the previous behaviour, where every unselected collection was included, but
+/// there is no way to say "only these" with this mongodump.
+fn dump_filter(all: &[String], selected: &[String]) -> Result<DumpFilter, String> {
+    if selected.is_empty() {
+        return Ok(DumpFilter::None);
+    }
+    if selected.len() == 1 {
+        // Exact, and needs no listing of the database.
+        return Ok(DumpFilter::Only(selected[0].clone()));
+    }
+
+    let mut excluded: Vec<String> = all
+        .iter()
+        .filter(|c| !selected.contains(c))
+        .cloned()
+        .collect();
+    excluded.sort();
+
+    if excluded.is_empty() {
+        return Ok(DumpFilter::None);
+    }
+
+    let bytes: usize = excluded.iter().map(|c| c.len() + 22).sum();
+    if bytes > MAX_EXCLUDE_ARG_BYTES {
+        return Err(format!(
+            "too many collections to filter ({} would have to be excluded). \
+Dump the whole database, or select fewer collections.",
+            excluded.len()
+        ));
+    }
+
+    Ok(DumpFilter::Exclude(excluded))
+}
+
 /// Build the `mongodump` command line.
 ///
 /// `conn_arg` is the whole connection argument (`--uri=...` or `--config=...`)
@@ -235,7 +293,7 @@ fn build_dump_cmd(
     tool: std::path::PathBuf,
     conn_arg: &str,
     db: &str,
-    collections: &[String],
+    filter: &DumpFilter,
     output: &str,
     is_archive: bool,
 ) -> std::process::Command {
@@ -248,11 +306,17 @@ fn build_dump_cmd(
         cmd.arg("--gzip").arg(format!("--out={}", output));
     }
 
-    // mongodump v100.9.4 doesn't support --nsInclude; use -c for single collection
-    if collections.len() == 1 {
-        cmd.arg("-c").arg(&collections[0]);
+    match filter {
+        DumpFilter::None => {}
+        DumpFilter::Only(coll) => {
+            cmd.arg("-c").arg(coll);
+        }
+        DumpFilter::Exclude(colls) => {
+            for coll in colls {
+                cmd.arg(format!("--excludeCollection={}", coll));
+            }
+        }
     }
-    // For multiple collections, dump the whole DB (mongorestore will filter)
 
     cmd
 }
@@ -994,6 +1058,15 @@ pub async fn dump_collections(
     output_dir: &str,
     is_archive: bool,
 ) -> Result<(), String> {
+    // Resolve the filter before the URI is stripped for the CLI: list_collections
+    // normalizes the URI itself and must not receive the database-less form.
+    let filter = if collections.len() > 1 {
+        let all = list_collections(remote_uri, db).await?;
+        dump_filter(&all, &collections)?
+    } else {
+        dump_filter(&[], &collections)?
+    };
+
     let remote_uri = prepare_cli_uri(remote_uri);
     let db = db.to_string();
     let output_dir = output_dir.to_string();
@@ -1014,7 +1087,7 @@ pub async fn dump_collections(
                 resolve_mongo_tool("mongodump")?,
                 config_arg,
                 &cmd_db,
-                &collections,
+                &filter,
                 &output_dir,
                 is_archive,
             ))
@@ -1303,7 +1376,14 @@ mod tests {
 
     #[test]
     fn dump_cmd_folder_uses_out_and_gzip() {
-        let cmd = build_dump_cmd(dummy(), "--uri=U", "mydb", &[], "/tmp/out", false);
+        let cmd = build_dump_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &DumpFilter::None,
+            "/tmp/out",
+            false,
+        );
         assert_eq!(
             args(&cmd),
             vec!["--uri=U", "--db=mydb", "--gzip", "--out=/tmp/out"]
@@ -1316,7 +1396,7 @@ mod tests {
             dummy(),
             "--uri=U",
             "mydb",
-            &["logs".to_string()],
+            &DumpFilter::Only("logs".to_string()),
             "/tmp/out",
             false,
         );
@@ -1325,7 +1405,14 @@ mod tests {
 
     #[test]
     fn dump_cmd_archive_path_gets_archive_args() {
-        let cmd = build_dump_cmd(dummy(), "--uri=U", "mydb", &[], "/tmp/d.gz", true);
+        let cmd = build_dump_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &DumpFilter::None,
+            "/tmp/d.gz",
+            true,
+        );
         let a = args(&cmd);
         assert!(a.contains(&"--archive=/tmp/d.gz".to_string()));
         assert!(a.contains(&"--gzip".to_string()));
@@ -1446,6 +1533,61 @@ uri: mongodb://admin:hunter2@10.0.0.5:27017/?authSource=admin";
     fn redact_leaves_text_without_uris_alone() {
         let plain = "mongorestore failed: no such file or directory";
         assert_eq!(redact_uris_in_text(plain), plain);
+    }
+
+    #[test]
+    fn dump_filter_picks_the_narrowest_expression() {
+        let all = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+            "delta".to_string(),
+        ];
+
+        // Nothing selected -> whole database.
+        assert_eq!(dump_filter(&all, &[]).unwrap(), DumpFilter::None);
+
+        // One selected -> -c, no listing needed.
+        assert_eq!(
+            dump_filter(&[], &["beta".to_string()]).unwrap(),
+            DumpFilter::Only("beta".to_string())
+        );
+
+        // A subset -> exclude the complement, sorted for a stable arg vector.
+        assert_eq!(
+            dump_filter(&all, &["alpha".to_string(), "beta".to_string()]).unwrap(),
+            DumpFilter::Exclude(vec!["delta".to_string(), "gamma".to_string()])
+        );
+
+        // Everything selected -> nothing to exclude.
+        assert_eq!(dump_filter(&all, &all).unwrap(), DumpFilter::None);
+    }
+
+    #[test]
+    fn dump_filter_refuses_an_oversized_command_line() {
+        let all: Vec<String> = (0..3000)
+            .map(|i| format!("collection_number_{}", i))
+            .collect();
+        let selected = vec![all[0].clone(), all[1].clone()];
+        let err = dump_filter(&all, &selected).unwrap_err();
+        assert!(err.contains("too many collections"), "unexpected: {}", err);
+    }
+
+    #[test]
+    fn dump_cmd_subset_excludes_the_complement() {
+        let cmd = build_dump_cmd(
+            dummy(),
+            "--uri=U",
+            "mydb",
+            &DumpFilter::Exclude(vec!["gamma".to_string(), "delta".to_string()]),
+            "/tmp/out",
+            false,
+        );
+        let a = args(&cmd);
+        assert!(a.contains(&"--excludeCollection=gamma".to_string()));
+        assert!(a.contains(&"--excludeCollection=delta".to_string()));
+        // The whole-DB dump must not silently come back.
+        assert!(!a.iter().any(|s| s == "-c"));
     }
 
     #[test]
