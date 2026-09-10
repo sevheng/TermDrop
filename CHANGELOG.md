@@ -7,12 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- **The interface has been repainted.** Cooler, deeper neutrals with more separation between panels, and a brighter accent that works as text rather than only as a button. Every piece of text in the app now meets the WCAG AA contrast standard on every background, in both themes — secondary text used to fall below it, and it was the second most-used colour in the app.
+  - **The app has a typeface.** Nothing set one before, so the interface rendered in whatever each OS happened to supply. It is now IBM Plex Sans, bundled with the app rather than fetched
+  - **Terminals are readable everywhere.** The terminal asked for Menlo or Monaco, which exist only on macOS, so Linux and Windows fell through to Courier New. It is now JetBrains Mono, which ships with the app
+  - Modals sit visibly above the panel they cover instead of at the same level, and destructive buttons use a red dark enough for their white label to be legible
+
 - **A MongoDB connection is now one connection.** A host used to hold a "remote" and a "local" URI so the two could be synced; it now holds one, and the panel offers **Browse**, **Backup** and **Restore** against it.
   - **Sync has been removed.** A configured second connection is not discarded: on first launch it becomes its own host, named `"<name> (local)"`, taking its stored password with it
   - The panel is now **two panes** — databases on the left, documents on the right. Clicking a collection shows its data immediately; ticking it includes it in a backup
   - No more direction toggle, no `Remote`/`Local` labels, and no mode chip
 
 ### Added
+- **A light theme, and a way to choose it.** Settings now has an Appearance control beside the font size, previewed live as you pick it. The terminal follows the app, so a light window no longer frames a black terminal.
+
 - **Redis connections.** A Redis server is a host row of its own, like a MongoDB connection, and opens its own tab: browse the keyspace, and back it up or restore it.
   - **Read-only key browser.** Databases and their key counts on the left, with keys grouped by their `:` prefix; a `MATCH` pattern box and a type filter narrow the scan itself, not just the list on screen. Type-aware viewers for strings, hashes, lists, sets, sorted sets and streams, showing TTL, encoding and size. Nothing in the browser can write: there is no command console and no edit path
   - **Nothing here can stall a server.** Every read is a `SCAN` variant or an explicit range — never `KEYS`, `HGETALL`, `SMEMBERS` or `LRANGE key 0 -1` — so opening a ten-million-element set costs the same as opening an empty one, and a 5 MB string is previewed rather than fetched whole
