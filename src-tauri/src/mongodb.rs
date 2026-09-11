@@ -746,15 +746,22 @@ where
 /// Resolve the path to a MongoDB tool binary.
 /// Tries bundled binary first, then falls back to PATH.
 fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
-    #[cfg(target_os = "windows")]
-    let name = format!("{}.exe", name);
+    // `cfg!` rather than `#[cfg]` so `name` is a String on every platform. The
+    // attribute form made it a String only on Windows and left it a &str
+    // elsewhere, so the borrows below type-checked on Linux and CI never
+    // compiled the Windows arm - which is how a move error reached a release.
+    let name = if cfg!(target_os = "windows") {
+        format!("{}.exe", name)
+    } else {
+        name.to_string()
+    };
 
     // Try bundled binary next to the executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             // Same directory as executable (Windows, Linux AppImage/standalone,
             // and cargo's target/debug or target/release directories)
-            let bundled = exe_dir.join(name);
+            let bundled = exe_dir.join(&name);
             if bundled.exists() {
                 return Ok(bundled);
             }
@@ -762,7 +769,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Cargo sometimes places test/run binaries in target/<profile>/deps/;
             // the profile directory (e.g. target/debug) is the parent.
             if let Some(profile_dir) = exe_dir.parent() {
-                let bundled = profile_dir.join(name);
+                let bundled = profile_dir.join(&name);
                 if bundled.exists() {
                     return Ok(bundled);
                 }
@@ -780,7 +787,7 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
             // Linux .deb/AppImage: usr/bin/ -> usr/lib/TermDrop/
             #[cfg(target_os = "linux")]
             {
-                let linux_bundle = exe_dir.join("../lib/TermDrop").join(name);
+                let linux_bundle = exe_dir.join("../lib/TermDrop").join(&name);
                 if linux_bundle.exists() {
                     return Ok(linux_bundle);
                 }
