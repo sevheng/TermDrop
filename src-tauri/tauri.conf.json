@@ -12,10 +12,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "TermDrop",
         "width": 1200,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "create": false
       }
     ],
     "security": {

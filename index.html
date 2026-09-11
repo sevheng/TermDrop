@@ -15,10 +15,174 @@
       } catch (e) {
         document.documentElement.classList.add('dark')
       }
+      // Startup timing origin. `src/main.js` measures the phases against it.
+      performance.mark('td-html')
+
+      // If the bundle never loads, the splash must still go: being stuck on a
+      // branded screen forever is worse than the white flash this replaces.
+      setTimeout(function () {
+        var s = document.getElementById('td-splash')
+        if (s) s.remove()
+      }, 8000)
     </script>
+    <style>
+      /* The launch splash. This is deliberately inline: it has to paint on the
+         first pass over this file, before the 40 KB stylesheet and the JS
+         bundle have loaded -- which is the whole point of it existing. A Vue
+         component or an external stylesheet cannot paint that early.
+
+         The four colours below are the only palette literals outside
+         themes/tokens.css. They are duplicated because tokens.css is not
+         loaded yet at the moment they are needed, and they must stay in sync
+         with --td-canvas and --td-ink in that file.
+         src/__tests__/splashPaint.test.js fails if they drift. */
+      :root {
+        --s-bg: #fafbfd;
+        --s-ink: #141a22;
+      }
+      html.dark {
+        --s-bg: #0f1116;
+        --s-ink: #e7eaf0;
+      }
+
+      /* The background goes on `html`, not just `body`: body's background
+         (themes/base.css) arrives only with the stylesheet, and `html` is what
+         the webview paints before then. */
+      html,
+      body {
+        margin: 0;
+        background: var(--s-bg);
+      }
+
+      /* The splash stays on screen across the stylesheet-load boundary, so
+         Tailwind's preflight lands underneath it mid-fade. Every property it
+         depends on is stated here rather than inherited from a UA default,
+         otherwise it would visibly reflow while the user is looking at it. */
+      #td-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        margin: 0;
+        background: var(--s-bg);
+        transition: opacity 200ms ease;
+      }
+      /* The splash is opaque and sits over #app, so fading it out reveals the
+         app already painted underneath -- that is the cross-fade. #app is
+         never given an opacity of its own: that would make it a containing
+         block for the app's many position:fixed menus and modals. */
+      #td-splash.td-splash-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #td-splash-mark {
+        display: block;
+        width: 104px;
+        height: 104px;
+        animation: td-splash-pulse 1600ms ease-in-out infinite;
+      }
+
+      #td-splash-word {
+        /* Not IBM Plex: it lives in the stylesheet that has not loaded, so the
+           wordmark would render in a fallback and then reflow mid-splash. */
+        font-family:
+          system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+          sans-serif;
+        font-size: 15px;
+        font-weight: 500;
+        line-height: 1.4;
+        letter-spacing: 0.02em;
+        margin: 0;
+        color: var(--s-ink);
+      }
+
+      /* Breathing, not progress: there is no percentage to report, so it must
+         not look like a progress bar. Pulsing the mark itself also means no
+         extra colour, which would have had to differ per theme to stay legible. */
+      @keyframes td-splash-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.55;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #td-splash-mark {
+          animation: none;
+        }
+        #td-splash {
+          transition: none;
+        }
+      }
+    </style>
   </head>
 
   <body>
+    <!-- Droplet from src-tauri/icons/src/icon-small.svg with the tile removed.
+         The `>_` prompt is a hole punched through the droplet by the mask
+         rather than a painted colour, so the splash background shows through
+         it and the mark reads correctly on both themes with no branching.
+         Every id is prefixed: SVG ids are document-global and would otherwise
+         be able to collide with anything the app renders later. -->
+    <div id="td-splash" role="status" aria-label="Starting TermDrop">
+      <svg id="td-splash-mark" viewBox="0 0 1024 1024" aria-hidden="true">
+        <defs>
+          <linearGradient
+            id="td-splash-drop"
+            x1="512"
+            y1="190"
+            x2="512"
+            y2="870"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0" stop-color="#5CAFFF" />
+            <stop offset="1" stop-color="#1B62BD" />
+          </linearGradient>
+          <!-- white keeps the droplet, black cuts the prompt out of it -->
+          <mask
+            id="td-splash-prompt"
+            maskUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width="1024"
+            height="1024"
+          >
+            <rect width="1024" height="1024" fill="#000" />
+            <path
+              d="M512 190 C584 330 762 500 762 620 A250 250 0 0 1 262 620 C262 500 440 330 512 190 Z"
+              fill="#fff"
+            />
+            <polyline
+              points="380,516 478,620 380,724"
+              fill="none"
+              stroke="#000"
+              stroke-width="80"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <rect x="552" y="656" width="132" height="68" rx="34" fill="#000" />
+          </mask>
+        </defs>
+        <rect
+          width="1024"
+          height="1024"
+          fill="url(#td-splash-drop)"
+          mask="url(#td-splash-prompt)"
+        />
+      </svg>
+
+      <div id="td-splash-word">TermDrop</div>
+    </div>
+
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>

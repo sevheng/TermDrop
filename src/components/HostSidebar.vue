@@ -613,7 +613,8 @@ function onWindowClick(e) {
 }
 
 onMounted(() => {
-  store.loadHosts()
+  // Memoised and shared with MainWindow, so this is still one get_hosts.
+  store.bootstrap()
   window.addEventListener('click', onWindowClick)
   // MainWindow's front-door empty state asks for the add dialog this way,
   // following the existing open-port-forward-modal precedent.

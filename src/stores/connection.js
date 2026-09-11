@@ -8,6 +8,7 @@ import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
+import { loadTerminalTab } from '../components/terminalTabLoader.js'
 
 
 
@@ -125,6 +126,33 @@ export const useConnectionStore = defineStore('connection', () => {
     hosts.value = await invoke('get_hosts')
   }
 
+  /**
+   * The settings and hosts loads that every launch needs, as one memoised
+   * promise.
+   *
+   * Both used to run fire-and-forget from two different components' onMounted
+   * hooks, so nothing could observe when the app actually had content -- which
+   * the launch splash needs in order to know when to get out of the way.
+   * Memoising is what keeps `get_hosts` to a single call however many places
+   * ask for it.
+   */
+  let bootstrapped = null
+  function bootstrap() {
+    if (!bootstrapped) {
+      // allSettled, not all: a failed settings read must not leave the app
+      // looking like it never finished starting. Failures are logged rather
+      // than toasted -- an empty sidebar is the visible symptom, and a toast
+      // over the fade-in was noise.
+      bootstrapped = Promise.allSettled([loadSettings(), loadHosts()]).then(results => {
+        for (const r of results) {
+          if (r.status === 'rejected') console.error('[bootstrap]', r.reason)
+        }
+        return results
+      })
+    }
+    return bootstrapped
+  }
+
   async function addHost(host) {
     const id = await invoke('add_host', { host })
     await loadHosts()
@@ -222,6 +250,11 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function connect(hostId, providedPassword = null) {
+    // Start the terminal chunk now so it loads against the SSH handshake
+    // rather than against the tab's first render. Idempotent -- the idle
+    // warm-up in MainWindow has usually already done it.
+    loadTerminalTab()
+
     const host = hosts.value.find(h => h.id === hostId)
     const isKeyAuth = host?.auth_type === 'key'
     connectingHostId.value = hostId
@@ -461,6 +494,7 @@ export const useConnectionStore = defineStore('connection', () => {
     activeTab,
     connectingHostId,
     loadHosts,
+    bootstrap,
     addHost,
     updateHost,
     removeHost,

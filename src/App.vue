@@ -42,21 +42,26 @@ onErrorCaptured((err, instance, info) => {
   return false // prevent propagation
 })
 
-onMounted(async () => {
-  // Check for updates on startup
-  try {
-    const result = await checkForUpdates()
-    if (result.available) {
-      updateModal.value = {
-        show: true,
-        version: result.version,
-        notes: result.notes,
-        downloadAndInstall: result.downloadAndInstall,
+onMounted(() => {
+  // Check for updates on startup, but not *during* startup: this reaches the
+  // network, and firing it inline let the modal pop over the launch splash as
+  // it was fading. Deferred to idle, so it lands on a settled app.
+  const idle = window.requestIdleCallback || (cb => setTimeout(cb, 500))
+  idle(async () => {
+    try {
+      const result = await checkForUpdates()
+      if (result.available) {
+        updateModal.value = {
+          show: true,
+          version: result.version,
+          notes: result.notes,
+          downloadAndInstall: result.downloadAndInstall,
+        }
       }
+    } catch (err) {
+      console.error('Startup update check failed:', err)
     }
-  } catch (err) {
-    console.error('Startup update check failed:', err)
-  }
+  })
 })
 
 function reload() {

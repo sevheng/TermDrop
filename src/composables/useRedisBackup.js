@@ -4,6 +4,7 @@ import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { DEFAULT_MAX_DUMP_KEY_BYTES } from '../utils/redisLimits.js'
 import { defaultBackupName, summarizeOp } from '../utils/redisBackup.js'
+import { notifyIfUnfocused } from '../utils/notify.js'
 
 /**
  * Backing up and restoring one Redis database.
@@ -36,9 +37,13 @@ export function useRedisBackup(hostId, db, connectionName, onFinished) {
     progress.value = null
   }
 
-  function finish(summary, verb) {
+  function finish(summary, title, verb) {
     const { message, type } = summarizeOp(summary, verb)
     toast(message, type)
+    // Both backup and restore end here, so one call covers each. The title is
+    // passed rather than derived from `verb`, which is a past-tense phrase
+    // ('Backed up') that does not reshape into a heading cleanly.
+    if (type === 'success') notifyIfUnfocused(title, message)
   }
 
   async function backup(pattern) {
@@ -60,7 +65,7 @@ export function useRedisBackup(hostId, db, connectionName, onFinished) {
         outputPath: path,
         maxKeyBytes: DEFAULT_MAX_DUMP_KEY_BYTES,
       })
-      finish(summary, 'Backed up')
+      finish(summary, 'Backup complete', 'Backed up')
     } catch (err) {
       // The backend returns this exact string when the cancel flag was seen.
       if (String(err).includes('cancelled')) toast('Backup cancelled', 'info')
@@ -111,7 +116,7 @@ export function useRedisBackup(hostId, db, connectionName, onFinished) {
         replace,
         flushFirst,
       })
-      finish(summary, 'Restored')
+      finish(summary, 'Restore complete', 'Restored')
       await onFinished?.()
     } catch (err) {
       if (String(err).includes('cancelled')) toast('Restore cancelled', 'info')

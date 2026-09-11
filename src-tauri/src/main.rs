@@ -11,6 +11,7 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::window::Color;
 use tauri::{Emitter, Manager, State, Window};
 use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt;
@@ -29,6 +30,17 @@ mod ssh;
 mod ssh_config_parser;
 mod system;
 mod uri;
+
+/// The window's background colour, applied at creation so the very first
+/// frame is already the app's own canvas rather than the webview's default
+/// white. Which one is used depends on the persisted theme.
+///
+/// These must stay equal to `--td-canvas` in `src/themes/tokens.css` (light in
+/// the bare `:root`, dark under `html.dark`) and to the `#td-splash`
+/// backgrounds in `index.html`. `canvas_colours_match_the_design_tokens`
+/// below fails if they drift.
+const CANVAS_DARK: Color = Color(15, 17, 22, 255); // #0F1116
+const CANVAS_LIGHT: Color = Color(250, 251, 253, 255); // #FAFBFD
 
 /// Per-host coalescing locks so concurrent requests share one fetch.
 type FetchLocks = Arc<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>;
@@ -2259,6 +2271,8 @@ fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
 }
 
 fn main() {
+    let start = std::time::Instant::now();
+
     // Initialize structured logging to file
     let log_dir = dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -2266,9 +2280,6 @@ fn main() {
         .join("logs");
     std::fs::create_dir_all(&log_dir).ok();
 
-    // A run killed mid-operation cannot drop its --config guard, so clear any
-    // credential files an earlier process left in the temp directory.
-    mongodb::sweep_stale_config_files();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "termdrop.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -2300,15 +2311,26 @@ fn main() {
         .build(manager)
         .expect("Failed to create database pool");
 
-    // Run initialization with a dedicated connection
-    {
+    // Run initialization with a dedicated connection. The window's background
+    // colour is decided here too: this scope already owns the pool, and the
+    // colour has to be known before the window is created.
+    let canvas = {
         let conn = pool.get().expect("Failed to get initial DB connection");
         db::init_db(&conn).expect("Failed to initialize database");
         db::init_port_forwards(&conn).expect("Failed to initialize port forwards");
         db::init_settings(&conn).expect("Failed to initialize settings");
         split_local_mongo_hosts(&conn);
         migrate_mongo_credentials(&conn);
-    }
+
+        match db::get_setting(&conn, "theme") {
+            Ok(Some(t)) if t == "light" => CANVAS_LIGHT,
+            // Unset (first launch) or unreadable: dark, matching the frontend
+            // default in index.html's head script and stores/connection.js.
+            // A failed read must never be able to leave the app windowless.
+            _ => CANVAS_DARK,
+        }
+    };
+    let db_ready_ms = start.elapsed().as_millis();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -2323,6 +2345,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db: pool,
             sessions: Mutex::new(HashMap::new()),
@@ -2339,6 +2362,50 @@ fn main() {
             redis_conns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             redis_tunnels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             redis_ops: Arc::new(Mutex::new(HashMap::new())),
+        })
+        .setup(move |app| {
+            // The window is built here, rather than declared in
+            // tauri.conf.json, so that it is created already carrying the
+            // right background colour. Until the document's first frame the
+            // webview paints the platform default -- white -- and that flash
+            // is what this exists to prevent.
+            //
+            // It has to be the colour at *creation*, not a later
+            // `set_background_color`: that setter is compiled out entirely on
+            // macOS (wry 0.55.1 gates the body on `target_os = "ios"`), so a
+            // runtime override would silently do nothing there. The
+            // creation-time path reaches both the native window and the
+            // webview layer on all three platforms.
+            //
+            // The colour cannot live in the JSON config because it depends on
+            // the persisted theme, so `create: false` hands the build to us.
+            let config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .expect("no `main` window in tauri.conf.json");
+
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .background_color(canvas)
+                .build()?;
+
+            info!(
+                db_ready_ms,
+                window_ms = start.elapsed().as_millis(),
+                "startup: database ready, main window created"
+            );
+
+            // A run killed mid-operation cannot drop its --config guard, so
+            // clear any credential files an earlier process left in the temp
+            // directory. Nothing reads the result, so it runs off the path to
+            // the first frame rather than delaying it. A plain thread, not the
+            // async runtime: this is blocking std::fs work.
+            std::thread::spawn(mongodb::sweep_stale_config_files);
+
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
@@ -2619,5 +2686,70 @@ mod tests {
         assert_eq!(r, (Some("pw".into()), Some("/k".into())));
         let r = resolve_auth(&host("other", Some("/k")), None).unwrap();
         assert_eq!(r, (None, Some("/k".into())));
+    }
+
+    /// `setup` builds the main window itself, which means tauri.conf.json must
+    /// keep holding up its end: a window labelled `main` that Tauri does not
+    /// create on our behalf. If either half drifts the app launches with no
+    /// window at all -- a far harder failure than the flash this replaced, and
+    /// one that only shows up at runtime.
+    #[test]
+    fn the_main_window_is_declared_for_setup_to_build() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        let windows = config["app"]["windows"]
+            .as_array()
+            .expect("app.windows should be an array");
+
+        let main = windows
+            .iter()
+            .find(|w| w["label"] == "main")
+            .expect("no window labelled `main`; setup() looks it up by that label");
+        assert_eq!(
+            main["create"], false,
+            "`main` must be create:false, or Tauri builds it before setup can colour it"
+        );
+        assert_eq!(
+            windows.len(),
+            1,
+            "setup only builds `main`; another declared window would never be created"
+        );
+    }
+
+    /// The window background is set in Rust but the same two colours are
+    /// declared as design tokens and duplicated again in index.html's inline
+    /// splash, because none of those three can read the others at the moment
+    /// they are needed. This is the only thing stopping them drifting apart on
+    /// the next palette change -- which would reintroduce exactly the
+    /// launch-flash bug the colours exist to prevent.
+    #[test]
+    fn canvas_colours_match_the_design_tokens() {
+        let tokens = include_str!("../../src/themes/tokens.css");
+
+        // `--td-canvas: R G B;` appears once per theme block: the light value
+        // in the bare `:root`, then the dark one under `html.dark`.
+        let found: Vec<Color> = tokens
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("--td-canvas:"))
+            .map(|v| {
+                let parts: Vec<u8> = v
+                    .trim_end_matches(';')
+                    .split_whitespace()
+                    .map(|n| n.parse().expect("--td-canvas channel is not a u8"))
+                    .collect();
+                assert_eq!(parts.len(), 3, "--td-canvas should be three channels");
+                Color(parts[0], parts[1], parts[2], 255)
+            })
+            .collect();
+
+        // Guards the guard: a regex that matched nothing would otherwise let
+        // the assertions below pass by checking nothing at all.
+        assert_eq!(
+            found.len(),
+            2,
+            "expected one --td-canvas per theme in tokens.css, found {found:?}"
+        );
+        assert_eq!(found[0], CANVAS_LIGHT, "light --td-canvas drifted");
+        assert_eq!(found[1], CANVAS_DARK, "dark --td-canvas drifted");
     }
 }
