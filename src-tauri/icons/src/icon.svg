@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- TermDrop app icon - full mark, for 128px and up.
+       Colours track src/themes/tokens.css: accent #3B9EFF, dark surface family.
+       Solid fills and linear gradients only - resvg rasterises this, so no
+       CSS filters, no blur, no external fonts. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E2430"/>
+      <stop offset="1" stop-color="#121722"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="512" y1="320" x2="512" y2="830" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5CAFFF"/>
+      <stop offset="1" stop-color="#1B62BD"/>
+    </linearGradient>
+    <clipPath id="win">
+      <rect x="112" y="172" width="800" height="680" rx="76"/>
+    </clipPath>
+  </defs>
+
+  <!-- tile -->
+  <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
+  <!-- inner rim: keeps the tile from dissolving into a dark dock -->
+  <rect x="6" y="6" width="1012" height="1012" rx="218" fill="none" stroke="#3B9EFF" stroke-opacity="0.18" stroke-width="12"/>
+
+  <!-- terminal window -->
+  <g clip-path="url(#win)">
+    <rect x="112" y="172" width="800" height="680" fill="#0E1420"/>
+    <rect x="112" y="172" width="800" height="116" fill="#263042"/>
+  </g>
+  <circle cx="182" cy="230" r="21" fill="#4E5C74"/>
+  <circle cx="254" cy="230" r="21" fill="#4E5C74"/>
+  <circle cx="326" cy="230" r="21" fill="#4E5C74"/>
+
+  <!-- droplet -->
+  <path d="M512 320 C566 428 702 552 702 640 A190 190 0 0 1 322 640 C322 552 458 428 512 320 Z" fill="url(#drop)"/>
+
+  <!-- prompt, knocked out in the window-body colour -->
+  <polyline points="402,577 496,649 402,721" fill="none" stroke="#0E1420" stroke-width="59" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="526" y="672" width="126" height="54" rx="27" fill="#0E1420"/>
+</svg>
