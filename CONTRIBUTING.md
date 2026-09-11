@@ -60,11 +60,11 @@ We use the standard fork-and-pull workflow:
 
 1. **Fork** the repository on GitHub.
 2. **Clone** your fork locally.
-3. Create a new branch from `main`.
+3. Create a new branch from `master`.
 4. Make your changes.
 5. Run a local build to verify everything works.
 6. Push your branch to your fork.
-7. Open a **Pull Request** against the `main` branch of `sevheng/TermDrop`.
+7. Open a **Pull Request** against the `master` branch of `sevheng/TermDrop`.
 
 ---
 
@@ -73,8 +73,16 @@ We use the standard fork-and-pull workflow:
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 24 or later (see `.nvmrc`)
-- [Rust](https://rustup.rs/) stable toolchain
+- [Rust](https://rustup.rs/) stable toolchain — CI tracks stable, so a lint that
+  a newer release adds will fail there even when it passes locally; run
+  `rustup update` before assuming CI is wrong
 - A GitHub account
+
+On Linux, Tauri also needs:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+```
 
 ### Fork and Clone
 
@@ -123,7 +131,13 @@ Output locations:
 
 ```
 ssh-client/
-├── src/              # Vue 3 frontend (components, stores, composables)
+├── src/              # Vue 3 frontend
+│   ├── components/   # Single-file components
+│   ├── composables/  # Reusable stateful logic
+│   ├── stores/       # Pinia store
+│   ├── themes/       # Design tokens and base styles
+│   ├── utils/        # Pure, unit-tested helpers
+│   └── views/        # MainWindow
 ├── src-tauri/        # Rust backend and Tauri commands
 │   ├── src/          # Rust source code
 │   └── Cargo.toml    # Rust dependencies
@@ -135,6 +149,22 @@ ssh-client/
 
 - Frontend code lives in `src/` and uses Vue 3 with plain JavaScript (`<script setup>`).
 - Backend code and native commands live in `src-tauri/src/` and are written in Rust.
+
+A few conventions worth knowing before you start:
+
+- **Every new Tauri command must be added to `generate_handler![...]`** at the
+  bottom of `src-tauri/src/main.rs`. Miss it and the frontend `invoke` compiles
+  fine but fails at runtime.
+- **Colours come from tokens, not the Tailwind palette.** Use `text-ink`,
+  `bg-surface`, `border-line` and friends rather than `text-gray-400`, and use
+  the named type sizes rather than `text-[10px]`. A guard test walks every
+  `.vue` file and fails the build on either — it exists because both drifted back
+  repeatedly.
+- **Prefer the shared building blocks** — `EmptyState`, `PanelHeader`,
+  `IconButton`, `ModalShell`, `SelectMenu`, `useListenerGroup` — over
+  re-implementing them.
+- **Pure logic goes in `src/utils/` with tests**, so it can be verified without
+  mounting a component.
 
 ---
 
@@ -173,6 +203,7 @@ Use descriptive branch names:
 Before opening a pull request, please:
 
 - [ ] Run `npm run lint && npm test`, and in `src-tauri/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
+- [ ] Update `CHANGELOG.md` under `## [Unreleased]` if your change is visible to users
 - [ ] Build the project successfully with `npm run tauri build`
 - [ ] Verify the dev app runs with `npm run tauri dev`
 - [ ] Update relevant documentation if your change affects behavior

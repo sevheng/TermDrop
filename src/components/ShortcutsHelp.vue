@@ -28,6 +28,16 @@
         </section>
 
         <section>
+          <h4 class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-2">Host List</h4>
+          <div class="space-y-1">
+            <div v-for="s in hostListShortcuts" :key="s.keys" class="flex justify-between text-sm">
+              <span class="text-ink">{{ s.label }}</span>
+              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+            </div>
+          </div>
+        </section>
+
+        <section>
           <h4 class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-2">SFTP</h4>
           <div class="space-y-1">
             <div v-for="s in sftpShortcuts" :key="s.keys" class="flex justify-between text-sm">
@@ -65,12 +75,23 @@ const terminalShortcuts = [
   { keys: 'Ctrl + Shift + C', label: 'Copy selection' },
   { keys: 'Ctrl + Shift + A', label: 'Select all' },
   { keys: 'Ctrl + F', label: 'Find in terminal' },
+  { keys: 'Esc', label: 'Close the find bar' },
+  { keys: 'Right-click', label: 'Copy, paste and terminal actions' },
 ]
 
 const tabShortcuts = [
   { keys: 'Ctrl + Tab', label: 'Next tab' },
   { keys: 'Ctrl + Shift + Tab', label: 'Previous tab' },
   { keys: 'Ctrl + W', label: 'Close active tab' },
+]
+
+// The arrow-key navigation shipped with the UI pass; nothing announced it.
+const hostListShortcuts = [
+  { keys: '↑ / ↓', label: 'Move through hosts' },
+  { keys: 'Home / End', label: 'First / last host' },
+  { keys: 'PageUp / PageDown', label: 'Move a page at a time' },
+  { keys: 'Enter', label: 'Connect to the focused host' },
+  { keys: 'Delete', label: 'Delete the focused host' },
 ]
 
 const sftpShortcuts = [

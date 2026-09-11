@@ -1,6 +1,7 @@
 # TermDrop
 
-> A fast, native SSH client and SFTP browser built with [Tauri](https://tauri.app/) v2.
+> A fast, native SSH client, SFTP browser and datastore console built with
+> [Tauri](https://tauri.app/) v2.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri)](https://tauri.app/)
@@ -19,11 +20,12 @@
 Recommended captures:
 1. **Terminal view** — multi-tab SSH session with ANSI colors
 2. **SFTP browser** — file list with breadcrumbs and sorting
-3. **MongoDB sync** — side-by-side Remote/Local database trees
-4. **Host manager** — grouped host list with search
-5. **Docker panel** — container list with controls
-6. **Settings panel** — theme and font size options
-7. **Keyboard shortcuts** — help overlay
+3. **MongoDB browser** — database tree beside the document table
+4. **Redis browser** — keyspace tree with a type-aware value view
+5. **Host manager** — grouped host list with search
+6. **Docker panel** — container list with controls
+7. **Settings panel** — appearance and font size options
+8. **Keyboard shortcuts** — help overlay
 -->
 
 ## Features
@@ -31,7 +33,8 @@ Recommended captures:
 ### SSH Terminal
 - **Multi-tab** terminal powered by [xterm.js](https://xtermjs.org/) with full ANSI color support
 - **In-terminal search** (`Ctrl + F`)
-- **Copy, paste, select-all** shortcuts (`Ctrl + Shift + C / V / A`)
+- **Copy and select-all** shortcuts (`Ctrl + Shift + C / A`); paste from the
+  right-click menu
 - **Reconnect** button when a session drops, restoring the terminal and its SFTP session
 
 ### SFTP Browser
@@ -52,8 +55,27 @@ Recommended captures:
 - **Database-level** checkbox to select all collections at once
 - **Bundled MongoDB Database Tools** — no external installation required
 
+### Redis Browse, Backup & Restore
+- **Browse** — databases and their key counts on the left, keys grouped by their
+  `:` prefix. A `MATCH` pattern and a type filter narrow the `SCAN` itself, not
+  just the list on screen. Read-only: there is no command console and no edit path
+- **Type-aware viewers** for strings, hashes, lists, sets, sorted sets and
+  streams, each showing TTL, encoding and size
+- **Nothing can stall a server** — every read is a `SCAN` variant or an explicit
+  range, never `KEYS`, `HGETALL`, `SMEMBERS` or `LRANGE key 0 -1`, so a
+  ten-million-element set opens as fast as an empty one and a 5 MB string is
+  previewed rather than fetched whole
+- **Backup and restore** to a `.tdredis` file, per key via `DUMP`/`RESTORE` — so
+  it works on managed Redis where `SYNC` and `BGSAVE` are blocked. TTLs are kept
+  as remaining time, and a truncated or damaged file is refused rather than
+  half-restored
+- **Optional SSH tunnel** — reach a Redis that listens only on a private network
+  through an SSH host already saved in TermDrop
+- **Binary-safe keys** — a key that is not valid UTF-8 is carried as its exact
+  bytes and shown as base64, so it can still be opened, backed up and restored
+
 ### Host Management
-- **Save and organize** unlimited SSH hosts and MongoDB connections
+- **Save and organize** unlimited SSH hosts, MongoDB and Redis connections
 - **Groups** and **favorites** for quick access
 - **Search** hosts by name, address, username, or group
 - **Password** or **SSH key** authentication
@@ -70,7 +92,15 @@ Recommended captures:
 - **System stats** — CPU, memory, disk, network, and process overview
 
 ### UI & Customization
-- **Light & dark** theme support
+- **Light & dark** themes, chosen in Settings and previewed as you pick — the
+  terminal follows the app, so a light window no longer frames a black terminal
+- **Bundled typefaces** — IBM Plex Sans for the interface and JetBrains Mono for
+  the terminal, so the app looks the same on every platform rather than falling
+  back to whatever the OS supplies
+- **Readable everywhere** — every piece of text meets the WCAG AA contrast
+  standard on every background, in both themes
+- **Keyboard navigable** — arrow keys move through the host list, focus is
+  visible wherever it lands, and dialogs keep Tab inside them and close on Escape
 - **Adjustable** terminal font size
 - **Resizable** sidebar and panels
 - **Keyboard shortcuts** help overlay
@@ -100,11 +130,29 @@ Pre-built bundles are available on [GitHub Releases](https://github.com/sevheng/
 - [Node.js](https://nodejs.org/) 24 (see `.nvmrc`)
 - [Rust](https://rustup.rs/) stable
 
+On Linux, Tauri also needs:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+```
+
 ### Run locally
 
 ```bash
 npm install
 npm run tauri dev
+```
+
+### Checks
+
+The same gate CI runs on every push and pull request:
+
+```bash
+npm run lint && npm test          # eslint, then vitest
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
 ### Build
@@ -128,16 +176,27 @@ Output:
 |----------|--------|
 | `Ctrl + F` | Find in terminal |
 | `Ctrl + Shift + C` | Copy selection |
-| `Ctrl + Shift + V` | Paste from clipboard |
 | `Ctrl + Shift + A` | Select all |
+| `Esc` | Close the find bar |
+| Right-click | Copy, paste and terminal actions |
 
 ### Tabs
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl + Tab` | Next tab |
-| `Ctrl + Shift + Tab` | Previous tab |
+| `Ctrl + Tab` or `Ctrl + PageDown` | Next tab |
+| `Ctrl + Shift + Tab` or `Ctrl + PageUp` | Previous tab |
 | `Ctrl + W` | Close active tab |
+
+### Host List
+
+| Shortcut | Action |
+|----------|--------|
+| `↑` / `↓` | Move through hosts |
+| `Home` / `End` | First / last host |
+| `PageUp` / `PageDown` | Move a page at a time |
+| `Enter` | Connect to the focused host |
+| `Delete` | Delete the focused host |
 
 ### SFTP
 
@@ -155,21 +214,31 @@ Output:
 | Click DB checkbox | Select/deselect all collections for a backup |
 | Ctrl/Cmd+Enter | Run the query, in the document view |
 
+### Redis Panel
+
+| Shortcut | Action |
+|----------|--------|
+| Click a database | Scan its keyspace |
+| Click a key | Show its value, TTL and encoding |
+| `MATCH` box | Narrow the scan itself, not just the list on screen |
+
 ### Global
 
 | Shortcut | Action |
 |----------|--------|
-| `?` | Show keyboard shortcuts help |
-| `Ctrl + Tab` | Next tab |
-| `Ctrl + Shift + Tab` | Previous tab |
+| `Ctrl + Shift + ?` | Show keyboard shortcuts help |
+| `Ctrl + Tab` or `Ctrl + PageDown` | Next tab |
+| `Ctrl + Shift + Tab` or `Ctrl + PageUp` | Previous tab |
 | `Ctrl + W` | Close active tab |
-| `Ctrl + Shift + T` | Reopen last closed tab |
+| `Esc` | Close the active dialog |
 
 ---
 
 ## Security
 
-- **Passwords are stored in the OS keyring only** — never in the local SQLite database
+- **Passwords never touch the local SQLite database** — they go to the OS
+  keyring, or to an AES-GCM encrypted file when no keyring is available
+- **Backups and host exports carry no passwords**
 - **No cloud sync**, no telemetry, no analytics
 - **All data stays local** on your machine
 - See [`SECURITY.md`](SECURITY.md) for vulnerability disclosure
