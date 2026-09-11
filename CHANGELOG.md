@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Launching no longer flashes a white window.** The window used to appear before it could paint anything, so every launch showed a blank white rectangle and then the app dropping into it. It now opens on a TermDrop splash in your own theme and cross-fades into the app once the host list is actually loaded — so it never fades into an empty sidebar that then fills in.
+  - The window is created already carrying the theme's background colour rather than being recoloured afterwards, because the recolouring step does nothing at all on macOS
+  - **The app starts faster too.** The terminal engine is ~400 KB and was being loaded on every launch even though no terminal tab is open yet; it is now fetched while the app sits idle, which cut the startup payload from roughly 680 KB to 240 KB. The stale-file cleanup and the update check also moved off the startup path
+  - If anything goes wrong — a slow or failing host list, or a broken load — the splash gets out of the way anyway rather than leaving you staring at it
+
 ## [0.3.1] — 2026-09-11
 
 ### Added

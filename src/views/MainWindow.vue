@@ -230,7 +230,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, defineAsyncComponent, computed } from 'vue'
 import HostSidebar from '../components/HostSidebar.vue'
-import TerminalTab from '../components/TerminalTab.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -255,9 +254,13 @@ import {
 import { toast } from '../utils/toast.js'
 import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
+import { loadTerminalTab } from '../components/terminalTabLoader.js'
 
 defineEmits(['update-available'])
 
+// Lazy for the same reason as the panels below, and with more to gain: xterm is
+// ~400 KB and no tab is open at launch. Warmed on idle in onMounted.
+const TerminalTab = defineAsyncComponent(loadTerminalTab)
 const SftpPanel = defineAsyncComponent(() => import('../components/SftpPanel.vue'))
 const PortForwardPanel = defineAsyncComponent(() => import('../components/PortForwardPanel.vue'))
 const PortForwardModal = defineAsyncComponent(() => import('../components/PortForwardModal.vue'))
@@ -511,8 +514,15 @@ onMounted(() => {
   // download path. Nothing loaded them at startup, so the persisted theme was
   // never applied until the Settings dialog happened to be opened. (This used
   // to force `classList.add('dark')` here unconditionally, which overrode the
-  // choice even once it was loaded.)
-  store.loadSettings().catch(() => {})
+  // choice even once it was loaded.) They are loaded alongside the hosts now,
+  // as one memoised bootstrap, so the launch splash can wait on both.
+  store.bootstrap().finally(() => {
+    // Warm the terminal chunk once the boot fetches are done, so the first tab
+    // resolves it from cache. requestIdleCallback is recent in WebKit, hence
+    // the fallback.
+    const idle = window.requestIdleCallback || (cb => setTimeout(cb, 200))
+    idle(() => loadTerminalTab())
+  })
 
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
