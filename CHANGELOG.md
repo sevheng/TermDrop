@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-11
+
 ### Added
 - **The interface has been tidied throughout.** Every list, table and empty state now shares one treatment instead of fifteen, numbers line up in columns, and the host list fits more on screen without dropping anything.
   - **Empty states tell you what to do.** They now distinguish "nothing here yet" from "nothing matched your filter" from "still loading" — and offer the button that fixes it. The opening screen offers to add your first host instead of only telling you to pick one
