@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **A desktop notification when a backup or restore finishes.** Backing up a large database takes long enough that you go and do something else, and the in-app toast announcing the result was only visible if you had stayed on the window. The app now posts a system notification as well — but only when its window is in the background, so it does not tell you twice when you were watching. Covers MongoDB backup and restore and Redis backup and restore. ([#12](https://github.com/sevheng/TermDrop/issues/12))
+
 ### Changed
 - **Launching no longer flashes a white window.** The window used to appear before it could paint anything, so every launch showed a blank white rectangle and then the app dropping into it. It now opens on a TermDrop splash in your own theme and cross-fades into the app once the host list is actually loaded — so it never fades into an empty sidebar that then fills in.
   - The window is created already carrying the theme's background colour rather than being recoloured afterwards, because the recolouring step does nothing at all on macOS

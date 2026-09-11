@@ -3,6 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
 import { buildEntries } from '../utils/mongoSelection.js'
+import { notifyIfUnfocused } from '../utils/notify.js'
 
 const EMPTY_PROGRESS = {
   db: '',
@@ -86,6 +87,20 @@ export function useMongoBackup(hostId, selection, onRestored) {
 
   // ---- Backup ----------------------------------------------------------
 
+  /**
+   * One desktop notification summarising a finished run.
+   *
+   * Both paths here work database by database and toast each one, which is
+   * right in-app but would mean a dozen desktop alerts for a single backup.
+   * Nothing is sent when nothing succeeded -- a run that failed or was
+   * cancelled has already said so.
+   */
+  function notifyCompleted(title, verb, dbs) {
+    if (dbs.length === 0) return
+    const what = dbs.length === 1 ? dbs[0] : `${dbs.length} databases`
+    notifyIfUnfocused(title, `${verb} ${what}`)
+  }
+
   async function backupFolder() {
     if (!hostId.value || selectedCount() === 0) return
 
@@ -141,6 +156,11 @@ export function useMongoBackup(hostId, selection, onRestored) {
 
     beginOperation(isArchive ? 'backup-archive' : 'backup-folder')
 
+    // One notification for the whole run, not one per database: a toast per
+    // database is fine in-app, but a dozen desktop alerts for a single backup
+    // is not.
+    const done = []
+
     for (const entry of entries) {
       if (aborting.value) break
       nextOpId()
@@ -154,6 +174,7 @@ export function useMongoBackup(hostId, selection, onRestored) {
           opId: currentOpId.value,
         })
         toast(`Backed up ${entry.db}: ${entry.collections.join(', ')}`, 'success')
+        done.push(entry.db)
       } catch (err) {
         if (handleOperationError(err, `Cancelled ${entry.db}`, `Backup failed for ${entry.db}`)) {
           break
@@ -161,6 +182,7 @@ export function useMongoBackup(hostId, selection, onRestored) {
       }
     }
 
+    notifyCompleted('Backup complete', 'Backed up', done)
     resetOperationState()
   }
 
@@ -263,6 +285,7 @@ export function useMongoBackup(hostId, selection, onRestored) {
 
     beginOperation(isArchive ? 'restore-archive' : 'restore-folder')
     const hasSelection = entries.length > 0
+    const done = []
 
     if (isArchive) {
       // An archive can hold many databases; one mongorestore takes them all.
@@ -283,6 +306,7 @@ export function useMongoBackup(hostId, selection, onRestored) {
           hasSelection ? 'Restored selected collections from archive' : 'Restored archive',
           'success',
         )
+        done.push('archive')
       } catch (err) {
         handleOperationError(err, 'Cancelled archive restore', 'Archive restore failed')
       }
@@ -301,12 +325,14 @@ export function useMongoBackup(hostId, selection, onRestored) {
             opId: currentOpId.value,
           })
           toast(job.success, 'success')
+          done.push(job.db)
         } catch (err) {
           if (handleOperationError(err, job.cancelled, job.failed)) break
         }
       }
     }
 
+    notifyCompleted('Restore complete', 'Restored', done)
     resetOperationState()
     // Show what was just restored without needing the tab reopened.
     await onRestored?.()
