@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- TermDrop app icon - small variant, for 16/24/32/48/64.
+       Same tile and colours as icon.svg, but the terminal window chrome and
+       its dots are gone: at those sizes three nested containers turn to mud,
+       so the droplet is enlarged to fill the tile and the prompt is knocked
+       straight out of it, letting the tile gradient show through. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E2430"/>
+      <stop offset="1" stop-color="#121722"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="512" y1="190" x2="512" y2="870" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5CAFFF"/>
+      <stop offset="1" stop-color="#1B62BD"/>
+    </linearGradient>
+    <!-- white keeps the droplet, black cuts the prompt out of it -->
+    <mask id="prompt" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#000"/>
+      <path d="M512 190 C584 330 762 500 762 620 A250 250 0 0 1 262 620 C262 500 440 330 512 190 Z" fill="#fff"/>
+      <polyline points="380,516 478,620 380,724" fill="none" stroke="#000" stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="552" y="656" width="132" height="68" rx="34" fill="#000"/>
+    </mask>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
+  <rect x="6" y="6" width="1012" height="1012" rx="218" fill="none" stroke="#3B9EFF" stroke-opacity="0.18" stroke-width="12"/>
+
+  <rect width="1024" height="1024" fill="url(#drop)" mask="url(#prompt)"/>
+</svg>

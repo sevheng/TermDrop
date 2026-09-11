@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "bump-version": "node scripts/bump-version.mjs",
+    "icons": "node scripts/gen-icons.mjs",
     "test": "vitest run",
     "lint": "eslint ."
   },
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.5.0",
