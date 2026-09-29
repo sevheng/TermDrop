@@ -280,6 +280,17 @@ pub fn start_ephemeral_local(
     })
 }
 
+/// Open an SSH session for a tunnel.
+///
+/// Delegates to `ssh::session::create_exec_session` rather than repeating its
+/// body, which is how this path came to be the one place with no host key
+/// verification: a fourth copy of "handshake then authenticate" is a fourth
+/// place to forget the check.
+///
+/// It verifies **strictly** and never prompts. A tunnel session is opened per
+/// accepted socket, on a thread with no user attached — possibly while a Redis
+/// pane refreshes at 3am — so an unknown key here is an error. Trust is
+/// established by connecting the SSH host in a terminal tab once.
 fn create_ssh_session(
     host: &str,
     port: u16,
@@ -287,28 +298,9 @@ fn create_ssh_session(
     password: Option<&str>,
     key_path: Option<&str>,
 ) -> Result<Session, String> {
-    let tcp = crate::ssh::session::resolve_and_connect(host, port)
-        .map_err(|e| format!("connect: {}", e))?;
-    let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
-    session.set_tcp_stream(tcp);
-    session
-        .handshake()
-        .map_err(|e| format!("handshake: {}", e))?;
-
-    if let Some(key_path) = key_path {
-        let expanded = crate::ssh::session::expand_key_path(key_path);
-        session
-            .userauth_pubkey_file(username, None, &expanded, None)
-            .map_err(|e| format!("key auth: {}", e))?;
-    } else if let Some(password) = password {
-        session
-            .userauth_password(username, password)
-            .map_err(|e| format!("auth: {}", e))?;
-    } else {
-        return Err("no credentials provided".to_string());
-    }
-
-    Ok(session)
+    // Passphrase-protected keys are not yet carried through the forwarding
+    // commands; an encrypted key fails here exactly as it did before.
+    crate::ssh::session::create_exec_session(host, port, username, password, key_path, None)
 }
 
 fn handle_local_connection(

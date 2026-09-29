@@ -1,7 +1,9 @@
 pub mod exec;
 pub mod io_loop;
+pub mod known_hosts;
 pub mod pty;
 pub mod session;
+pub mod trust;
 
 pub use session::create_exec_session;
 
@@ -32,6 +34,12 @@ struct ConnectParams {
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    /// For an encrypted private key.
+    passphrase: Option<String>,
+    /// The host key fingerprint the user explicitly accepted, if they were
+    /// asked. Compared against the key actually presented, so an acceptance
+    /// cannot let a different server through.
+    accept_host_key: Option<String>,
 }
 
 /// Event names and payload id key that distinguish the interactive shell
@@ -82,6 +90,8 @@ fn spawn_pty_thread(
             &params.username,
             params.password.as_deref(),
             params.key_path.as_deref(),
+            params.passphrase.as_deref(),
+            params.accept_host_key.as_deref(),
         ) {
             Ok(s) => s,
             Err(e) => {
@@ -130,6 +140,8 @@ pub fn connect(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    passphrase: Option<String>,
+    accept_host_key: Option<String>,
     initial_cols: u32,
     initial_rows: u32,
 ) -> Result<SshSessionHandle, String> {
@@ -147,6 +159,8 @@ pub fn connect(
             username,
             password,
             key_path,
+            passphrase,
+            accept_host_key,
         },
         SHELL_EVENTS,
         move |session| pty::create_pty_channel(session, initial_cols, initial_rows),
@@ -176,6 +190,7 @@ pub fn exec_pty_connect(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    passphrase: Option<String>,
     command: String,
 ) -> Result<ExecPtyHandle, String> {
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
@@ -191,6 +206,11 @@ pub fn exec_pty_connect(
             username,
             password,
             key_path,
+            passphrase,
+            // A docker-exec PTY reuses a host the user already has a terminal
+            // on, so its key is already trusted. Nothing is prompted from
+            // here: an unknown key is refused rather than asked about.
+            accept_host_key: None,
         },
         EXEC_PTY_EVENTS,
         move |session| pty::create_exec_pty_channel(session, &command),

@@ -33,6 +33,7 @@ pub fn sftp_connect(
     username: String,
     password: Option<String>,
     key_path: Option<String>,
+    passphrase: Option<String>,
     host_id: i64,
 ) -> Result<SftpSessionHandle, String> {
     let session = crate::ssh::session::create_exec_session(
@@ -41,6 +42,7 @@ pub fn sftp_connect(
         &username,
         password.as_deref(),
         key_path.as_deref(),
+        passphrase.as_deref(),
     )?;
 
     Ok(SftpSessionHandle {

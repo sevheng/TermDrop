@@ -381,20 +381,57 @@ fn load_host(state: &State<'_, AppState>, host_id: i64) -> Result<db::Host, Stri
 /// Resolve `(password, key_path)` for a host. Password hosts use
 /// `password_override` when given and the keyring otherwise; key hosts use
 /// the stored key path. Unknown auth types pass the override through.
-fn resolve_auth(
-    host: &db::Host,
-    password_override: Option<String>,
-) -> Result<(Option<String>, Option<String>), String> {
+/// The keyring account for a private key's passphrase.
+///
+/// Non-numeric by construction, so it cannot collide with the bare host id
+/// that SSH passwords use, nor with `redis-<id>` or `vnc-<id>`.
+/// `crypto::tests::named_accounts_cannot_collide_with_host_ids` pins that.
+#[allow(dead_code)] // used once the passphrase prompt lands
+fn key_passphrase_account(host_id: i64) -> String {
+    format!("sshkey-{}", host_id)
+}
+
+/// Everything needed to authenticate to a host.
+///
+/// A struct rather than a growing tuple: `passphrase` is meaningful only
+/// alongside `key_path`, and positional arguments stopped carrying that at
+/// three fields.
+struct Auth {
+    password: Option<String>,
+    key_path: Option<String>,
+    /// For an encrypted private key. `None` means the key is unencrypted, or
+    /// no passphrase has been stored yet.
+    passphrase: Option<String>,
+}
+
+fn resolve_auth(host: &db::Host, password_override: Option<String>) -> Result<Auth, String> {
+    // A miss is normal: most keys the app has not been told about yet are
+    // unencrypted, and an encrypted one surfaces as an auth failure that the
+    // frontend turns into a passphrase prompt.
+    let passphrase = crypto::get_secret(&key_passphrase_account(host.id)).ok();
+
     match host.auth_type.as_str() {
         "password" => {
             let pw = match password_override {
                 Some(p) => Some(p),
                 None => Some(crypto::get_password(host.id)?),
             };
-            Ok((pw, None))
+            Ok(Auth {
+                password: pw,
+                key_path: None,
+                passphrase: None,
+            })
         }
-        "key" => Ok((None, host.key_path.clone())),
-        _ => Ok((password_override, host.key_path.clone())),
+        "key" => Ok(Auth {
+            password: None,
+            key_path: host.key_path.clone(),
+            passphrase,
+        }),
+        _ => Ok(Auth {
+            password: password_override,
+            key_path: host.key_path.clone(),
+            passphrase,
+        }),
     }
 }
 
@@ -609,12 +646,17 @@ async fn ssh_connect(
     state: State<'_, AppState>,
     host_id: i64,
     password: Option<String>,
+    // The host key fingerprint the user was shown and agreed to, when they
+    // were asked. Compared against the key the server actually presents, so an
+    // acceptance cannot be replayed to let a different server through.
+    accept_host_key: Option<String>,
     cols: u32,
     rows: u32,
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = resolve_auth(&host, password)?;
+    let auth = resolve_auth(&host, password)?;
+    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let handle = ssh::connect(
@@ -626,6 +668,8 @@ async fn ssh_connect(
         host.username.clone(),
         password.clone(),
         key_path.clone(),
+        passphrase.clone(),
+        accept_host_key,
         cols,
         rows,
     )?;
@@ -636,6 +680,7 @@ async fn ssh_connect(
     let username = host.username.clone();
     let password_clone = password.clone();
     let key_path_clone = key_path.clone();
+    let passphrase_clone = passphrase.clone();
     let exec_session = tokio::task::spawn_blocking(move || {
         ssh::create_exec_session(
             &host_clone,
@@ -643,6 +688,7 @@ async fn ssh_connect(
             &username,
             password_clone.as_deref(),
             key_path_clone.as_deref(),
+            passphrase_clone.as_deref(),
         )
     })
     .await
@@ -800,7 +846,8 @@ async fn ssh_reconnect(
 
     let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = resolve_auth(&host, password)?;
+    let auth = resolve_auth(&host, password)?;
+    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
 
     // Remove old session
     {
@@ -820,6 +867,7 @@ async fn ssh_reconnect(
     let username = host.username.clone();
     let password_clone = password.clone();
     let key_path_clone = key_path.clone();
+    let passphrase_clone = passphrase.clone();
     let exec_session = tokio::task::spawn_blocking(move || {
         ssh::create_exec_session(
             &host_clone,
@@ -827,6 +875,7 @@ async fn ssh_reconnect(
             &username,
             password_clone.as_deref(),
             key_path_clone.as_deref(),
+            passphrase_clone.as_deref(),
         )
     })
     .await
@@ -843,6 +892,11 @@ async fn ssh_reconnect(
         host.username.clone(),
         password.clone(),
         key_path.clone(),
+        passphrase.clone(),
+        // A reconnect targets a host whose key was accepted when the tab was
+        // first opened. Nothing is prompted from here: if the key is no longer
+        // what it was, the reconnect fails rather than asking again.
+        None,
         80,
         24,
     )?;
@@ -865,6 +919,7 @@ async fn ssh_reconnect(
         let sftp_user = host.username.clone();
         let sftp_password = password.clone();
         let sftp_key = key_path.clone();
+        let sftp_passphrase = passphrase.clone();
         match tokio::task::spawn_blocking(move || {
             sftp::sftp_connect(
                 sftp_host,
@@ -872,6 +927,7 @@ async fn ssh_reconnect(
                 sftp_user,
                 sftp_password,
                 sftp_key,
+                sftp_passphrase,
                 host_id,
             )
         })
@@ -899,7 +955,8 @@ async fn sftp_connect(
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = resolve_auth(&host, password)?;
+    let auth = resolve_auth(&host, password)?;
+    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
 
     let sftp_id = uuid::Uuid::new_v4().to_string();
     let sftp_id_clone = sftp_id.clone();
@@ -909,7 +966,9 @@ async fn sftp_connect(
 
     // Run blocking SFTP connect off the async thread
     let handle = tokio::task::spawn_blocking(move || {
-        sftp::sftp_connect(host_host, port, username, password, key_path, host_id)
+        sftp::sftp_connect(
+            host_host, port, username, password, key_path, passphrase, host_id,
+        )
     })
     .await
     .map_err(|e| format!("sftp connect task failed: {}", e))?
@@ -1242,7 +1301,8 @@ async fn exec_pty_connect(
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
 
-    let (password, key_path) = resolve_auth(&host, None)?;
+    let auth = resolve_auth(&host, None)?;
+    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
 
     let handle = ssh::exec_pty_connect(
         window,
@@ -1253,6 +1313,7 @@ async fn exec_pty_connect(
         host.username.clone(),
         password.clone(),
         key_path.clone(),
+        passphrase.clone(),
         command,
     )?;
 
@@ -1384,7 +1445,10 @@ fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), St
         (host, forward)
     };
 
-    let (password, key_path) = resolve_auth(&host, None)?;
+    let auth = resolve_auth(&host, None)?;
+    // Port forwards do not carry a key passphrase yet: the forwarding commands
+    // have no path for one, so an encrypted key fails here as it always has.
+    let (password, key_path) = (auth.password, auth.key_path);
 
     match forward.kind.as_str() {
         "local" => {
@@ -1879,7 +1943,8 @@ async fn redis_tunnel_port(
         .ok_or_else(|| "no Redis connection configured".to_string())?;
     let (remote_host, remote_port) = redis::uri_endpoint(uri)?;
 
-    let (auth_password, auth_key_path) = resolve_auth(&via, ssh_password)?;
+    let resolved = resolve_auth(&via, ssh_password)?;
+    let (auth_password, auth_key_path) = (resolved.password, resolved.key_path);
     let (ssh_host, ssh_port, username) = (via.host.clone(), via.port as u16, via.username.clone());
 
     // Holding the lock across the handshake keeps two tabs opening at once from
@@ -2669,23 +2734,38 @@ mod tests {
     #[test]
     fn resolve_auth_password_host_uses_override_without_keyring() {
         let r = resolve_auth(&host("password", Some("/ignored")), Some("pw".into())).unwrap();
-        assert_eq!(r, (Some("pw".into()), None));
+        assert_eq!(r.password.as_deref(), Some("pw"));
+        assert_eq!(r.key_path, None);
+    }
+
+    #[test]
+    fn a_password_host_carries_no_key_passphrase() {
+        // A passphrase belongs to a private key. Resolving one for a host that
+        // authenticates by password would put a secret where nothing reads it.
+        let r = resolve_auth(&host("password", Some("/ignored")), Some("pw".into())).unwrap();
+        assert_eq!(r.passphrase, None);
     }
 
     #[test]
     fn resolve_auth_key_host_ignores_override() {
         let r = resolve_auth(&host("key", Some("/k")), Some("pw".into())).unwrap();
-        assert_eq!(r, (None, Some("/k".into())));
+        assert_eq!(r.password, None);
+        assert_eq!(r.key_path.as_deref(), Some("/k"));
+
         let r = resolve_auth(&host("key", None), None).unwrap();
-        assert_eq!(r, (None, None));
+        assert_eq!(r.password, None);
+        assert_eq!(r.key_path, None);
     }
 
     #[test]
     fn resolve_auth_unknown_type_passes_override_and_key_through() {
         let r = resolve_auth(&host("other", Some("/k")), Some("pw".into())).unwrap();
-        assert_eq!(r, (Some("pw".into()), Some("/k".into())));
+        assert_eq!(r.password.as_deref(), Some("pw"));
+        assert_eq!(r.key_path.as_deref(), Some("/k"));
+
         let r = resolve_auth(&host("other", Some("/k")), None).unwrap();
-        assert_eq!(r, (None, Some("/k".into())));
+        assert_eq!(r.password, None);
+        assert_eq!(r.key_path.as_deref(), Some("/k"));
     }
 
     /// `setup` builds the main window itself, which means tauri.conf.json must

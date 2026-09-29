@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
+import { parseTrustError, shouldAskToTrust } from '../utils/trustError.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
@@ -258,7 +259,25 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  async function connect(hostId, providedPassword = null) {
+  /**
+   * Ask the user whether to trust a host key, once.
+   *
+   * Resolves to the fingerprint they accepted, or null. The fingerprint is
+   * what gets sent back — not a yes — so the backend can require it to equal
+   * the key the server presents on the retry.
+   */
+  function askToTrust(info) {
+    return new Promise(resolve => {
+      const onResponse = event => {
+        window.removeEventListener('host-key-response', onResponse)
+        resolve(event.detail?.accepted ? info.fingerprint : null)
+      }
+      window.addEventListener('host-key-response', onResponse)
+      window.dispatchEvent(new CustomEvent('host-key-prompt', { detail: info }))
+    })
+  }
+
+  async function connect(hostId, providedPassword = null, acceptHostKey = null) {
     // Start the terminal chunk now so it loads against the SSH handshake
     // rather than against the tab's first render. Idempotent -- the idle
     // warm-up in MainWindow has usually already done it.
@@ -273,10 +292,30 @@ export const useConnectionStore = defineStore('connection', () => {
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
+    if (acceptHostKey) {
+      sshArgs.acceptHostKey = acceptHostKey
+    }
     try {
       sessionId = await invoke('ssh_connect', sshArgs)
     } catch (err) {
       connectingHostId.value = null
+
+      // A changed or revoked key gets the alarm and stops here. There is no
+      // branch that retries past it, which is what makes the dialog's lack of
+      // a "connect anyway" button true rather than decorative.
+      const trust = parseTrustError(err)
+      if (trust?.kind === 'refused') {
+        window.dispatchEvent(new CustomEvent('host-key-refused', { detail: trust }))
+        throw err
+      }
+
+      const unknown = shouldAskToTrust(err, !!acceptHostKey)
+      if (unknown) {
+        const accepted = await askToTrust(unknown)
+        if (accepted) return connect(hostId, providedPassword, accepted)
+        throw err
+      }
+
       if (!isKeyAuth && isMissingKeyringPassword(err) && !providedPassword) {
         const password = await showPromptDialog(
           'Password required',
