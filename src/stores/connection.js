@@ -399,6 +399,14 @@ export const useConnectionStore = defineStore('connection', () => {
       prefix: 'redis',
       disconnect: 'redis_disconnect',
     },
+    [TAB_KIND.VNC]: {
+      uriField: 'vnc_host',
+      prefix: 'vnc',
+      // Not `vnc_disconnect`, which takes a session id: the panel owns that and
+      // closes it itself. This one tears down every session for the host and
+      // releases its tunnel.
+      disconnect: 'vnc_disconnect_host',
+    },
   }
 
   /**
@@ -438,8 +446,13 @@ export const useConnectionStore = defineStore('connection', () => {
     // Release the backend's pooled connections (and, for Redis, its SSH
     // tunnel) for this host, mirroring the per-host cleanup SSH tabs do on
     // disconnect.
+    // Same *kind* as well as same host. A VNC tab can sit on an SSH host that
+    // also has a shell tab open, and without the kind test that shell would
+    // suppress the disconnect forever -- leaking the RFB session and its
+    // tunnel. Behaviour is unchanged for MongoDB and Redis, whose rows cannot
+    // have an SSH tab.
     const spec = SERVICE_TABS[tab?.type]
-    if (spec && !tabs.value.some(t => t.hostId === tab.hostId)) {
+    if (spec && !tabs.value.some(t => t.hostId === tab.hostId && t.type === tab.type)) {
       invoke(spec.disconnect, { hostId: tab.hostId }).catch(() => {})
     }
     if (activeTabId.value === sessionId) {
@@ -449,6 +462,7 @@ export const useConnectionStore = defineStore('connection', () => {
 
   const openMongoTab = hostId => openServiceTab(hostId, TAB_KIND.MONGODB)
   const openRedisTab = hostId => openServiceTab(hostId, TAB_KIND.REDIS)
+  const openVncTab = hostId => openServiceTab(hostId, TAB_KIND.VNC)
 
   function setActiveTab(sessionId) {
     activeTabId.value = sessionId
@@ -572,6 +586,7 @@ export const useConnectionStore = defineStore('connection', () => {
     disconnect,
     openMongoTab,
     openRedisTab,
+    openVncTab,
     openServiceTab,
     closeServiceTab,
     setActiveTab,

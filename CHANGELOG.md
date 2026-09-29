@@ -20,10 +20,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Both hosts' keys are checked. The first connection can ask twice (the jump host, then the host behind it), and the host behind it is checked under its own name rather than as a local relay, so its entry in `known_hosts` stays correct
   - Importing from `~/.ssh/config` reads `ProxyJump` and links each host to the matching saved host. One it cannot match is listed rather than guessed
   - One hop for now, and the jump host's password must already be saved. A deleted jump host is reported when you connect, rather than quietly connecting directly
+- **Remote desktops (VNC).** A machine's screen now opens as a tab inside TermDrop, beside its shell, alongside the MongoDB and Redis tabs — rather than sending you out to a separate VNC client with its own host list, its own credentials and no knowledge of the SSH bastion TermDrop already knows how to reach.
+  - Add one from the sidebar's **+** menu, or put VNC settings on an SSH host you already have and open it from that host's right-click menu. An SSH host stays an SSH host: double-clicking it still opens a shell.
+  - **A VNC server on an SSH host tunnels through that host by default**, because a VNC server almost always listens on `127.0.0.1` only and would not be reachable any other way. There is a checkbox for the rare one that is not.
+  - Speaks RFB 3.8 and 3.3, with the Tight, ZRLE, CopyRect and Raw encodings, and follows the remote's own mouse pointer and desktop size. Authentication covers servers with no password, the classic VNC password, and macOS Screen Sharing.
+  - Clipboard in both directions, a view-only switch, fit-to-window and actual-size, and a **Send Ctrl+Alt+Delete** button — that combination never reaches a web page, so a button is the only way to send it.
+  - The tab takes every keystroke, including the app's own shortcuts, so that the remote gets them. <kbd>Ctrl + Alt + Shift</kbd> hands the keyboard back.
+  - Passwords are stored in the OS keyring like every other credential and never written to the database.
 - **A desktop notification when a backup or restore finishes.** Backing up a large database takes long enough that you go and do something else, and the in-app toast announcing the result was only visible if you had stayed on the window. The app now posts a system notification as well — but only when its window is in the background, so it does not tell you twice when you were watching. Covers MongoDB backup and restore and Redis backup and restore. ([#12](https://github.com/sevheng/TermDrop/issues/12))
 
 ### Fixed
 - **Editing an SSH host no longer takes it out of its group or removes its star.** The edit form did not carry either field, and saving wrote every column, so both were reset on every edit.
+- **Remote desktops felt laggy, and mostly it was one bug.** When the remote had nothing new to draw — which a desktop sitting idle mostly does — TermDrop waited a quarter of a second before asking again, because it was waiting to hear back about a picture that was never sent. Moving the mouse and watching the remote pointer catch up a beat later was that, not the network.
+  - **Keystrokes and clicks no longer queue behind the screen.** Sending and receiving now happen independently, so input goes out the moment you make it instead of waiting for whatever frame was in mid-flight — which on a large display could be over a tenth of a second.
+  - **The pointer no longer waits for the next repaint before moving.** The first movement of a gesture is now sent immediately, which is the one the eye is actually waiting on.
+  - **A remote desktop in a background tab now really does pause**, instead of quietly carrying on decoding frames nobody was looking at.
+  - The mouse pointer's shape is no longer re-encoded from scratch every time it changes, which on macOS is constantly.
+- **Editing a Redis host's connection kept using the old one.** The cached connection and its SSH tunnel were only dropped when the app restarted, so a corrected address appeared to do nothing. Deleting a Redis host also left its password behind in the OS keyring. Both are now cleaned up with the row.
 
 ### Changed
 - **Launching no longer flashes a white window.** The window used to appear before it could paint anything, so every launch showed a blank white rectangle and then the app dropping into it. It now opens on a TermDrop splash in your own theme and cross-fades into the app once the host list is actually loaded — so it never fades into an empty sidebar that then fills in.

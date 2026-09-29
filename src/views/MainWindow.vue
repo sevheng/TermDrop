@@ -35,6 +35,7 @@
               class="shrink-0 text-accent"
             />
             <Layers v-else-if="tabKind(tab) === 'redis'" :size="12" class="shrink-0 text-redis" />
+            <Monitor v-else-if="tabKind(tab) === 'vnc'" :size="12" class="shrink-0 text-vnc" />
             <span
               v-else
               class="w-2 h-2 rounded-full shrink-0"
@@ -93,6 +94,14 @@
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :hostId="tab.hostId"
+            class="w-full h-full absolute top-0 left-0"
+          />
+          <VncPanel
+            v-for="tab in vncTabs"
+            :key="tab.id"
+            v-show="tab.id === store.activeTabId"
+            :hostId="tab.hostId"
+            :isActive="tab.id === store.activeTabId"
             class="w-full h-full absolute top-0 left-0"
           />
           <!-- The app's front door. It offered a new user nothing to do; the
@@ -259,6 +268,7 @@ import {
   X,
   Database,
   Layers,
+  Monitor,
   Plus,
 } from 'lucide-vue-next'
 import {
@@ -291,11 +301,13 @@ const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel
 const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityPanel.vue'))
 const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
 const RedisPanel = defineAsyncComponent(() => import('../components/RedisPanel.vue'))
+const VncPanel = defineAsyncComponent(() => import('../components/VncPanel.vue'))
 
 const store = useConnectionStore()
 const sshTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.SSH))
 const mongoTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.MONGODB))
 const redisTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.REDIS))
+const vncTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.VNC))
 const showSettings = ref(false)
 const showShortcuts = ref(false)
 const rightPanelTab = ref('sftp')
@@ -468,6 +480,14 @@ function onPromptDialogCancel() {
 // Global keyboard shortcuts
 function onKeyDown(e) {
   if (store.tabs.length === 0) return
+
+  // A VNC tab owns the keyboard entirely -- the remote desktop needs Ctrl+W,
+  // Ctrl+Tab and the rest far more than this window does. The canvas already
+  // calls stopPropagation, and this listener is on `window` with no capture
+  // flag so that is enough; the check is here as well because a keystroke
+  // reaching a global shortcut instead of the remote is a confusing failure to
+  // diagnose. Ctrl+Alt+Shift releases the keyboard again.
+  if (tabKind(store.activeTab) === TAB_KIND.VNC) return
 
   // Ctrl+Tab / Ctrl+PageDown → next tab
   if (e.ctrlKey && !e.shiftKey && (e.key === 'Tab' || e.key === 'PageDown')) {

@@ -61,6 +61,7 @@
   /* brand */
   --td-redis: 179 32 23;
   --td-mongo: 21 99 58;
+  --td-vnc: 109 40 217;
   --td-mongo-solid: 21 99 58;
   --td-mongo-solid-hover: 15 78 45;
 
@@ -161,6 +162,7 @@ html.dark {
   /* brand */
   --td-redis: 240 83 63;
   --td-mongo: 77 208 122;
+  --td-vnc: 167 139 250;
   --td-mongo-solid: 36 112 74;
   --td-mongo-solid-hover: 45 135 89;
 

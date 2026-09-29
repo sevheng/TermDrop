@@ -59,6 +59,13 @@
               <Layers :size="12" class="text-redis" />
               Redis
             </button>
+            <button
+              @click="openVncModal(); showAddMenu = false"
+              class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
+            >
+              <Monitor :size="12" class="text-vnc" />
+              Remote desktop
+            </button>
           </div>
         </div>
       </div>
@@ -193,6 +200,16 @@
           <Zap :size="12" class="text-accent" />
           {{ activateVerb(contextMenu.data) }}
         </button>
+        <!-- Shown for an SSH host that also has a screen: its kind is still
+             SSH, so the double-click stays a shell and this is the way in. -->
+        <button
+          v-if="hasVnc(contextMenu.data) && hostKind(contextMenu.data) === HOST_KIND.SSH"
+          @click="menuAction(() => store.openVncTab(contextMenu.data.id))"
+          class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised"
+        >
+          <Monitor :size="12" class="text-vnc" />
+          Open remote desktop
+        </button>
         <button @click="menuAction(() => editHost(contextMenu.data))" class="flex items-center gap-2 w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">
           <Pencil :size="12" class="text-ink-3" />
           Edit
@@ -273,6 +290,13 @@
       @save="handleRedisSave"
     />
 
+    <VncModal
+      :show="showVncModal"
+      :host="editingHost"
+      @close="showVncModal = false"
+      @save="handleVncSave"
+    />
+
     <GroupModal
       :show="showGroupModal"
       :mode="groupModalMode"
@@ -305,11 +329,12 @@ import {
   Plus, Server, Database, Layers, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,
   List, LayoutGrid, Star,
-  Zap, Pencil, Trash2,
+  Zap, Pencil, Trash2, Monitor,
 } from 'lucide-vue-next'
 import HostModal from './HostModal.vue'
 import MongoDbModal from './MongoDbModal.vue'
 import RedisModal from './RedisModal.vue'
+import VncModal from './VncModal.vue'
 import GroupModal from './GroupModal.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import HostRow from './HostRow.vue'
@@ -320,7 +345,8 @@ import { toast } from '../utils/toast.js'
 import { parseHostsFile, normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
 import { splitMongoUri } from '../utils/mongoUri.js'
 import { splitRedisUri } from '../utils/redisUri.js'
-import { hostKind, HOST_KIND, activateVerb } from '../utils/hostKind.js'
+import { hostKind, HOST_KIND, activateVerb, hasVnc } from '../utils/hostKind.js'
+import { closeActionFor } from '../utils/tabKinds.js'
 import { groupAccentClass } from '../utils/groupAccent.js'
 import { hostRowState } from '../utils/hostRowState.js'
 import { filterHosts, groupHosts, groupNames } from '../utils/hostGrouping.js'
@@ -334,6 +360,7 @@ const store = useConnectionStore()
 const showModal = ref(false)
 const showMongoModal = ref(false)
 const showRedisModal = ref(false)
+const showVncModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
@@ -642,12 +669,18 @@ function openRedisModal() {
   showRedisModal.value = true
 }
 
+function openVncModal() {
+  editingHost.value = null
+  showVncModal.value = true
+}
+
 /** Each kind edits in its own dialog, chosen by what the row actually is. */
 function editHost(host) {
   editingHost.value = host
   const kind = hostKind(host)
   showMongoModal.value = kind === HOST_KIND.MONGODB
   showRedisModal.value = kind === HOST_KIND.REDIS
+  showVncModal.value = kind === HOST_KIND.VNC
   showModal.value = kind === HOST_KIND.SSH
 }
 
@@ -752,6 +785,61 @@ async function handleRedisSave({ id, name, redis_uri, redis_tunnel_host_id }) {
   await store.loadHosts()
 }
 
+/**
+ * Save a VNC-only host.
+ *
+ * Unlike the datastore kinds there is no URI to split: the address and the
+ * password are separate fields from the start, and the password goes straight
+ * to the keyring without ever passing through a column.
+ */
+async function handleVncSave({
+  id,
+  name,
+  vnc_host,
+  vnc_port,
+  vnc_username,
+  vnc_tunnel_host_id,
+  vnc_view_only,
+  password,
+}) {
+  const hostData = {
+    name,
+    host: '',
+    port: 0,
+    username: '',
+    auth_type: 'password',
+    key_path: null,
+    group: null,
+    favorite: null,
+    mongo_uri: null,
+    mongo_local_uri: null,
+    redis_uri: null,
+    redis_tunnel_host_id: null,
+    vnc_host,
+    vnc_port,
+    vnc_username,
+    vnc_tunnel_host_id: vnc_tunnel_host_id ?? null,
+    vnc_view_only,
+  }
+
+  try {
+    const hostId = id || (await store.addHost(hostData))
+    if (id) await store.updateHost(id, hostData)
+
+    // Same rule as the other kinds: an empty field on edit means "keep what is
+    // stored", never "delete it".
+    if (password) {
+      await invoke('vnc_store_secret', { hostId, password })
+    }
+  } catch (err) {
+    toast(`Failed to save the remote desktop: ${err}`, 'error')
+    return
+  }
+
+  showVncModal.value = false
+  await store.loadHosts()
+}
+
 /** Open a datastore panel, or connect a shell. */
 async function activateHost(host) {
   const kind = hostKind(host)
@@ -777,9 +865,11 @@ function deleteHost(host) {
     message: `Delete "${host.name}"${host.host ? ` (${host.host})` : ''}? This cannot be undone.`,
     danger: true,
     onConfirm: async () => {
-      const openTab = store.tabs.find(t => t.hostId === host.id)
-      if (openTab) {
-        await store.disconnect(openTab.id)
+      // Every tab for the row, and each closed the way its own kind closes:
+      // `disconnect` on a `redis-…` or `vnc-…` id would call ssh_disconnect
+      // with a session the backend has never heard of.
+      for (const openTab of store.tabs.filter(t => t.hostId === host.id)) {
+        await store[closeActionFor(openTab)](openTab.id)
       }
       await store.removeHost(host.id)
     },

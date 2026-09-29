@@ -7,6 +7,7 @@
 
 import { mongoDisplayUri } from './mongoDisplay.js'
 import { redisDisplayUri } from './redisUri.js'
+import { vncDisplayTarget } from './vncTarget.js'
 
 /**
  * The text a host can be found by.
@@ -26,6 +27,7 @@ export function hostSearchText(host) {
     host.group,
     host.mongo_uri ? mongoDisplayUri(host.mongo_uri) : '',
     host.redis_uri ? redisDisplayUri(host.redis_uri) : '',
+    vncDisplayTarget(host),
   ]
     .filter(Boolean)
     .join(' ')

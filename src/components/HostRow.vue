@@ -87,10 +87,13 @@
  * no matching line-height.
  */
 import { computed } from 'vue'
-import { Star, Pencil, Trash2, Loader2, Server, Database, Layers, Apple, Route } from 'lucide-vue-next'
+import {
+  Star, Pencil, Trash2, Loader2, Server, Database, Layers, Apple, Monitor, Route,
+} from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'
 import { redisDisplayUri } from '../utils/redisUri.js'
+import { vncDisplayTarget } from '../utils/vncTarget.js'
 import { hostKind, HOST_KIND, hostKindIconClass } from '../utils/hostKind.js'
 import { formatAge } from '../utils/hostRowState.js'
 import { useConnectionStore } from '../stores/connection.js'
@@ -115,7 +118,11 @@ const kind = computed(() => hostKind(props.host))
 /** What the row is, for the drag ghost. */
 const kindLabel = computed(
   () =>
-    ({ [HOST_KIND.MONGODB]: 'MongoDB', [HOST_KIND.REDIS]: 'Redis' })[kind.value] ||
+    ({
+      [HOST_KIND.MONGODB]: 'MongoDB',
+      [HOST_KIND.REDIS]: 'Redis',
+      [HOST_KIND.VNC]: 'VNC',
+    })[kind.value] ||
     `${props.host.username}@${props.host.host}`,
 )
 
@@ -140,6 +147,7 @@ function onDragStart(event) {
 const rowIcon = computed(() => {
   if (kind.value === HOST_KIND.MONGODB) return Database
   if (kind.value === HOST_KIND.REDIS) return Layers
+  if (kind.value === HOST_KIND.VNC) return Monitor
 
   const combined = `${props.host.name || ''} ${props.host.host || ''}`.toLowerCase()
   if (/\b(mac|darwin|osx)\b/.test(combined)) return Apple
@@ -151,6 +159,10 @@ const subtitle = computed(() => {
   if (kind.value === HOST_KIND.REDIS) {
     const via = props.host.redis_tunnel_host_id ? ' · tunnelled' : ''
     return redisDisplayUri(props.host.redis_uri) + via
+  }
+  if (kind.value === HOST_KIND.VNC) {
+    const via = props.host.vnc_tunnel_host_id ? ' · tunnelled' : ''
+    return vncDisplayTarget(props.host) + via
   }
   return `${props.host.username}@${props.host.host}:${props.host.port}`
 })

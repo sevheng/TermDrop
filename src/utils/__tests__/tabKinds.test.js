@@ -20,6 +20,7 @@ describe('tabKind', () => {
   it('reads the type when there is one', () => {
     expect(tabKind({ type: 'mongodb' })).toBe(TAB_KIND.MONGODB)
     expect(tabKind({ type: 'redis' })).toBe(TAB_KIND.REDIS)
+    expect(tabKind({ type: 'vnc' })).toBe(TAB_KIND.VNC)
   })
 
   it('falls back to SSH for an unknown type rather than throwing', () => {
@@ -55,6 +56,7 @@ describe('hasRightPanel', () => {
     expect(hasRightPanel({ id: '1' })).toBe(true)
     expect(hasRightPanel({ type: 'mongodb' })).toBe(false)
     expect(hasRightPanel({ type: 'redis' })).toBe(false)
+    expect(hasRightPanel({ type: 'vnc' })).toBe(false)
     expect(hasRightPanel(null)).toBe(false)
   })
 })
@@ -66,6 +68,9 @@ describe('acceptsCommands', () => {
     expect(acceptsCommands({ id: '1' })).toBe(true)
     expect(acceptsCommands({ type: 'mongodb' })).toBe(false)
     expect(acceptsCommands({ type: 'redis' })).toBe(false)
+    // A VNC tab forwards every keystroke to the remote desktop; a panel typing
+    // a command into it would send it somewhere nobody asked for.
+    expect(acceptsCommands({ type: 'vnc' })).toBe(false)
     expect(acceptsCommands(null)).toBe(false)
   })
 })
@@ -75,5 +80,6 @@ describe('closeActionFor', () => {
     expect(closeActionFor({ id: '1' })).toBe('disconnect')
     expect(closeActionFor({ type: 'mongodb' })).toBe('closeServiceTab')
     expect(closeActionFor({ type: 'redis' })).toBe('closeServiceTab')
+    expect(closeActionFor({ type: 'vnc' })).toBe('closeServiceTab')
   })
 })

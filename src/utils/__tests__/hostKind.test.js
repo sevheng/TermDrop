@@ -6,17 +6,47 @@ import {
   isRedisOnlyHost,
   isDatastoreHost,
   activateVerb,
+  hasVnc,
+  hostKindIconClass,
 } from '../hostKind.js'
 
 const ssh = { name: 's', host: '10.0.0.1', port: 22 }
 const mongo = { name: 'm', host: '', mongo_uri: 'mongodb://h/db' }
 const redis = { name: 'r', host: '', redis_uri: 'redis://h:6379/0' }
+const vnc = { name: 'v', host: '', vnc_host: '10.0.0.5', vnc_port: 5901 }
+const sshWithScreen = { name: 'w', host: '10.0.0.1', port: 22, vnc_host: '127.0.0.1' }
 
 describe('hostKind', () => {
   it('names each kind', () => {
     expect(hostKind(ssh)).toBe(HOST_KIND.SSH)
     expect(hostKind(mongo)).toBe(HOST_KIND.MONGODB)
     expect(hostKind(redis)).toBe(HOST_KIND.REDIS)
+    expect(hostKind(vnc)).toBe(HOST_KIND.VNC)
+  })
+
+  it('leaves an SSH host that has a screen as an SSH host', () => {
+    // The consequential case. A screen is a capability a machine has, not a
+    // thing it is -- so double-clicking this row must still open a shell, and
+    // the VNC tab is reached from the context menu instead. Getting this wrong
+    // would route the row through openServiceTab and lose the terminal.
+    expect(hostKind(sshWithScreen)).toBe(HOST_KIND.SSH)
+    expect(isDatastoreHost(sshWithScreen)).toBe(false)
+    expect(activateVerb(sshWithScreen)).toBe('Connect')
+  })
+
+  it('reports VNC capability separately from kind', () => {
+    // True of two different kinds, which is exactly why it is not one.
+    expect(hasVnc(vnc)).toBe(true)
+    expect(hasVnc(sshWithScreen)).toBe(true)
+    expect(hasVnc(ssh)).toBe(false)
+    expect(hasVnc(redis)).toBe(false)
+    expect(hasVnc(null)).toBe(false)
+  })
+
+  it('gives a VNC-only row its own icon colour', () => {
+    expect(hostKindIconClass(vnc)).toBe('text-vnc')
+    // ...but an SSH host with a screen keeps the SSH look.
+    expect(hostKindIconClass(sshWithScreen)).toBe('text-ink-3')
   })
 
   it('treats a row with an SSH host as SSH even when it carries a URI', () => {

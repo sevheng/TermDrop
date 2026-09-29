@@ -22,6 +22,20 @@ pub struct Host {
     /// The id of the SSH host this SSH host is reached through (ProxyJump), or
     /// `None` to connect directly.
     pub jump_host_id: Option<i64>,
+    /// The VNC server's address **as seen from the far end of the tunnel**
+    /// when tunnelled, or directly reachable otherwise. Its presence is what
+    /// makes a row VNC-capable; a row with this and no `host` is VNC-only.
+    pub vnc_host: Option<String>,
+    pub vnc_port: Option<i64>,
+    /// Only Apple's Screen Sharing authentication uses a user name.
+    pub vnc_username: Option<String>,
+    /// As `redis_tunnel_host_id`, but with one extra rule: an SSH row that
+    /// carries VNC settings and leaves this unset tunnels through *itself*,
+    /// because a VNC server almost always binds 127.0.0.1.
+    pub vnc_tunnel_host_id: Option<i64>,
+    /// Persisted per host, so a machine you only ever watch cannot be typed
+    /// into by accident after a reconnect.
+    pub vnc_view_only: i64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -39,6 +53,19 @@ pub struct NewHost {
     pub redis_uri: Option<String>,
     pub redis_tunnel_host_id: Option<i64>,
     pub jump_host_id: Option<i64>,
+    // Defaulted, unlike the fields above: an exported file written before VNC
+    // existed has no such keys, and rejecting the whole import over a missing
+    // optional would be a poor trade.
+    #[serde(default)]
+    pub vnc_host: Option<String>,
+    #[serde(default)]
+    pub vnc_port: Option<i64>,
+    #[serde(default)]
+    pub vnc_username: Option<String>,
+    #[serde(default)]
+    pub vnc_tunnel_host_id: Option<i64>,
+    #[serde(default)]
+    pub vnc_view_only: Option<i64>,
 }
 
 pub fn init_db(conn: &Connection) -> SqlResult<()> {
@@ -56,6 +83,11 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
             redis_uri TEXT,
             redis_tunnel_host_id INTEGER,
             jump_host_id INTEGER,
+            vnc_host TEXT,
+            vnc_port INTEGER,
+            vnc_username TEXT,
+            vnc_tunnel_host_id INTEGER,
+            vnc_view_only INTEGER DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
@@ -116,13 +148,37 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
     if !columns.contains(&"jump_host_id".to_string()) {
         conn.execute("ALTER TABLE hosts ADD COLUMN jump_host_id INTEGER", [])?;
     }
+    if !columns.contains(&"vnc_host".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN vnc_host TEXT", [])?;
+    }
+    if !columns.contains(&"vnc_port".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN vnc_port INTEGER", [])?;
+    }
+    if !columns.contains(&"vnc_username".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN vnc_username TEXT", [])?;
+    }
+    // No FOREIGN KEY, for the same reason as redis_tunnel_host_id above.
+    if !columns.contains(&"vnc_tunnel_host_id".to_string()) {
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN vnc_tunnel_host_id INTEGER",
+            [],
+        )?;
+    }
+    // The DEFAULT backfills existing rows with 0, which is why the Host field
+    // can be a plain i64 rather than an Option.
+    if !columns.contains(&"vnc_view_only".to_string()) {
+        conn.execute(
+            "ALTER TABLE hosts ADD COLUMN vnc_view_only INTEGER DEFAULT 0",
+            [],
+        )?;
+    }
 
     Ok(())
 }
 
 pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id FROM hosts ORDER BY favorite DESC, name ASC"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id, vnc_host, vnc_port, vnc_username, vnc_tunnel_host_id, vnc_view_only FROM hosts ORDER BY favorite DESC, name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(Host {
@@ -142,6 +198,11 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
             redis_uri: row.get(13)?,
             redis_tunnel_host_id: row.get(14)?,
             jump_host_id: row.get(15)?,
+            vnc_host: row.get(16)?,
+            vnc_port: row.get(17)?,
+            vnc_username: row.get(18)?,
+            vnc_tunnel_host_id: row.get(19)?,
+            vnc_view_only: row.get(20)?,
         })
     })?;
     hosts.collect()
@@ -149,7 +210,7 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
 
 pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id, vnc_host, vnc_port, vnc_username, vnc_tunnel_host_id, vnc_view_only) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             &host.name,
             &host.host,
@@ -164,6 +225,11 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
             host.redis_uri.as_deref(),
             host.redis_tunnel_host_id,
             host.jump_host_id,
+            host.vnc_host.as_deref(),
+            host.vnc_port,
+            host.vnc_username.as_deref(),
+            host.vnc_tunnel_host_id,
+            host.vnc_view_only.unwrap_or(0),
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -172,7 +238,7 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
 /// Returns the number of rows updated, which is 0 when `id` no longer exists.
 pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usize> {
     conn.execute(
-        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10, redis_uri = ?11, redis_tunnel_host_id = ?12, jump_host_id = ?13 WHERE id = ?14",
+        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10, redis_uri = ?11, redis_tunnel_host_id = ?12, jump_host_id = ?13, vnc_host = ?14, vnc_port = ?15, vnc_username = ?16, vnc_tunnel_host_id = ?17, vnc_view_only = ?18 WHERE id = ?19",
         params![
             &host.name,
             &host.host,
@@ -187,6 +253,11 @@ pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usiz
             host.redis_uri.as_deref(),
             host.redis_tunnel_host_id,
             host.jump_host_id,
+            host.vnc_host.as_deref(),
+            host.vnc_port,
+            host.vnc_username.as_deref(),
+            host.vnc_tunnel_host_id,
+            host.vnc_view_only.unwrap_or(0),
             id
         ],
     )
@@ -199,7 +270,7 @@ pub fn delete_host(conn: &Connection, id: i64) -> SqlResult<()> {
 
 pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id FROM hosts WHERE id = ?1"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id, vnc_host, vnc_port, vnc_username, vnc_tunnel_host_id, vnc_view_only FROM hosts WHERE id = ?1"
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -220,6 +291,11 @@ pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
             redis_uri: row.get(13)?,
             redis_tunnel_host_id: row.get(14)?,
             jump_host_id: row.get(15)?,
+            vnc_host: row.get(16)?,
+            vnc_port: row.get(17)?,
+            vnc_username: row.get(18)?,
+            vnc_tunnel_host_id: row.get(19)?,
+            vnc_view_only: row.get(20)?,
         }))
     } else {
         Ok(None)
@@ -431,6 +507,10 @@ pub struct ExportHost {
     pub mongo_uri: Option<String>,
     pub mongo_local_uri: Option<String>,
     pub redis_uri: Option<String>,
+    pub vnc_host: Option<String>,
+    pub vnc_port: Option<i64>,
+    pub vnc_username: Option<String>,
+    pub vnc_view_only: i64,
 }
 
 /// One host's stored MongoDB URI: `(id, uri)`.
@@ -482,7 +562,7 @@ pub fn vacuum(conn: &Connection) -> SqlResult<()> {
 
 pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
     let mut stmt = conn.prepare(
-        "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri FROM hosts ORDER BY name ASC"
+        "SELECT name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, vnc_host, vnc_port, vnc_username, vnc_view_only FROM hosts ORDER BY name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(ExportHost {
@@ -510,6 +590,13 @@ pub fn export_hosts(conn: &Connection) -> SqlResult<Vec<ExportHost>> {
                 .map(|u| crate::uri::split_password(&u).0),
             // redis_tunnel_host_id is deliberately not exported: a row id means
             // nothing on another machine and would point at an unrelated host.
+            // vnc_tunnel_host_id is omitted for exactly the same reason.
+            vnc_host: row.get(11)?,
+            vnc_port: row.get(12)?,
+            vnc_username: row.get(13)?,
+            vnc_view_only: row.get(14)?,
+            // No password strip: a VNC credential lives only in the keyring and
+            // is never written to a column in the first place.
         })
     })?;
     hosts.collect()
@@ -534,6 +621,11 @@ mod tests {
             redis_uri: None,
             redis_tunnel_host_id: None,
             jump_host_id: None,
+            vnc_host: None,
+            vnc_port: None,
+            vnc_username: None,
+            vnc_tunnel_host_id: None,
+            vnc_view_only: None,
         }
     }
 
@@ -603,6 +695,185 @@ mod tests {
         h.port = 0;
         h.redis_uri = Some("redis://localhost:6379/0".to_string());
         assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn validate_new_host_allows_a_vnc_only_row() {
+        // Same shape as the datastore-only rows: no SSH host, username or
+        // port. Without `vnc_host` in `waives_ssh_fields`, importing one of
+        // these would be rejected outright.
+        let mut h = sample("kiosk");
+        h.host = String::new();
+        h.username = String::new();
+        h.port = 0;
+        h.vnc_host = Some("127.0.0.1".to_string());
+        h.vnc_port = Some(5901);
+        assert!(validate_new_host(&h).is_ok());
+    }
+
+    #[test]
+    fn a_blank_vnc_host_does_not_waive_the_ssh_checks() {
+        // `Some("")` is what an empty form field deserialises to, and it must
+        // not count as "this row is a VNC host" -- otherwise a half-filled SSH
+        // form would validate with no address at all.
+        let mut h = sample("blank");
+        h.host = String::new();
+        h.vnc_host = Some("   ".to_string());
+        assert!(validate_new_host(&h).unwrap_err().contains("Host"));
+    }
+
+    #[test]
+    fn a_vnc_host_round_trips_through_add_read_and_update() {
+        // The five columns are bound positionally in four separate statements;
+        // a wrong index there surfaces as a type error on an unrelated column,
+        // which reads like database corruption. This walks all four.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("kiosk");
+        h.host = String::new();
+        h.username = String::new();
+        h.port = 0;
+        h.vnc_host = Some("10.0.0.5".to_string());
+        h.vnc_port = Some(5901);
+        h.vnc_username = Some("admin".to_string());
+        h.vnc_tunnel_host_id = Some(bastion);
+        h.vnc_view_only = Some(1);
+        let id = add_host(&conn, &h).unwrap();
+
+        // get_host_by_id
+        let stored = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(stored.vnc_host.as_deref(), Some("10.0.0.5"));
+        assert_eq!(stored.vnc_port, Some(5901));
+        assert_eq!(stored.vnc_username.as_deref(), Some("admin"));
+        assert_eq!(stored.vnc_tunnel_host_id, Some(bastion));
+        assert_eq!(stored.vnc_view_only, 1);
+        // The columns either side must not have been shifted by the new ones.
+        assert_eq!(stored.name, "kiosk");
+        assert_eq!(stored.redis_tunnel_host_id, None);
+
+        // get_hosts
+        let listed = get_hosts(&conn).unwrap();
+        let listed = listed.iter().find(|x| x.id == id).unwrap();
+        assert_eq!(listed.vnc_host.as_deref(), Some("10.0.0.5"));
+        assert_eq!(listed.vnc_view_only, 1);
+
+        // update_host
+        h.vnc_port = Some(5902);
+        h.vnc_view_only = Some(0);
+        assert_eq!(update_host(&conn, id, &h).unwrap(), 1);
+        let stored = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(stored.vnc_port, Some(5902));
+        assert_eq!(stored.vnc_view_only, 0);
+        assert_eq!(stored.name, "kiosk", "an off-by-one would corrupt this");
+    }
+
+    #[test]
+    fn an_ssh_host_may_also_carry_vnc_settings() {
+        // The other half of the host model: VNC is a capability, not a kind,
+        // so a fully populated SSH row can have it too.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let mut h = sample("web-01");
+        h.vnc_host = Some("127.0.0.1".to_string());
+        h.vnc_port = Some(5900);
+        let id = add_host(&conn, &h).unwrap();
+
+        let stored = get_host_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(stored.host, "10.0.0.1", "still an SSH host");
+        assert_eq!(stored.vnc_host.as_deref(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn the_vnc_columns_are_added_to_a_table_that_predates_them() {
+        // The pre-VNC schema, verbatim, as an existing install has on disk.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                host TEXT,
+                port INTEGER DEFAULT 22,
+                username TEXT,
+                auth_type TEXT CHECK(auth_type IN ('password', 'key')) DEFAULT 'password',
+                key_path TEXT,
+                mongo_uri TEXT,
+                mongo_local_uri TEXT,
+                redis_uri TEXT,
+                redis_tunnel_host_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO hosts (name, host, port, username) VALUES ('old', 'h', 22, 'u')",
+            [],
+        )
+        .unwrap();
+
+        init_db(&conn).unwrap();
+
+        // The row survives, and reading it through the new column list works.
+        let hosts = get_hosts(&conn).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "old");
+        assert_eq!(hosts[0].vnc_host, None);
+        // DEFAULT 0 backfills the existing row, which is what lets the Host
+        // field be a plain i64 rather than an Option.
+        assert_eq!(hosts[0].vnc_view_only, 0);
+
+        // Idempotent: a second run must not try to add the columns again.
+        init_db(&conn).unwrap();
+    }
+
+    #[test]
+    fn an_export_carries_the_vnc_settings_but_not_the_tunnel_row_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("kiosk");
+        h.vnc_host = Some("10.0.0.5".to_string());
+        h.vnc_port = Some(5901);
+        h.vnc_username = Some("admin".to_string());
+        h.vnc_tunnel_host_id = Some(bastion);
+        add_host(&conn, &h).unwrap();
+
+        let exported = export_hosts(&conn).unwrap();
+        let kiosk = exported.iter().find(|x| x.name == "kiosk").unwrap();
+        assert_eq!(kiosk.vnc_host.as_deref(), Some("10.0.0.5"));
+        assert_eq!(kiosk.vnc_username.as_deref(), Some("admin"));
+
+        // A row id means nothing on another machine and would point at an
+        // unrelated host, so it is deliberately absent from ExportHost --
+        // asserted by the type not having the field, and by this serialisation
+        // check so a future addition has to be deliberate.
+        let json = serde_json::to_string(kiosk).unwrap();
+        assert!(
+            !json.contains("vnc_tunnel_host_id"),
+            "tunnel row id leaked into the export: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn a_host_payload_written_before_vnc_existed_still_deserialises() {
+        // An exported file from an older version has none of these keys, and
+        // rejecting the whole import over a missing optional would be a poor
+        // trade -- hence #[serde(default)] on the new fields.
+        let json = r#"{
+            "name": "old", "host": "h", "port": 22, "username": "u",
+            "auth_type": "password", "key_path": null, "group": null,
+            "favorite": 0, "mongo_uri": null, "mongo_local_uri": null,
+            "redis_uri": null, "redis_tunnel_host_id": null
+        }"#;
+        let parsed: NewHost = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.name, "old");
+        assert_eq!(parsed.vnc_host, None);
+        assert_eq!(parsed.vnc_view_only, None);
     }
 
     #[test]
@@ -908,6 +1179,11 @@ mod tests {
             redis_uri: None,
             redis_tunnel_host_id: None,
             jump_host_id: None,
+            vnc_host: None,
+            vnc_port: None,
+            vnc_username: None,
+            vnc_tunnel_host_id: None,
+            vnc_view_only: None,
         };
 
         let id = add_host(&conn, &new).unwrap();
@@ -956,12 +1232,18 @@ pub struct ImportSummary {
     pub failed: Vec<ImportFailure>,
 }
 
-/// Whether this row is a datastore connection rather than an SSH host.
+/// Whether this row's service configuration waives the SSH field checks.
 ///
-/// A MongoDB- or Redis-only host legitimately has no SSH host, port or
-/// username, so the SSH field checks below do not apply to it.
-fn is_datastore_only(host: &NewHost) -> bool {
-    host.mongo_uri.is_some() || host.redis_uri.is_some()
+/// A MongoDB-, Redis- or VNC-only host legitimately has no SSH host, port or
+/// username. Renamed from `is_datastore_only` when VNC arrived: VNC is not a
+/// datastore, and a predicate whose name is a lie is worse than a rename.
+fn waives_ssh_fields(host: &NewHost) -> bool {
+    host.mongo_uri.is_some()
+        || host.redis_uri.is_some()
+        || host
+            .vnc_host
+            .as_deref()
+            .is_some_and(|h| !h.trim().is_empty())
 }
 
 /// Reject rows the host form would not accept either. Username is not
@@ -971,7 +1253,7 @@ pub fn validate_new_host(host: &NewHost) -> Result<(), String> {
     if host.name.trim().is_empty() {
         return Err("Name is required".to_string());
     }
-    if !(1..=65535).contains(&host.port) && !is_datastore_only(host) {
+    if !(1..=65535).contains(&host.port) && !waives_ssh_fields(host) {
         return Err(format!(
             "Port must be between 1 and 65535, got {}",
             host.port
@@ -983,7 +1265,7 @@ pub fn validate_new_host(host: &NewHost) -> Result<(), String> {
             host.auth_type
         ));
     }
-    if host.host.trim().is_empty() && !is_datastore_only(host) {
+    if host.host.trim().is_empty() && !waives_ssh_fields(host) {
         return Err("Host is required".to_string());
     }
     Ok(())

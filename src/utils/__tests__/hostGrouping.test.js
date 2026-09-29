@@ -6,6 +6,7 @@ import {
 const ssh = { id: 1, name: 'web-01', host: '10.0.1.4', username: 'deploy', group: 'prod' }
 const mongo = { id: 2, name: 'orders', host: '', username: '', mongo_uri: 'mongodb://db.internal:27017' }
 const redis = { id: 3, name: 'cache', host: '', username: '', redis_uri: 'redis://@10.0.9.9:6380/0' }
+const vnc = { id: 4, name: 'kiosk', host: '', vnc_host: '10.0.9.9', vnc_port: 5901 }
 
 describe('hostSearchText', () => {
   it('includes the address of a datastore host', () => {
@@ -20,6 +21,15 @@ describe('hostSearchText', () => {
     // it — and confirm it by the match.
     const withSecret = { name: 'x', redis_uri: 'redis://:hunter2@h:6379' }
     expect(hostSearchText(withSecret)).not.toContain('hunter2')
+  })
+})
+
+describe('hostSearchText for a VNC row', () => {
+  it('finds a VNC host by the address you actually connect to', () => {
+    // A VNC-only row has empty host and username columns, so without this it
+    // would be findable only by its name.
+    expect(hostSearchText(vnc)).toContain('10.0.9.9:5901')
+    expect(filterHosts([ssh, vnc], '10.0.9.9')).toEqual([vnc])
   })
 })
 

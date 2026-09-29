@@ -46,6 +46,22 @@
             </div>
           </div>
         </section>
+
+        <section>
+          <h4 class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-2">
+            Remote desktop
+          </h4>
+          <div class="space-y-1">
+            <div v-for="s in vncShortcuts" :key="s.keys" class="flex justify-between text-sm">
+              <span class="text-ink">{{ s.label }}</span>
+              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+            </div>
+          </div>
+          <p class="text-2xs text-ink-3 mt-2">
+            A remote desktop takes every keystroke, including the shortcuts above — so
+            <kbd class="bg-input px-1 rounded font-mono">Ctrl + Alt + Shift</kbd> is the way back out.
+          </p>
+        </section>
       </div>
 
       <div class="mt-4 pt-3 border-t border-line text-right tabular-nums">
@@ -92,6 +108,14 @@ const hostListShortcuts = [
   { keys: 'PageUp / PageDown', label: 'Move a page at a time' },
   { keys: 'Enter', label: 'Connect to the focused host' },
   { keys: 'Delete', label: 'Delete the focused host' },
+]
+
+// A VNC tab swallows every other shortcut in this dialog, so the one that
+// gets you out of it needs saying somewhere.
+const vncShortcuts = [
+  { keys: 'Ctrl + Alt + Shift', label: 'Release the keyboard' },
+  { keys: 'Click', label: 'Focus the remote desktop' },
+  { keys: 'Scroll', label: 'Wheel through to the remote' },
 ]
 
 const sftpShortcuts = [

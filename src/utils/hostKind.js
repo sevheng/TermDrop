@@ -11,6 +11,7 @@ export const HOST_KIND = {
   SSH: 'ssh',
   MONGODB: 'mongodb',
   REDIS: 'redis',
+  VNC: 'vnc',
 }
 
 /**
@@ -22,8 +23,22 @@ export function hostKind(host) {
   if (!host.host) {
     if (host.redis_uri) return HOST_KIND.REDIS
     if (host.mongo_uri) return HOST_KIND.MONGODB
+    if (host.vnc_host) return HOST_KIND.VNC
   }
   return HOST_KIND.SSH
+}
+
+/**
+ * Whether this row can open a VNC tab at all.
+ *
+ * Deliberately *not* a kind, and the only predicate here that is true of two
+ * of them. A screen is a capability a machine has, not a thing it is: an SSH
+ * host with a VNC server on it is still an SSH host, and double-clicking it
+ * should still open a shell. The VNC tab is reached from the context menu
+ * instead, which is why `hostKind` needed no restructuring to accommodate it.
+ */
+export function hasVnc(host) {
+  return !!host?.vnc_host
 }
 
 export function isMongoOnlyHost(host) {
@@ -52,8 +67,11 @@ export function activateVerb(host) {
  * brand tokens existed and the sidebar's Add menu already used them.
  */
 export function hostKindIconClass(host) {
-  return {
-    [HOST_KIND.REDIS]: 'text-redis',
-    [HOST_KIND.MONGODB]: 'text-mongo',
-  }[hostKind(host)] || 'text-ink-3'
+  return (
+    {
+      [HOST_KIND.REDIS]: 'text-redis',
+      [HOST_KIND.MONGODB]: 'text-mongo',
+      [HOST_KIND.VNC]: 'text-vnc',
+    }[hostKind(host)] || 'text-ink-3'
+  )
 }
