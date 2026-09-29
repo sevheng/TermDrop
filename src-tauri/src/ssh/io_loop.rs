@@ -5,6 +5,50 @@ use std::time::{Duration, Instant};
 use tauri::ipc::Channel as DataChannel;
 use tokio::sync::mpsc;
 
+/// Decode as much of `bytes` as forms whole characters.
+///
+/// Returns the text and how many bytes it consumed; whatever is left is an
+/// **incomplete trailing sequence** whose remaining bytes are still in flight,
+/// and the caller must keep it for the next read.
+///
+/// `String::from_utf8_lossy` per read was the bug this replaces. A read
+/// boundary falls wherever the network put it, so a multi-byte character split
+/// across two reads became two replacement characters. It only ever affected
+/// the fallback path -- but that is precisely the path that runs *before* the
+/// frontend registers its channel, which is when a login banner or MOTD full of
+/// box-drawing characters arrives.
+///
+/// Genuinely invalid bytes are still replaced rather than carried: no byte
+/// arriving later can make them valid, so holding them would stall the stream.
+fn decode_complete(bytes: &[u8]) -> (String, usize) {
+    let mut text = String::new();
+    let mut at = 0;
+
+    loop {
+        match std::str::from_utf8(&bytes[at..]) {
+            Ok(rest) => {
+                text.push_str(rest);
+                return (text, bytes.len());
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if let Ok(good) = std::str::from_utf8(&bytes[at..at + valid]) {
+                    text.push_str(good);
+                }
+                match e.error_len() {
+                    // Malformed, and no later byte can fix it.
+                    Some(bad) => {
+                        text.push(char::REPLACEMENT_CHARACTER);
+                        at += valid + bad;
+                    }
+                    // Truncated: the rest of this character is in the next read.
+                    None => return (text, at + valid),
+                }
+            }
+        }
+    }
+}
+
 /// Flush output buffer if it exceeds this size (bytes).
 const OUTPUT_BATCH_SIZE: usize = 4096;
 /// Flush output buffer at this interval during heavy output (ms).
@@ -24,6 +68,9 @@ pub fn run_loop(
 ) {
     let mut buf = vec![0u8; 16384];
     let mut output_buf = String::with_capacity(8192);
+    // Bytes of a character whose remainder has not arrived yet. Bounded by the
+    // longest UTF-8 sequence, so this never grows past three bytes.
+    let mut partial: Vec<u8> = Vec::new();
     let mut last_flush = Instant::now();
     let mut intentional_disconnect = false;
 
@@ -78,7 +125,10 @@ pub fn run_loop(
                     if let Some(ref ch) = *lock {
                         let _ = ch.send(buf[..n].to_vec());
                     } else {
-                        output_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        partial.extend_from_slice(&buf[..n]);
+                        let (text, consumed) = decode_complete(&partial);
+                        partial.drain(..consumed);
+                        output_buf.push_str(&text);
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_flush).as_millis() as u64;
                         if output_buf.len() >= OUTPUT_BATCH_SIZE
@@ -123,5 +173,85 @@ fn flush_output(output_buf: &mut String, on_data_fallback: &mut impl FnMut(&str)
     if !output_buf.is_empty() {
         on_data_fallback(output_buf);
         output_buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_complete;
+
+    #[test]
+    fn a_character_split_across_two_reads_survives_whole() {
+        // The bug. "é" is two bytes; a read boundary falls wherever the network
+        // put it, and decoding each read on its own turned this into two
+        // replacement characters.
+        let whole = "café".as_bytes();
+        let (first, consumed) = decode_complete(&whole[..4]);
+        assert_eq!(first, "caf", "the truncated character must be held back");
+        assert_eq!(consumed, 3, "its first byte stays for the next read");
+
+        // The next read brings the rest.
+        let mut carried = whole[consumed..4].to_vec();
+        carried.extend_from_slice(&whole[4..]);
+        let (second, consumed) = decode_complete(&carried);
+        assert_eq!(second, "é");
+        assert_eq!(consumed, carried.len());
+    }
+
+    #[test]
+    fn a_three_byte_character_split_at_either_point_survives() {
+        // Box-drawing characters are three bytes and are exactly what a MOTD
+        // is full of, so both split points matter.
+        let line = "─┤".as_bytes();
+        for split in 1..line.len() {
+            let (head, consumed) = decode_complete(&line[..split]);
+            let mut carried = line[consumed..split].to_vec();
+            carried.extend_from_slice(&line[split..]);
+            let (tail, _) = decode_complete(&carried);
+            assert_eq!(
+                format!("{}{}", head, tail),
+                "─┤",
+                "lost a character when split at byte {}",
+                split
+            );
+        }
+    }
+
+    #[test]
+    fn complete_input_is_consumed_entirely() {
+        let (text, consumed) = decode_complete("hello".as_bytes());
+        assert_eq!(text, "hello");
+        assert_eq!(consumed, 5);
+
+        let (text, consumed) = decode_complete(&[]);
+        assert_eq!(text, "");
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn genuinely_invalid_bytes_are_replaced_rather_than_held() {
+        // A lone 0xFF can never become valid, so carrying it would stall the
+        // stream waiting for a byte that means nothing.
+        let (text, consumed) = decode_complete(&[b'a', 0xFF, b'b']);
+        assert_eq!(text, "a\u{FFFD}b");
+        assert_eq!(consumed, 3, "nothing is left pending");
+    }
+
+    #[test]
+    fn what_is_held_back_is_never_more_than_a_character() {
+        // The pending buffer is bounded by the longest UTF-8 sequence, which is
+        // what keeps it from growing without limit on a hostile stream.
+        for bytes in [
+            vec![0xF0],             // start of a 4-byte sequence
+            vec![0xF0, 0x9F],       // ...two of four
+            vec![0xF0, 0x9F, 0x98], // ...three of four
+        ] {
+            let (_, consumed) = decode_complete(&bytes);
+            assert!(
+                bytes.len() - consumed < 4,
+                "held {} bytes back",
+                bytes.len() - consumed
+            );
+        }
     }
 }

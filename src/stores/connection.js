@@ -232,20 +232,29 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  /** Open the SFTP side channel for a tab; failure only warns, the tab stays. */
+  /**
+   * Open the SFTP side channel for a tab; failure only warns, the tab stays.
+   *
+   * The tab is settled in `finally`, not on the success path alone. It used to
+   * be the latter, so a host with the sftp subsystem disabled -- ordinary on a
+   * hardened server, near-universal on a network appliance -- left `connecting`
+   * true forever. The shell worked, and the tab spun with no way to close it.
+   */
   async function attachSftp(sessionId, hostId, isKeyAuth, providedPassword) {
+    let sftpSessionId = null
     try {
       const sftpArgs = { hostId }
       if (!isKeyAuth && providedPassword) {
         sftpArgs.password = providedPassword
       }
-      const sftpId = await invoke('sftp_connect', sftpArgs)
-      tabs.value = tabs.value.map(t =>
-        t.id === sessionId ? { ...t, sftpSessionId: sftpId, connecting: false } : t
-      )
+      sftpSessionId = await invoke('sftp_connect', sftpArgs)
     } catch (err) {
       console.warn('SFTP connection failed:', err)
       toast('SFTP connection failed: ' + err, 'warning')
+    } finally {
+      tabs.value = tabs.value.map(t =>
+        t.id === sessionId ? { ...t, sftpSessionId, connecting: false } : t
+      )
     }
   }
 
