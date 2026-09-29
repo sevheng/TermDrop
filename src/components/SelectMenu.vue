@@ -13,7 +13,7 @@
         'hover:border-line focus:outline-none focus:ring-1 focus:ring-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed transition-colors',
         block ? 'w-full justify-between' : '',
-        size === 'xs' ? 'text-2xs px-2 py-0.5' : 'text-xs px-2 py-1.5',
+        SIZES[size].trigger,
       ]"
       @click="toggle"
       @keydown="onTriggerKey"
@@ -22,7 +22,7 @@
         {{ selected ? selected.label : placeholder }}
       </span>
       <ChevronDown
-        :size="size === 'xs' ? 11 : 13"
+        :size="SIZES[size].chevron"
         class="shrink-0 text-ink-3 transition-transform"
         :class="open ? 'rotate-180' : ''"
       />
@@ -52,8 +52,8 @@
         :aria-selected="opt.value === modelValue"
         :aria-disabled="opt.disabled || undefined"
         :class="[
-          'flex items-center gap-2 px-2 cursor-pointer',
-          size === 'xs' ? 'text-2xs py-1' : 'text-xs py-1.5',
+          'flex items-center gap-2 cursor-pointer',
+          SIZES[size].option,
           opt.disabled ? 'text-ink-3 cursor-not-allowed' : 'text-ink',
           i === active && !opt.disabled ? 'bg-raised' : '',
         ]"
@@ -68,7 +68,7 @@
         <span class="truncate flex-1">{{ opt.label }}</span>
         <span v-if="opt.hint" class="shrink-0 text-ink-3 text-2xs">{{ opt.hint }}</span>
       </li>
-      <li v-if="options.length === 0" class="px-2 py-1.5 text-xs text-ink-3 italic">
+      <li v-if="options.length === 0" :class="[SIZES[size].option, 'text-ink-3 italic']">
         Nothing to choose
       </li>
     </ul>
@@ -101,13 +101,39 @@ import {
   TYPEAHEAD_MS,
 } from '../utils/selectNav.js'
 
+/**
+ * The three scales this control comes in, kept in one table so the trigger,
+ * the rows and the placement guess cannot drift apart.
+ *
+ * `md` exists because the host dialogs size their inputs at `text-sm px-3 py-2`
+ * and a `sm` select beside them reads as a different, smaller kind of control.
+ *
+ * The keys are repeated in the `size` prop's validator, which is hoisted above
+ * this and so cannot read them from here.
+ */
+const SIZES = {
+  xs: { trigger: 'text-2xs px-2 py-0.5', option: 'text-2xs px-2 py-1', chevron: 11, rowH: 22 },
+  sm: { trigger: 'text-xs px-2 py-1.5', option: 'text-xs px-2 py-1.5', chevron: 13, rowH: 28 },
+  md: { trigger: 'text-sm px-3 py-2', option: 'text-sm px-3 py-2', chevron: 14, rowH: 36 },
+}
+
 const props = defineProps({
   /** The chosen value. Compared by identity, so '' and 0 are real choices. */
   modelValue: { type: [String, Number, null], default: null },
   /** `[{ value, label, hint?, disabled? }]` */
   options: { type: Array, required: true },
   placeholder: { type: String, default: 'Select…' },
-  size: { type: String, default: 'sm' },
+  /**
+   * `'xs' | 'sm' | 'md'` — see SIZES.
+   *
+   * The list is written out rather than derived from SIZES because
+   * `defineProps` is hoisted above it and cannot reference a local.
+   */
+  size: {
+    type: String,
+    default: 'sm',
+    validator: value => ['xs', 'sm', 'md'].includes(value),
+  },
   disabled: { type: Boolean, default: false },
   /** Fill the container, as a form field does. */
   block: { type: Boolean, default: false },
@@ -133,7 +159,7 @@ async function place() {
   const rect = el.getBoundingClientRect()
   // Rough height first so the flip decision is made before paint, then
   // refined once the list has actually rendered.
-  const rowH = props.size === 'xs' ? 22 : 28
+  const rowH = SIZES[props.size].rowH
   const guess = Math.min(props.options.length * rowH + 8, 320)
   const p = menuPlacement(rect, guess, window.innerHeight)
   pos.value = { top: p.top, left: Math.round(rect.left), width: Math.round(rect.width), maxHeight: p.maxHeight }
