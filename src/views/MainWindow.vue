@@ -41,12 +41,17 @@
               :class="tab.connected !== false ? 'bg-good' : 'bg-bad'"
             ></span>
             <span>{{ tab.name }}</span>
+            <!--
+              The close button is always rendered, never swapped out for the
+              spinner. It used to be a v-if/v-else pair, so any tab that got
+              stuck mid-connect became impossible to close -- a stuck state
+              must never also remove the way out of it.
+            -->
             <span
               v-if="tab.connecting"
               class="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0"
             ></span>
             <span
-              v-else
               @click.stop="confirmDisconnect(tab.id, tab.name)"
               class="hover:text-bad cursor-pointer ml-1"
             >
