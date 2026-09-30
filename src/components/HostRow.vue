@@ -31,7 +31,12 @@
 
     <div class="min-w-0 flex-1">
       <div class="text-xs text-ink truncate leading-tight">{{ host.name }}</div>
-      <div class="text-2xs text-ink-2 truncate leading-tight" :title="subtitle">{{ subtitle }}</div>
+      <!-- A jump host is an icon, not words: "· via jump host" pushed the
+           address itself out of a sidebar-width row. The tooltip names it. -->
+      <div class="flex items-center gap-1 text-2xs text-ink-2 leading-tight" :title="subtitleTitle">
+        <Route v-if="jumpLabel" :size="10" class="shrink-0 text-ink-3" :aria-label="jumpLabel" />
+        <span class="truncate">{{ subtitle }}</span>
+      </div>
     </div>
 
     <!-- Shown at rest. It used to live inside the hover cluster with its own
@@ -82,12 +87,13 @@
  * no matching line-height.
  */
 import { computed } from 'vue'
-import { Star, Pencil, Trash2, Loader2, Server, Database, Layers, Apple } from 'lucide-vue-next'
+import { Star, Pencil, Trash2, Loader2, Server, Database, Layers, Apple, Route } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import { mongoDisplayUri } from '../utils/mongoDisplay.js'
 import { redisDisplayUri } from '../utils/redisUri.js'
 import { hostKind, HOST_KIND, hostKindIconClass } from '../utils/hostKind.js'
 import { formatAge } from '../utils/hostRowState.js'
+import { useConnectionStore } from '../stores/connection.js'
 
 const props = defineProps({
   host: { type: Object, required: true },
@@ -146,7 +152,20 @@ const subtitle = computed(() => {
     const via = props.host.redis_tunnel_host_id ? ' · tunnelled' : ''
     return redisDisplayUri(props.host.redis_uri) + via
   }
-  const via = props.host.jump_host_id ? ' · via jump host' : ''
-  return `${props.host.username}@${props.host.host}:${props.host.port}` + via
+  return `${props.host.username}@${props.host.host}:${props.host.port}`
 })
+
+const store = useConnectionStore()
+
+/** "Via bastion" for a host behind a jump host, naming it; empty otherwise. */
+const jumpLabel = computed(() => {
+  const id = props.host.jump_host_id
+  if (id == null) return ''
+  const jump = store.hosts.find(h => h.id === id)
+  return jump ? `Via ${jump.name}` : 'Via a jump host that no longer exists'
+})
+
+const subtitleTitle = computed(() =>
+  jumpLabel.value ? `${subtitle.value} — ${jumpLabel.value}` : subtitle.value,
+)
 </script>
