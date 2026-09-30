@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **Host keys are checked before any credential is sent.** TermDrop used to log in to whatever answered at a host's address, so anyone able to intercept the connection received your password. Every SSH connection — terminal, SFTP, Docker, system stats, port forwards and tunnels — now verifies the server's key first.
+  - **The first connection asks.** A host you have never connected to shows its key fingerprint and asks whether to trust it; the acceptance is tied to that exact fingerprint, so a different server answering the retry is still refused
+  - **Hosts you already trust in a terminal need no prompt.** Your `~/.ssh/known_hosts` (and `/etc/ssh/ssh_known_hosts`) is read and honoured, but never written. Keys you accept in TermDrop are kept in TermDrop's own `known_hosts` file in the app's data folder
+  - **A changed or revoked key stops the connection** with no option to continue. The dialog explains what happened and gives the `ssh-keygen -R` command to run once you have confirmed the change is legitimate
+  - A server that offers a different *type* of key than the one on file is treated as a new key to confirm, not as a changed identity, so hosts you have trusted for years do not raise a false alarm
+  - Port forwards and Redis/VNC tunnels never prompt, because they open connections in the background with nobody to ask. Connect to the SSH host in a terminal tab once to trust it
+
 ### Added
 - **A desktop notification when a backup or restore finishes.** Backing up a large database takes long enough that you go and do something else, and the in-app toast announcing the result was only visible if you had stayed on the window. The app now posts a system notification as well — but only when its window is in the background, so it does not tell you twice when you were watching. Covers MongoDB backup and restore and Redis backup and restore. ([#12](https://github.com/sevheng/TermDrop/issues/12))
 
