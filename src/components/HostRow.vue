@@ -146,6 +146,7 @@ const subtitle = computed(() => {
     const via = props.host.redis_tunnel_host_id ? ' · tunnelled' : ''
     return redisDisplayUri(props.host.redis_uri) + via
   }
-  return `${props.host.username}@${props.host.host}:${props.host.port}`
+  const via = props.host.jump_host_id ? ' · via jump host' : ''
+  return `${props.host.username}@${props.host.host}:${props.host.port}` + via
 })
 </script>

@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
-import { parseTrustError, shouldAskToTrust } from '../utils/trustError.js'
+import { hopOf, parseTrustError, shouldAskToTrust } from '../utils/trustError.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
@@ -277,7 +277,13 @@ export const useConnectionStore = defineStore('connection', () => {
     })
   }
 
-  async function connect(hostId, providedPassword = null, acceptHostKey = null) {
+  /**
+   * `accepted` carries the host key fingerprints the user has agreed to on
+   * this attempt, one per hop: `{ target?, jump? }`. A host behind a jump host
+   * can need two answers -- the bastion's key, then its own -- and each is
+   * asked about at most once.
+   */
+  async function connect(hostId, providedPassword = null, accepted = {}) {
     // Start the terminal chunk now so it loads against the SSH handshake
     // rather than against the tab's first render. Idempotent -- the idle
     // warm-up in MainWindow has usually already done it.
@@ -292,8 +298,11 @@ export const useConnectionStore = defineStore('connection', () => {
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
-    if (acceptHostKey) {
-      sshArgs.acceptHostKey = acceptHostKey
+    if (accepted.target) {
+      sshArgs.acceptHostKey = accepted.target
+    }
+    if (accepted.jump) {
+      sshArgs.acceptJumpHostKey = accepted.jump
     }
     try {
       sessionId = await invoke('ssh_connect', sshArgs)
@@ -309,10 +318,15 @@ export const useConnectionStore = defineStore('connection', () => {
         throw err
       }
 
-      const unknown = shouldAskToTrust(err, !!acceptHostKey)
+      const unknown = shouldAskToTrust(err, accepted)
       if (unknown) {
-        const accepted = await askToTrust(unknown)
-        if (accepted) return connect(hostId, providedPassword, accepted)
+        const fingerprint = await askToTrust(unknown)
+        if (fingerprint) {
+          return connect(hostId, providedPassword, {
+            ...accepted,
+            [hopOf(unknown)]: fingerprint,
+          })
+        }
         throw err
       }
 
@@ -325,7 +339,7 @@ export const useConnectionStore = defineStore('connection', () => {
         )
         if (password) {
           await storePassword(hostId, password).catch(() => {})
-          return connect(hostId, password)
+          return connect(hostId, password, accepted)
         }
       }
       toast('SSH connection failed: ' + err, 'error')

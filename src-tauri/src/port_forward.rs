@@ -1,3 +1,4 @@
+use crate::ssh::{Accept, SshTarget};
 use ssh2::Session;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -27,11 +28,7 @@ impl ForwardManager {
     pub fn start_local(
         &self,
         rule_id: i64,
-        ssh_host: String,
-        ssh_port: u16,
-        username: String,
-        password: Option<String>,
-        key_path: Option<String>,
+        target: SshTarget,
         local_host: String,
         local_port: u16,
         remote_host: String,
@@ -50,15 +47,11 @@ impl ForwardManager {
             }
             match listener.accept() {
                 Ok((client, _)) => {
-                    let h = ssh_host.clone();
-                    let p = ssh_port;
-                    let u = username.clone();
-                    let pw = password.clone();
-                    let k = key_path.clone();
+                    let t = target.clone();
                     let rh = remote_host.clone();
                     let rp = remote_port;
                     thread::spawn(move || {
-                        if let Err(e) = handle_local_connection(h, p, u, pw, k, client, rh, rp) {
+                        if let Err(e) = handle_local_connection(&t, client, rh, rp) {
                             eprintln!("[forward {}] connection error: {}", rule_id, e);
                         }
                     });
@@ -89,11 +82,7 @@ impl ForwardManager {
     pub fn start_dynamic(
         &self,
         rule_id: i64,
-        ssh_host: String,
-        ssh_port: u16,
-        username: String,
-        password: Option<String>,
-        key_path: Option<String>,
+        target: SshTarget,
         local_host: String,
         local_port: u16,
     ) -> Result<(), String> {
@@ -110,13 +99,9 @@ impl ForwardManager {
             }
             match listener.accept() {
                 Ok((client, _)) => {
-                    let h = ssh_host.clone();
-                    let p = ssh_port;
-                    let u = username.clone();
-                    let pw = password.clone();
-                    let k = key_path.clone();
+                    let t = target.clone();
                     thread::spawn(move || {
-                        if let Err(e) = handle_socks_connection(h, p, u, pw, k, client) {
+                        if let Err(e) = handle_socks_connection(&t, client) {
                             eprintln!("[forward {}] socks error: {}", rule_id, e);
                         }
                     });
@@ -196,31 +181,20 @@ impl Drop for Tunnel {
 ///
 /// This is a blocking call (a TCP connect, an SSH handshake and an auth round
 /// trip), so callers on the async runtime must wrap it in `spawn_blocking`.
-#[allow(clippy::too_many_arguments)]
 pub fn start_ephemeral_local(
-    ssh_host: String,
-    ssh_port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
+    target: SshTarget,
     remote_host: String,
     remote_port: u16,
 ) -> Result<Tunnel, String> {
     // Fail fast, before a listener exists to clean up.
-    let probe = create_ssh_session(
-        &ssh_host,
-        ssh_port,
-        &username,
-        password.as_deref(),
-        key_path.as_deref(),
-    )?;
+    let probe = create_ssh_session(&target)?;
     probe
         .channel_direct_tcpip(&remote_host, remote_port, None)
         .map_err(|e| {
             format!(
                 "{} could not open a tunnel to {}:{}: {}. The SSH server may have \
                  AllowTcpForwarding disabled, or it may not be able to reach that address.",
-                ssh_host, remote_host, remote_port, e
+                target.host, remote_host, remote_port, e
             )
         })?;
     drop(probe);
@@ -243,19 +217,14 @@ pub fn start_ephemeral_local(
             }
             match listener.accept() {
                 Ok((client, _)) => {
-                    let h = ssh_host.clone();
-                    let u = username.clone();
-                    let pw = password.clone();
-                    let k = key_path.clone();
+                    let t = target.clone();
                     let rh = remote_host.clone();
                     // One SSH session per accepted connection, as the
                     // rule-based forwards do. A multiplexed Redis client opens
                     // a single socket, so in practice this is one session per
                     // tab rather than one per command.
                     thread::spawn(move || {
-                        if let Err(e) =
-                            handle_local_connection(h, ssh_port, u, pw, k, client, rh, remote_port)
-                        {
+                        if let Err(e) = handle_local_connection(&t, client, rh, remote_port) {
                             // The client only sees a reset socket, so this log
                             // is the sole record of why.
                             tracing::warn!("redis tunnel connection error: {}", e);
@@ -291,31 +260,17 @@ pub fn start_ephemeral_local(
 /// accepted socket, on a thread with no user attached — possibly while a Redis
 /// pane refreshes at 3am — so an unknown key here is an error. Trust is
 /// established by connecting the SSH host in a terminal tab once.
-fn create_ssh_session(
-    host: &str,
-    port: u16,
-    username: &str,
-    password: Option<&str>,
-    key_path: Option<&str>,
-) -> Result<Session, String> {
-    // Passphrase-protected keys are not yet carried through the forwarding
-    // commands; an encrypted key fails here exactly as it did before.
-    crate::ssh::session::create_exec_session(host, port, username, password, key_path, None, None)
+fn create_ssh_session(target: &SshTarget) -> Result<Session, String> {
+    crate::ssh::session::create_exec_session(target, &Accept::none())
 }
 
 fn handle_local_connection(
-    ssh_host: String,
-    ssh_port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
+    target: &SshTarget,
     mut client: TcpStream,
     remote_host: String,
     remote_port: u16,
 ) -> Result<(), String> {
-    let pw = password.as_deref();
-    let kp = key_path.as_deref();
-    let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
+    let session = create_ssh_session(target)?;
 
     let mut channel = session
         .channel_direct_tcpip(&remote_host, remote_port, Some(("127.0.0.1", 0)))
@@ -384,14 +339,7 @@ fn read_socks_dest(reader: &mut impl Read, atyp: u8) -> Result<SocksDest, String
     })
 }
 
-fn handle_socks_connection(
-    ssh_host: String,
-    ssh_port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
-    mut client: TcpStream,
-) -> Result<(), String> {
+fn handle_socks_connection(target: &SshTarget, mut client: TcpStream) -> Result<(), String> {
     // SOCKS5 greeting
     let mut greet = [0u8; 2];
     client
@@ -431,9 +379,7 @@ fn handle_socks_connection(
     }
     let dest = read_socks_dest(&mut client, req[3])?;
 
-    let pw = password.as_deref();
-    let kp = key_path.as_deref();
-    let session = create_ssh_session(&ssh_host, ssh_port, &username, pw, kp)?;
+    let session = create_ssh_session(target)?;
 
     let mut channel = session
         .channel_direct_tcpip(&dest.host, dest.port, Some(("127.0.0.1", 0)))
@@ -453,7 +399,7 @@ fn handle_socks_connection(
     Ok(())
 }
 
-fn pipe_bidirectional_nb(
+pub(crate) fn pipe_bidirectional_nb(
     client: &mut TcpStream,
     channel: &mut ssh2::Channel,
 ) -> Result<(), String> {

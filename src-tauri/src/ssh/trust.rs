@@ -83,8 +83,29 @@ pub fn refusal_payload(refusal: &Refusal) -> String {
             "fingerprint": info.fingerprint,
             "keyType": info.key_type,
             "message": message,
+            // Which connection refused: the host itself, or the jump host in
+            // front of it. The frontend sends an acceptance back for that hop.
+            "hop": "target",
         })
     )
+}
+
+/// Re-label a refusal as coming from the jump host.
+///
+/// The session code that raises a refusal cannot know whether it is the
+/// bastion or the target, so the jump path marks its own. Anything that is not
+/// a refusal passes through unchanged.
+pub fn mark_jump_hop(error: String) -> String {
+    let Some(json) = error.strip_prefix(TRUST_PREFIX) else {
+        return error;
+    };
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(mut value) => {
+            value["hop"] = serde_json::Value::from("jump");
+            format!("{}{}", TRUST_PREFIX, value)
+        }
+        Err(_) => error,
+    }
 }
 
 /// Our own store, the only file we write.
@@ -302,6 +323,26 @@ mod tests {
         assert_eq!(json["kind"], "unknown");
         assert_eq!(json["host"], "db.internal");
         assert_eq!(json["fingerprint"], "SHA256:offered");
+    }
+
+    #[test]
+    fn a_refusal_names_its_hop_and_the_jump_path_can_relabel_it() {
+        let payload = refusal_payload(&Refusal::Unknown(info()));
+        let json: serde_json::Value =
+            serde_json::from_str(payload.trim_start_matches(TRUST_PREFIX)).unwrap();
+        assert_eq!(json["hop"], "target");
+
+        let marked = mark_jump_hop(payload);
+        assert!(marked.starts_with(TRUST_PREFIX));
+        let json: serde_json::Value =
+            serde_json::from_str(marked.trim_start_matches(TRUST_PREFIX)).unwrap();
+        assert_eq!(json["hop"], "jump");
+        assert_eq!(json["fingerprint"], "SHA256:offered");
+
+        // Not a refusal: untouched, including text that merely mentions one.
+        assert_eq!(mark_jump_hop("auth: denied".into()), "auth: denied");
+        let quoted = format!("banner {}{{}}", TRUST_PREFIX);
+        assert_eq!(mark_jump_hop(quoted.clone()), quoted);
     }
 
     #[test]

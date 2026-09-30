@@ -8,6 +8,10 @@
         <span class="font-mono text-ink">{{ info.host }}:{{ info.port }}</span>
         before. Check the fingerprint below against the server before trusting it.
       </p>
+      <p v-if="info.hop === 'jump'" class="text-sm text-ink-2 mb-4">
+        This is the <span class="text-ink">jump host</span> the connection goes through. The
+        host behind it is checked separately.
+      </p>
 
       <div class="rounded border border-line bg-input p-3 mb-4 space-y-2">
         <div class="flex items-center justify-between gap-2">

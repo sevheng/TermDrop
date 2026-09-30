@@ -52,14 +52,26 @@ export function parseTrustError(err) {
 }
 
 /**
+ * Which connection a refusal came from: `'jump'` for the jump host in front
+ * of the host being opened, `'target'` for the host itself. A payload from
+ * before hops existed is the target.
+ */
+export function hopOf(trust) {
+  return trust?.hop === 'jump' ? 'jump' : 'target'
+}
+
+/**
  * Whether to ask the user about this host.
  *
- * `alreadyAsked` guards the loop: if a fingerprint was just accepted and the
- * backend still reports the host unknown, the key changed between attempts and
- * asking again would walk the user into accepting a different server than the
- * one they were shown.
+ * `accepted` holds the fingerprints already accepted on this attempt, per hop:
+ * `{ target?, jump? }`. It guards the loop: if a hop's fingerprint was just
+ * accepted and the backend still reports that hop unknown, the key changed
+ * between attempts, and asking again would walk the user into accepting a
+ * different server than the one they were shown. The other hop may still be
+ * asked about once -- a jumped host legitimately needs two answers.
  */
-export function shouldAskToTrust(err, alreadyAsked) {
+export function shouldAskToTrust(err, accepted = {}) {
   const trust = parseTrustError(err)
-  return !alreadyAsked && trust?.kind === 'unknown' ? trust : null
+  if (trust?.kind !== 'unknown') return null
+  return accepted[hopOf(trust)] ? null : trust
 }

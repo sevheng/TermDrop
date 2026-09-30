@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isTrustError,
   parseTrustError,
+  hopOf,
   shouldAskToTrust,
   TRUST_PREFIX,
 } from '../trustError.js'
@@ -65,19 +66,41 @@ describe('parseTrustError', () => {
 
 describe('shouldAskToTrust', () => {
   it('asks once for an unknown host', () => {
-    expect(shouldAskToTrust(payload(), false)).toMatchObject({ host: 'example.com' })
+    expect(shouldAskToTrust(payload(), {})).toMatchObject({ host: 'example.com' })
   })
 
   it('never asks twice', () => {
     // If a fingerprint was just accepted and the host still reads as unknown,
     // the key changed between attempts. Asking again would walk the user into
     // accepting a different server than the one they were shown.
-    expect(shouldAskToTrust(payload(), true)).toBe(null)
+    expect(shouldAskToTrust(payload(), { target: 'SHA256:abc' })).toBe(null)
   })
 
   it('never offers to trust a refusal', () => {
     // The whole point: a changed or revoked key has no path through, and the
     // acceptance flow must not be reachable from one.
-    expect(shouldAskToTrust(payload({ kind: 'refused' }), false)).toBe(null)
+    expect(shouldAskToTrust(payload({ kind: 'refused' }), {})).toBe(null)
+  })
+})
+
+describe('hops', () => {
+  it('reads the hop, and treats a payload without one as the target', () => {
+    expect(hopOf({ hop: 'jump' })).toBe('jump')
+    expect(hopOf({ hop: 'target' })).toBe('target')
+    expect(hopOf({})).toBe('target')
+    expect(hopOf({ hop: 'anything else' })).toBe('target')
+  })
+
+  it('asks about the target after the jump host was accepted', () => {
+    // A jumped host legitimately needs two answers: bastion, then target.
+    const accepted = { jump: 'SHA256:bastion' }
+    expect(shouldAskToTrust(payload({ hop: 'target' }), accepted)).toMatchObject({
+      host: 'example.com',
+    })
+  })
+
+  it('never asks about the same hop twice', () => {
+    const accepted = { jump: 'SHA256:bastion' }
+    expect(shouldAskToTrust(payload({ hop: 'jump' }), accepted)).toBe(null)
   })
 })

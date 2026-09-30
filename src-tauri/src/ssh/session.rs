@@ -99,17 +99,58 @@ pub fn resolve_and_connect(host: &str, port: u16) -> Result<std::net::TcpStream,
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn create_session(
-    host: &str,
-    port: u16,
-    username: &str,
-    password: Option<&str>,
-    key_path: Option<&str>,
-    passphrase: Option<&str>,
-    accept_host_key: Option<&str>,
-) -> Result<Session, String> {
-    let tcp = resolve_and_connect(host, port)?;
+/// Everything needed to open an SSH session to one host, including how to
+/// reach it.
+///
+/// One struct rather than a growing list of arguments: `jump` is the reason it
+/// exists, and threading a second host's six fields through every call site
+/// as loose parameters is how one of them gets forgotten.
+#[derive(Clone, Debug, Default)]
+pub struct SshTarget {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: Option<String>,
+    pub key_path: Option<String>,
+    /// For an encrypted private key.
+    pub passphrase: Option<String>,
+    /// The saved host to go through, when this one is not directly reachable.
+    /// One hop: the resolver refuses a jump host that has its own.
+    pub jump: Option<Box<SshTarget>>,
+}
+
+/// Host key fingerprints the user explicitly accepted, one per hop.
+///
+/// A fingerprint rather than a yes, so an acceptance cannot let a different
+/// server through on the retry. Kept per hop so accepting the bastion's key
+/// says nothing about the target's.
+#[derive(Clone, Debug, Default)]
+pub struct Accept {
+    pub target: Option<String>,
+    pub jump: Option<String>,
+}
+
+impl Accept {
+    /// Refuse any key that is not already on file.
+    pub fn none() -> Self {
+        Self::default()
+    }
+}
+
+/// Open the socket a session runs over: straight to the host, or through its
+/// jump host.
+fn dial(target: &SshTarget, accept: &Accept) -> Result<std::net::TcpStream, String> {
+    match &target.jump {
+        None => resolve_and_connect(&target.host, target.port),
+        Some(jump) => {
+            super::jump::open_via(jump, &target.host, target.port, accept.jump.as_deref())
+        }
+    }
+}
+
+/// Create a session in **non-blocking** mode, for an interactive PTY.
+pub fn create_session(target: &SshTarget, accept: &Accept) -> Result<Session, String> {
+    let tcp = dial(target, accept)?;
 
     tcp.set_nonblocking(true)
         .map_err(|e| format!("set_nonblocking: {}", e))?;
@@ -122,16 +163,24 @@ pub fn create_session(
     // Retry handshake in non-blocking mode
     retry_would_block("handshake", || session.handshake())?;
 
-    // Before any credential leaves this machine.
-    trust::verify(&session, host, port, accept_host_key).map_err(refusal_to_string)?;
+    // Before any credential leaves this machine. Always the target's own name,
+    // never the loopback address a jump host delivers it on.
+    trust::verify(
+        &session,
+        &target.host,
+        target.port,
+        accept.target.as_deref(),
+    )
+    .map_err(refusal_to_string)?;
 
-    // Retry auth in non-blocking mode
-    if let Some(key_path) = key_path {
+    let username = target.username.as_str();
+    let passphrase = target.passphrase.as_deref();
+    if let Some(key_path) = &target.key_path {
         let expanded = expand_key_path(key_path);
         retry_would_block("key auth", || {
             session.userauth_pubkey_file(username, None, &expanded, passphrase)
         })?;
-    } else if let Some(password) = password {
+    } else if let Some(password) = &target.password {
         retry_would_block("auth", || session.userauth_password(username, password))?;
     } else {
         return Err("no credentials provided".to_string());
@@ -142,34 +191,33 @@ pub fn create_session(
 
 /// Creates a new SSH session (blocking mode) for exec or SFTP reuse.
 ///
-/// `accept_host_key` is the fingerprint the user agreed to, and only
-/// `ssh_connect` passes one: it opens this session *before* the terminal, so
-/// the key is on file by the time the PTY thread checks it. Every other caller
-/// passes `None`, which refuses a key that is not already on file.
-pub fn create_exec_session(
-    host: &str,
-    port: u16,
-    username: &str,
-    password: Option<&str>,
-    key_path: Option<&str>,
-    passphrase: Option<&str>,
-    accept_host_key: Option<&str>,
-) -> Result<Session, String> {
-    let tcp = resolve_and_connect(host, port)?;
+/// Only `ssh_connect` passes an acceptance: it opens this session *before* the
+/// terminal, so the key is on file by the time the PTY thread checks it. Every
+/// other caller passes [`Accept::none`], which refuses a key not already on
+/// file.
+pub fn create_exec_session(target: &SshTarget, accept: &Accept) -> Result<Session, String> {
+    let tcp = dial(target, accept)?;
     let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
     session.set_tcp_stream(tcp);
     session
         .handshake()
         .map_err(|e| format!("handshake: {}", e))?;
 
-    trust::verify(&session, host, port, accept_host_key).map_err(refusal_to_string)?;
+    trust::verify(
+        &session,
+        &target.host,
+        target.port,
+        accept.target.as_deref(),
+    )
+    .map_err(refusal_to_string)?;
 
-    if let Some(key_path) = key_path {
+    let username = target.username.as_str();
+    if let Some(key_path) = &target.key_path {
         let expanded = expand_key_path(key_path);
         session
-            .userauth_pubkey_file(username, None, &expanded, passphrase)
+            .userauth_pubkey_file(username, None, &expanded, target.passphrase.as_deref())
             .map_err(|e| format!("key auth: {}", e))?;
-    } else if let Some(password) = password {
+    } else if let Some(password) = &target.password {
         session
             .userauth_password(username, password)
             .map_err(|e| format!("auth: {}", e))?;

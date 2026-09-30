@@ -28,23 +28,10 @@ pub struct SftpSessionHandle {
 }
 
 pub fn sftp_connect(
-    host: String,
-    port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
-    passphrase: Option<String>,
+    target: &crate::ssh::SshTarget,
     host_id: i64,
 ) -> Result<SftpSessionHandle, String> {
-    let session = crate::ssh::session::create_exec_session(
-        &host,
-        port,
-        &username,
-        password.as_deref(),
-        key_path.as_deref(),
-        passphrase.as_deref(),
-        None,
-    )?;
+    let session = crate::ssh::create_exec_session(target, &crate::ssh::Accept::none())?;
 
     Ok(SftpSessionHandle {
         session: std::sync::Mutex::new(session),

@@ -19,6 +19,9 @@ pub struct Host {
     pub redis_uri: Option<String>,
     /// The id of the SSH host to tunnel through, or `None` to connect directly.
     pub redis_tunnel_host_id: Option<i64>,
+    /// The id of the SSH host this SSH host is reached through (ProxyJump), or
+    /// `None` to connect directly.
+    pub jump_host_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -35,6 +38,7 @@ pub struct NewHost {
     pub mongo_local_uri: Option<String>,
     pub redis_uri: Option<String>,
     pub redis_tunnel_host_id: Option<i64>,
+    pub jump_host_id: Option<i64>,
 }
 
 pub fn init_db(conn: &Connection) -> SqlResult<()> {
@@ -51,6 +55,7 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
             mongo_local_uri TEXT,
             redis_uri TEXT,
             redis_tunnel_host_id INTEGER,
+            jump_host_id INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
@@ -105,13 +110,19 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
             [],
         )?;
     }
+    // No FOREIGN KEY, for the same reason. Deleting a bastion leaves the hosts
+    // behind it pointing at nothing, and connecting one says so. Clearing the
+    // id instead would quietly reroute them to a direct connection.
+    if !columns.contains(&"jump_host_id".to_string()) {
+        conn.execute("ALTER TABLE hosts ADD COLUMN jump_host_id INTEGER", [])?;
+    }
 
     Ok(())
 }
 
 pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id FROM hosts ORDER BY favorite DESC, name ASC"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id FROM hosts ORDER BY favorite DESC, name ASC"
     )?;
     let hosts = stmt.query_map([], |row| {
         Ok(Host {
@@ -130,6 +141,7 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
             mongo_local_uri: row.get(12)?,
             redis_uri: row.get(13)?,
             redis_tunnel_host_id: row.get(14)?,
+            jump_host_id: row.get(15)?,
         })
     })?;
     hosts.collect()
@@ -137,7 +149,7 @@ pub fn get_hosts(conn: &Connection) -> SqlResult<Vec<Host>> {
 
 pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO hosts (name, host, port, username, auth_type, key_path, \"group\", favorite, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             &host.name,
             &host.host,
@@ -151,6 +163,7 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
             host.mongo_local_uri.as_deref(),
             host.redis_uri.as_deref(),
             host.redis_tunnel_host_id,
+            host.jump_host_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -159,7 +172,7 @@ pub fn add_host(conn: &Connection, host: &NewHost) -> SqlResult<i64> {
 /// Returns the number of rows updated, which is 0 when `id` no longer exists.
 pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usize> {
     conn.execute(
-        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10, redis_uri = ?11, redis_tunnel_host_id = ?12 WHERE id = ?13",
+        "UPDATE hosts SET name = ?1, host = ?2, port = ?3, username = ?4, auth_type = ?5, key_path = ?6, \"group\" = ?7, favorite = ?8, mongo_uri = ?9, mongo_local_uri = ?10, redis_uri = ?11, redis_tunnel_host_id = ?12, jump_host_id = ?13 WHERE id = ?14",
         params![
             &host.name,
             &host.host,
@@ -173,6 +186,7 @@ pub fn update_host(conn: &Connection, id: i64, host: &NewHost) -> SqlResult<usiz
             host.mongo_local_uri.as_deref(),
             host.redis_uri.as_deref(),
             host.redis_tunnel_host_id,
+            host.jump_host_id,
             id
         ],
     )
@@ -185,7 +199,7 @@ pub fn delete_host(conn: &Connection, id: i64) -> SqlResult<()> {
 
 pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id FROM hosts WHERE id = ?1"
+        "SELECT id, name, host, port, username, auth_type, key_path, \"group\", favorite, last_connected_at, created_at, mongo_uri, mongo_local_uri, redis_uri, redis_tunnel_host_id, jump_host_id FROM hosts WHERE id = ?1"
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -205,6 +219,7 @@ pub fn get_host_by_id(conn: &Connection, id: i64) -> SqlResult<Option<Host>> {
             mongo_local_uri: row.get(12)?,
             redis_uri: row.get(13)?,
             redis_tunnel_host_id: row.get(14)?,
+            jump_host_id: row.get(15)?,
         }))
     } else {
         Ok(None)
@@ -518,6 +533,7 @@ mod tests {
             mongo_local_uri: None,
             redis_uri: None,
             redis_tunnel_host_id: None,
+            jump_host_id: None,
         }
     }
 
@@ -632,6 +648,62 @@ mod tests {
         let listed = get_hosts(&conn).unwrap();
         let found = listed.iter().find(|r| r.id == id).unwrap();
         assert_eq!(found.redis_uri.as_deref(), Some("redis://@10.0.1.9:6380/0"));
+    }
+
+    #[test]
+    fn a_jump_host_round_trips_and_survives_its_bastion_being_deleted() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("db");
+        h.jump_host_id = Some(bastion);
+        let id = add_host(&conn, &h).unwrap();
+        assert_eq!(
+            get_host_by_id(&conn, id).unwrap().unwrap().jump_host_id,
+            Some(bastion)
+        );
+
+        // Both queries have their own column list.
+        let listed = get_hosts(&conn).unwrap();
+        assert_eq!(
+            listed.iter().find(|r| r.id == id).unwrap().jump_host_id,
+            Some(bastion)
+        );
+
+        let mut edited = h.clone();
+        edited.jump_host_id = None;
+        update_host(&conn, id, &edited).unwrap();
+        assert_eq!(
+            get_host_by_id(&conn, id).unwrap().unwrap().jump_host_id,
+            None
+        );
+
+        // Deleting the bastion must not reroute the host behind it to a direct
+        // connection: the id stays, and connecting reports it as missing.
+        update_host(&conn, id, &h).unwrap();
+        delete_host(&conn, bastion).unwrap();
+        assert_eq!(
+            get_host_by_id(&conn, id).unwrap().unwrap().jump_host_id,
+            Some(bastion)
+        );
+    }
+
+    #[test]
+    fn export_never_carries_a_jump_host_row_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let bastion = add_host(&conn, &sample("bastion")).unwrap();
+        let mut h = sample("db");
+        h.jump_host_id = Some(bastion);
+        add_host(&conn, &h).unwrap();
+
+        let json = serde_json::to_string(&export_hosts(&conn).unwrap()).unwrap();
+        assert!(
+            !json.contains("jump_host_id"),
+            "a row id must not leave the machine: {}",
+            json
+        );
     }
 
     #[test]
@@ -835,6 +907,7 @@ mod tests {
             mongo_local_uri: None,
             redis_uri: None,
             redis_tunnel_host_id: None,
+            jump_host_id: None,
         };
 
         let id = add_host(&conn, &new).unwrap();

@@ -259,6 +259,7 @@ fn split_local_mongo_hosts(conn: &rusqlite::Connection) -> usize {
             mongo_local_uri: None,
             redis_uri: None,
             redis_tunnel_host_id: None,
+            jump_host_id: None,
         };
 
         let new_id = match db::add_host(conn, &new_host) {
@@ -433,6 +434,78 @@ fn resolve_auth(host: &db::Host, password_override: Option<String>) -> Result<Au
             passphrase,
         }),
     }
+}
+
+/// An `SshTarget` for one host, with no jump.
+fn target_from(host: &db::Host, auth: Auth) -> ssh::SshTarget {
+    ssh::SshTarget {
+        host: host.host.clone(),
+        port: host.port as u16,
+        username: host.username.clone(),
+        password: auth.password,
+        key_path: auth.key_path,
+        passphrase: auth.passphrase,
+        jump: None,
+    }
+}
+
+/// Why a host's jump host cannot be used, if it cannot.
+///
+/// One hop only. A chain would work mechanically, but each hop is another trust
+/// prompt and another place for a cycle, and nobody has asked for it yet.
+fn check_jump(host: &db::Host, jump: Option<&db::Host>) -> Result<(), String> {
+    let Some(jump) = jump else {
+        return Err(format!(
+            "{} connects through a jump host that no longer exists. Edit the host to choose another.",
+            host.name
+        ));
+    };
+    if jump.id == host.id {
+        return Err(format!("{} cannot be its own jump host.", host.name));
+    }
+    if jump.jump_host_id.is_some() {
+        return Err(format!(
+            "{} connects through {}, which has a jump host of its own. Only one hop is supported.",
+            host.name, jump.name
+        ));
+    }
+    if jump.host.is_empty() {
+        return Err(format!(
+            "{} is not an SSH host, so it cannot be a jump host.",
+            jump.name
+        ));
+    }
+    Ok(())
+}
+
+/// Everything needed to open an SSH session to a host, including the jump
+/// host in front of it. Use this rather than `resolve_auth` for anything that
+/// connects.
+fn resolve_target(
+    state: &State<'_, AppState>,
+    host: &db::Host,
+    password_override: Option<String>,
+) -> Result<ssh::SshTarget, String> {
+    let mut target = target_from(host, resolve_auth(host, password_override)?);
+
+    if let Some(jump_id) = host.jump_host_id {
+        let jump = with_db(state, |conn| db::get_host_by_id(conn, jump_id))?;
+        check_jump(host, jump.as_ref())?;
+        let jump = jump.expect("check_jump rejects a missing jump host");
+
+        // Never prompted for: the password prompt the frontend shows is for
+        // the host being opened, and it must not be mistaken for the bastion's.
+        // The wording deliberately avoids the keyring error text it matches on.
+        let auth = resolve_auth(&jump, None).map_err(|_| {
+            format!(
+                "The jump host {} has no saved password. Connect to it once and save its password.",
+                jump.name
+            )
+        })?;
+        target.jump = Some(Box::new(target_from(&jump, auth)));
+    }
+
+    Ok(target)
 }
 
 /// The shared non-PTY session for a host, used for exec-style commands.
@@ -663,13 +736,13 @@ async fn ssh_connect(
     // were asked. Compared against the key the server actually presents, so an
     // acceptance cannot be replayed to let a different server through.
     accept_host_key: Option<String>,
+    // The same, for the jump host in front of this one.
+    accept_jump_host_key: Option<String>,
     cols: u32,
     rows: u32,
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
-
-    let auth = resolve_auth(&host, password)?;
-    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
+    let target = resolve_target(&state, &host, password)?;
 
     // The exec session is opened **first**, and it is the one that carries the
     // user's acceptance. Two reasons, both of which bit:
@@ -680,40 +753,24 @@ async fn ssh_connect(
     // - Opened alongside the terminal, it checked the key while the PTY thread
     //   was still recording it -- a race the exec session could lose.
     //
-    // Once this succeeds the key is on file, so the terminal checks with `None`.
-    let host_clone = host.host.clone();
-    let port = host.port as u16;
-    let username = host.username.clone();
-    let password_clone = password.clone();
-    let key_path_clone = key_path.clone();
-    let passphrase_clone = passphrase.clone();
-    let exec_session = tokio::task::spawn_blocking(move || {
-        ssh::create_exec_session(
-            &host_clone,
-            port,
-            &username,
-            password_clone.as_deref(),
-            key_path_clone.as_deref(),
-            passphrase_clone.as_deref(),
-            accept_host_key.as_deref(),
-        )
-    })
-    .await
-    .map_err(|e| format!("exec session task failed: {}", e))?
-    .map_err(exec_session_error)?;
+    // Once this succeeds the keys are on file, so the terminal never prompts.
+    let accept = ssh::Accept {
+        target: accept_host_key,
+        jump: accept_jump_host_key,
+    };
+    let exec_target = target.clone();
+    let exec_session =
+        tokio::task::spawn_blocking(move || ssh::create_exec_session(&exec_target, &accept))
+            .await
+            .map_err(|e| format!("exec session task failed: {}", e))?
+            .map_err(exec_session_error)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let handle = ssh::connect(
         window.clone(),
         session_id.clone(),
         host_id,
-        host.host.clone(),
-        host.port as u16,
-        host.username.clone(),
-        password.clone(),
-        key_path.clone(),
-        passphrase.clone(),
-        None,
+        target,
         cols,
         rows,
     )?;
@@ -869,8 +926,7 @@ async fn ssh_reconnect(
 
     let host = load_host(&state, host_id)?;
 
-    let auth = resolve_auth(&host, password)?;
-    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
+    let target = resolve_target(&state, &host, password)?;
 
     // Remove old session
     {
@@ -885,42 +941,22 @@ async fn ssh_reconnect(
         let mut exec_sessions = state.exec_sessions.lock().map_err(|e| e.to_string())?;
         exec_sessions.remove(&host_id);
     }
-    let host_clone = host.host.clone();
-    let port = host.port as u16;
-    let username = host.username.clone();
-    let password_clone = password.clone();
-    let key_path_clone = key_path.clone();
-    let passphrase_clone = passphrase.clone();
+    let exec_target = target.clone();
     let exec_session = tokio::task::spawn_blocking(move || {
-        ssh::create_exec_session(
-            &host_clone,
-            port,
-            &username,
-            password_clone.as_deref(),
-            key_path_clone.as_deref(),
-            passphrase_clone.as_deref(),
-            None,
-        )
+        ssh::create_exec_session(&exec_target, &ssh::Accept::none())
     })
     .await
     .map_err(|e| format!("exec session task failed: {}", e))?
     .map_err(exec_session_error)?;
 
-    // Open new connection with same session_id
+    // Open new connection with same session_id. A reconnect targets a host
+    // whose key was accepted when the tab was first opened; if the key is no
+    // longer what it was, the reconnect fails rather than asking again.
     let handle = ssh::connect(
         window.clone(),
         session_id.clone(),
         host_id,
-        host.host.clone(),
-        host.port as u16,
-        host.username.clone(),
-        password.clone(),
-        key_path.clone(),
-        passphrase.clone(),
-        // A reconnect targets a host whose key was accepted when the tab was
-        // first opened. Nothing is prompted from here: if the key is no longer
-        // what it was, the reconnect fails rather than asking again.
-        None,
+        target.clone(),
         80,
         24,
     )?;
@@ -938,25 +974,8 @@ async fn ssh_reconnect(
     // same id so the panel keeps working instead of holding a dead session
     // until the tab is closed. A failure here is not fatal to the shell.
     if let Some(sftp_id) = sftp_session_id {
-        let sftp_host = host.host.clone();
-        let sftp_port = host.port as u16;
-        let sftp_user = host.username.clone();
-        let sftp_password = password.clone();
-        let sftp_key = key_path.clone();
-        let sftp_passphrase = passphrase.clone();
-        match tokio::task::spawn_blocking(move || {
-            sftp::sftp_connect(
-                sftp_host,
-                sftp_port,
-                sftp_user,
-                sftp_password,
-                sftp_key,
-                sftp_passphrase,
-                host_id,
-            )
-        })
-        .await
-        {
+        let sftp_target = target.clone();
+        match tokio::task::spawn_blocking(move || sftp::sftp_connect(&sftp_target, host_id)).await {
             Ok(Ok(handle)) => {
                 let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
                 sftp_sessions.insert(sftp_id, Arc::new(handle));
@@ -979,24 +998,16 @@ async fn sftp_connect(
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
 
-    let auth = resolve_auth(&host, password)?;
-    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
+    let target = resolve_target(&state, &host, password)?;
 
     let sftp_id = uuid::Uuid::new_v4().to_string();
     let sftp_id_clone = sftp_id.clone();
-    let host_host = host.host.clone();
-    let port = host.port as u16;
-    let username = host.username.clone();
 
     // Run blocking SFTP connect off the async thread
-    let handle = tokio::task::spawn_blocking(move || {
-        sftp::sftp_connect(
-            host_host, port, username, password, key_path, passphrase, host_id,
-        )
-    })
-    .await
-    .map_err(|e| format!("sftp connect task failed: {}", e))?
-    .map_err(|e| format!("sftp connect: {}", e))?;
+    let handle = tokio::task::spawn_blocking(move || sftp::sftp_connect(&target, host_id))
+        .await
+        .map_err(|e| format!("sftp connect task failed: {}", e))?
+        .map_err(|e| format!("sftp connect: {}", e))?;
 
     let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
     sftp_sessions.insert(sftp_id.clone(), Arc::new(handle));
@@ -1325,21 +1336,9 @@ async fn exec_pty_connect(
 ) -> Result<String, String> {
     let host = load_host(&state, host_id)?;
 
-    let auth = resolve_auth(&host, None)?;
-    let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
+    let target = resolve_target(&state, &host, None)?;
 
-    let handle = ssh::exec_pty_connect(
-        window,
-        pty_session_id.clone(),
-        host_id,
-        host.host.clone(),
-        host.port as u16,
-        host.username.clone(),
-        password.clone(),
-        key_path.clone(),
-        passphrase.clone(),
-        command,
-    )?;
+    let handle = ssh::exec_pty_connect(window, pty_session_id.clone(), host_id, target, command)?;
 
     {
         let mut sessions = state.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
@@ -1469,10 +1468,7 @@ fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), St
         (host, forward)
     };
 
-    let auth = resolve_auth(&host, None)?;
-    // Port forwards do not carry a key passphrase yet: the forwarding commands
-    // have no path for one, so an encrypted key fails here as it always has.
-    let (password, key_path) = (auth.password, auth.key_path);
+    let target = resolve_target(&state, &host, None)?;
 
     match forward.kind.as_str() {
         "local" => {
@@ -1480,11 +1476,7 @@ fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), St
             let remote_port = forward.remote_port.ok_or("Remote port not set")? as u16;
             state.forward_manager.start_local(
                 rule_id,
-                host.host,
-                host.port as u16,
-                host.username,
-                password,
-                key_path,
+                target,
                 forward.local_host,
                 forward.local_port as u16,
                 remote_host,
@@ -1494,11 +1486,7 @@ fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), St
         "dynamic" => {
             state.forward_manager.start_dynamic(
                 rule_id,
-                host.host,
-                host.port as u16,
-                host.username,
-                password,
-                key_path,
+                target,
                 forward.local_host,
                 forward.local_port as u16,
             )?;
@@ -1967,9 +1955,7 @@ async fn redis_tunnel_port(
         .ok_or_else(|| "no Redis connection configured".to_string())?;
     let (remote_host, remote_port) = redis::uri_endpoint(uri)?;
 
-    let resolved = resolve_auth(&via, ssh_password)?;
-    let (auth_password, auth_key_path) = (resolved.password, resolved.key_path);
-    let (ssh_host, ssh_port, username) = (via.host.clone(), via.port as u16, via.username.clone());
+    let target = resolve_target(state, &via, ssh_password)?;
 
     // Holding the lock across the handshake keeps two tabs opening at once from
     // building two tunnels, the same reason `mongo_client` holds its lock.
@@ -1979,15 +1965,7 @@ async fn redis_tunnel_port(
     }
 
     let tunnel = tokio::task::spawn_blocking(move || {
-        port_forward::start_ephemeral_local(
-            ssh_host,
-            ssh_port,
-            username,
-            auth_password,
-            auth_key_path,
-            remote_host,
-            remote_port,
-        )
+        port_forward::start_ephemeral_local(target, remote_host, remote_port)
     })
     .await
     .map_err(|e| format!("redis tunnel task panicked: {}", e))??;
@@ -2606,6 +2584,7 @@ mod tests {
             mongo_local_uri: local.map(String::from),
             redis_uri: None,
             redis_tunnel_host_id: None,
+            jump_host_id: None,
         }
     }
 
@@ -2752,6 +2731,7 @@ mod tests {
             mongo_local_uri: None,
             redis_uri: None,
             redis_tunnel_host_id: None,
+            jump_host_id: None,
         }
     }
 
@@ -2760,6 +2740,50 @@ mod tests {
         let r = resolve_auth(&host("password", Some("/ignored")), Some("pw".into())).unwrap();
         assert_eq!(r.password.as_deref(), Some("pw"));
         assert_eq!(r.key_path, None);
+    }
+
+    #[test]
+    fn a_jump_host_is_accepted_when_it_is_a_direct_ssh_host() {
+        let mut target = host("password", None);
+        let mut jump = host("password", None);
+        jump.id = 8;
+        jump.name = "bastion".into();
+        target.jump_host_id = Some(8);
+        assert!(check_jump(&target, Some(&jump)).is_ok());
+    }
+
+    #[test]
+    fn a_jump_host_that_cannot_work_is_refused_by_name() {
+        let mut target = host("password", None);
+        target.name = "db".into();
+        target.jump_host_id = Some(8);
+
+        // Deleted.
+        assert!(check_jump(&target, None)
+            .unwrap_err()
+            .contains("no longer exists"));
+
+        // Itself.
+        let same = target.clone();
+        assert!(check_jump(&target, Some(&same))
+            .unwrap_err()
+            .contains("its own jump host"));
+
+        // A chain.
+        let mut chained = host("password", None);
+        chained.id = 8;
+        chained.name = "bastion".into();
+        chained.jump_host_id = Some(9);
+        let e = check_jump(&target, Some(&chained)).unwrap_err();
+        assert!(e.contains("bastion") && e.contains("one hop"), "{}", e);
+
+        // A datastore row.
+        let mut redis = host("password", None);
+        redis.id = 8;
+        redis.host = String::new();
+        assert!(check_jump(&target, Some(&redis))
+            .unwrap_err()
+            .contains("not an SSH host"));
     }
 
     #[test]

@@ -2300,14 +2300,20 @@ mod live_tunnel {
     /// Resolved on the bastion, not here: that is the whole point.
     const PRIVATE_REDIS: &str = "redis-private";
 
+    fn bastion(password: &str) -> crate::ssh::SshTarget {
+        crate::ssh::SshTarget {
+            host: BASTION_HOST.to_string(),
+            port: BASTION_PORT,
+            username: BASTION_USER.to_string(),
+            password: Some(password.to_string()),
+            ..Default::default()
+        }
+    }
+
     async fn open_tunnel() -> crate::port_forward::Tunnel {
         tokio::task::spawn_blocking(|| {
             crate::port_forward::start_ephemeral_local(
-                BASTION_HOST.to_string(),
-                BASTION_PORT,
-                BASTION_USER.to_string(),
-                Some(BASTION_PASSWORD.to_string()),
-                None,
+                bastion(BASTION_PASSWORD),
                 PRIVATE_REDIS.to_string(),
                 6379,
             )
@@ -2397,11 +2403,7 @@ mod live_tunnel {
         // connection failure against 127.0.0.1, which says nothing useful.
         let result = tokio::task::spawn_blocking(|| {
             crate::port_forward::start_ephemeral_local(
-                BASTION_HOST.to_string(),
-                BASTION_PORT,
-                BASTION_USER.to_string(),
-                Some("definitely-not-the-password".to_string()),
-                None,
+                bastion("definitely-not-the-password"),
                 PRIVATE_REDIS.to_string(),
                 6379,
             )
