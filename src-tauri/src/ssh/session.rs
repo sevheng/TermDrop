@@ -141,6 +141,11 @@ pub fn create_session(
 }
 
 /// Creates a new SSH session (blocking mode) for exec or SFTP reuse.
+///
+/// `accept_host_key` is the fingerprint the user agreed to, and only
+/// `ssh_connect` passes one: it opens this session *before* the terminal, so
+/// the key is on file by the time the PTY thread checks it. Every other caller
+/// passes `None`, which refuses a key that is not already on file.
 pub fn create_exec_session(
     host: &str,
     port: u16,
@@ -148,6 +153,7 @@ pub fn create_exec_session(
     password: Option<&str>,
     key_path: Option<&str>,
     passphrase: Option<&str>,
+    accept_host_key: Option<&str>,
 ) -> Result<Session, String> {
     let tcp = resolve_and_connect(host, port)?;
     let mut session = Session::new().map_err(|e| format!("session: {}", e))?;
@@ -156,10 +162,7 @@ pub fn create_exec_session(
         .handshake()
         .map_err(|e| format!("handshake: {}", e))?;
 
-    // An exec or SFTP session is opened for a host the user already has a
-    // terminal on, so trust is established by then. Nothing is prompted here:
-    // `None` means a key that is not already on file is refused.
-    trust::verify(&session, host, port, None).map_err(refusal_to_string)?;
+    trust::verify(&session, host, port, accept_host_key).map_err(refusal_to_string)?;
 
     if let Some(key_path) = key_path {
         let expanded = expand_key_path(key_path);

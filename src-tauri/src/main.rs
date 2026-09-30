@@ -639,6 +639,19 @@ fn store_password(host_id: i64, password: String) -> Result<(), String> {
     crypto::store_password(host_id, &password)
 }
 
+/// Label an exec-session failure, except a host key refusal.
+///
+/// The frontend recognises a refusal only when `TRUST_PREFIX` is at index 0 --
+/// deliberately, so no hostname or banner can forge one -- and a label in front
+/// of it turned "do you trust this host?" into a plain error toast.
+fn exec_session_error(e: String) -> String {
+    if e.starts_with(ssh::trust::TRUST_PREFIX) {
+        e
+    } else {
+        format!("exec session: {}", e)
+    }
+}
+
 #[tauri::command]
 #[instrument(skip(window, state), fields(host_id))]
 async fn ssh_connect(
@@ -658,23 +671,16 @@ async fn ssh_connect(
     let auth = resolve_auth(&host, password)?;
     let (password, key_path, passphrase) = (auth.password, auth.key_path, auth.passphrase);
 
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let handle = ssh::connect(
-        window.clone(),
-        session_id.clone(),
-        host_id,
-        host.host.clone(),
-        host.port as u16,
-        host.username.clone(),
-        password.clone(),
-        key_path.clone(),
-        passphrase.clone(),
-        accept_host_key,
-        cols,
-        rows,
-    )?;
-
-    // Create a persistent exec session off the async thread to avoid UI freeze
+    // The exec session is opened **first**, and it is the one that carries the
+    // user's acceptance. Two reasons, both of which bit:
+    //
+    // - Its error is what this command returns, so a trust refusal has to come
+    //   from here to reach the frontend's dialog. The PTY thread's refusal only
+    //   goes out as an `ssh-error` event into a terminal that does not exist yet.
+    // - Opened alongside the terminal, it checked the key while the PTY thread
+    //   was still recording it -- a race the exec session could lose.
+    //
+    // Once this succeeds the key is on file, so the terminal checks with `None`.
     let host_clone = host.host.clone();
     let port = host.port as u16;
     let username = host.username.clone();
@@ -689,11 +695,28 @@ async fn ssh_connect(
             password_clone.as_deref(),
             key_path_clone.as_deref(),
             passphrase_clone.as_deref(),
+            accept_host_key.as_deref(),
         )
     })
     .await
     .map_err(|e| format!("exec session task failed: {}", e))?
-    .map_err(|e| format!("exec session: {}", e))?;
+    .map_err(exec_session_error)?;
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let handle = ssh::connect(
+        window.clone(),
+        session_id.clone(),
+        host_id,
+        host.host.clone(),
+        host.port as u16,
+        host.username.clone(),
+        password.clone(),
+        key_path.clone(),
+        passphrase.clone(),
+        None,
+        cols,
+        rows,
+    )?;
 
     {
         let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -876,11 +899,12 @@ async fn ssh_reconnect(
             password_clone.as_deref(),
             key_path_clone.as_deref(),
             passphrase_clone.as_deref(),
+            None,
         )
     })
     .await
     .map_err(|e| format!("exec session task failed: {}", e))?
-    .map_err(|e| format!("exec session: {}", e))?;
+    .map_err(exec_session_error)?;
 
     // Open new connection with same session_id
     let handle = ssh::connect(
@@ -2736,6 +2760,18 @@ mod tests {
         let r = resolve_auth(&host("password", Some("/ignored")), Some("pw".into())).unwrap();
         assert_eq!(r.password.as_deref(), Some("pw"));
         assert_eq!(r.key_path, None);
+    }
+
+    #[test]
+    fn a_trust_refusal_from_the_exec_session_keeps_its_prefix_at_index_0() {
+        // The frontend only opens the trust dialog when the prefix is first.
+        let refusal = format!("{}{{\"kind\":\"unknown\"}}", ssh::trust::TRUST_PREFIX);
+        assert_eq!(exec_session_error(refusal.clone()), refusal);
+
+        assert_eq!(
+            exec_session_error("auth: denied".into()),
+            "exec session: auth: denied"
+        );
     }
 
     #[test]

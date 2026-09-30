@@ -300,7 +300,7 @@ fn create_ssh_session(
 ) -> Result<Session, String> {
     // Passphrase-protected keys are not yet carried through the forwarding
     // commands; an encrypted key fails here exactly as it did before.
-    crate::ssh::session::create_exec_session(host, port, username, password, key_path, None)
+    crate::ssh::session::create_exec_session(host, port, username, password, key_path, None, None)
 }
 
 fn handle_local_connection(

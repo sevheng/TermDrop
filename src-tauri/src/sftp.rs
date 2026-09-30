@@ -43,6 +43,7 @@ pub fn sftp_connect(
         password.as_deref(),
         key_path.as_deref(),
         passphrase.as_deref(),
+        None,
     )?;
 
     Ok(SftpSessionHandle {
