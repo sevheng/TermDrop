@@ -108,6 +108,50 @@ pub fn mark_jump_hop(error: String) -> String {
     }
 }
 
+/// Spell out a refusal for a connection that has nobody to ask.
+///
+/// Tunnels and port forwards open their sessions in the background, so they
+/// fail closed rather than prompt. Passed through as-is, the refusal reached
+/// the screen as raw `TERMDROP_TRUST:{...}` JSON, which names nothing the user
+/// can act on. The prefix is dropped on purpose: this text must never be
+/// mistaken for a dialog request. Anything that is not a refusal passes
+/// through unchanged.
+pub fn for_background(error: String) -> String {
+    let Some(json) = error.strip_prefix(TRUST_PREFIX) else {
+        return error;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return error;
+    };
+    let text = |key: &str| v[key].as_str().unwrap_or_default().to_string();
+    let which = if text("hop") == "jump" {
+        "The jump host "
+    } else {
+        ""
+    };
+    let place = format!("{}{}:{}", which, text("host"), v["port"]);
+    if text("kind") == "unknown" {
+        format!(
+            "{} has not been trusted yet (its {} key is {}). Open it in a terminal \
+             tab once to check the key and trust it; tunnels never ask.",
+            place,
+            text("keyType"),
+            text("fingerprint")
+        )
+    } else {
+        let detail = text("message");
+        if detail.is_empty() {
+            format!(
+                "{} presented a host key that does not match the one on file, so \
+                 the tunnel was refused.",
+                place
+            )
+        } else {
+            detail
+        }
+    }
+}
+
 /// Our own store, the only file we write.
 pub fn store_path() -> PathBuf {
     if let Ok(path) = std::env::var("TERMDROP_KNOWN_HOSTS") {
@@ -300,6 +344,39 @@ fn remember(name: &str, key_type: &str, key: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_refusal_is_words_not_a_dialog_payload() {
+        let info = HostKeyInfo {
+            host: "localhost".into(),
+            port: 2223,
+            fingerprint: "SHA256:abc".into(),
+            key_type: "ecdsa-sha2-nistp256".into(),
+        };
+        let text = for_background(refusal_payload(&Refusal::Unknown(info.clone())));
+        assert!(!text.contains(TRUST_PREFIX), "{text}");
+        assert!(
+            text.starts_with("localhost:2223 has not been trusted yet"),
+            "{text}"
+        );
+        assert!(
+            text.contains("SHA256:abc") && text.contains("terminal"),
+            "{text}"
+        );
+
+        let jump = for_background(mark_jump_hop(refusal_payload(&Refusal::Unknown(
+            info.clone(),
+        ))));
+        assert!(jump.starts_with("The jump host localhost:2223"), "{jump}");
+
+        let refused = Refusal::Refused {
+            info,
+            message: "the key changed".into(),
+        };
+        assert_eq!(for_background(refusal_payload(&refused)), "the key changed");
+
+        assert_eq!(for_background("auth failed".into()), "auth failed");
+    }
 
     fn info() -> HostKeyInfo {
         HostKeyInfo {

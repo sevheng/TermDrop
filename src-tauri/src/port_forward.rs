@@ -260,8 +260,11 @@ pub fn start_ephemeral_local(
 /// accepted socket, on a thread with no user attached — possibly while a Redis
 /// pane refreshes at 3am — so an unknown key here is an error. Trust is
 /// established by connecting the SSH host in a terminal tab once.
+/// Never prompts: nobody is watching a tunnel open, so an untrusted key is
+/// refused, in words rather than as the dialog payload `ssh_connect` uses.
 fn create_ssh_session(target: &SshTarget) -> Result<Session, String> {
     crate::ssh::session::create_exec_session(target, &Accept::none())
+        .map_err(crate::ssh::trust::for_background)
 }
 
 fn handle_local_connection(

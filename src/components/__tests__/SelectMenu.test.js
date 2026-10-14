@@ -63,3 +63,42 @@ describe('SelectMenu scrolling', () => {
     w.unmount()
   })
 })
+
+describe('SelectMenu sizing', () => {
+  it('scales the trigger and the rows together', async () => {
+    // The two used to be written separately at each call site's mercy; a
+    // `md` trigger with `sm` rows reads as a control that has gone wrong.
+    for (const [size, trigger, row] of [
+      ['xs', 'text-2xs', 'text-2xs'],
+      ['sm', 'text-xs', 'text-xs'],
+      ['md', 'text-sm', 'text-sm'],
+    ]) {
+      const w = open({ size })
+      expect(w.get('button').classes(), size).toContain(trigger)
+      await w.get('button').trigger('click')
+      await w.vm.$nextTick()
+      expect(w.get('[role="option"]').classes(), size).toContain(row)
+      w.unmount()
+    }
+  })
+
+  it('fills its container only when asked to', async () => {
+    // Every form-field usage passes `block`; without it the control collapses
+    // to its label's width and sits cramped beside full-width inputs.
+    const plain = open()
+    expect(plain.get('button').classes()).not.toContain('w-full')
+    plain.unmount()
+
+    const blocky = open({ block: true })
+    expect(blocky.get('button').classes()).toContain('w-full')
+    blocky.unmount()
+  })
+
+  it('warns in development about a size it does not have', () => {
+    // The validator's list is written out separately from SIZES because
+    // defineProps is hoisted, so this is what keeps the two in step.
+    const { validator } = SelectMenu.props.size
+    expect(validator('md')).toBe(true)
+    expect(validator('lg')).toBe(false)
+  })
+})

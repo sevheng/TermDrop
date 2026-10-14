@@ -13,12 +13,16 @@ export const TAB_KIND = {
   SSH: 'ssh',
   MONGODB: 'mongodb',
   REDIS: 'redis',
+  VNC: 'vnc',
 }
 
 const KINDS = {
   [TAB_KIND.SSH]: { hasRightPanel: true, canReceiveCommand: true },
   [TAB_KIND.MONGODB]: { hasRightPanel: false, canReceiveCommand: false },
   [TAB_KIND.REDIS]: { hasRightPanel: false, canReceiveCommand: false },
+  // A VNC tab takes every keystroke for the remote desktop, so it must never
+  // be offered as somewhere to type a command either.
+  [TAB_KIND.VNC]: { hasRightPanel: false, canReceiveCommand: false },
 }
 
 /** A tab's kind, defaulting to `ssh` for tabs that carry no type. */

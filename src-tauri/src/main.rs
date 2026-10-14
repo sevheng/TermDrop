@@ -30,6 +30,7 @@ mod ssh;
 mod ssh_config_parser;
 mod system;
 mod uri;
+mod vnc;
 
 /// The window's background colour, applied at creation so the very first
 /// frame is already the app's own canvas rather than the webview's default
@@ -91,6 +92,14 @@ pub struct AppState {
     /// process to kill, and a Redis operation has none -- it is a loop in this
     /// process, so a flag is the whole mechanism.
     redis_ops: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    /// One live RFB session per VNC tab, keyed by session id.
+    ///
+    /// Deliberately not keyed by host id the way `redis_conns` is: two VNC tabs
+    /// on one host are two independent connections with their own framebuffer,
+    /// cursor and decoder state, and have nothing they could share.
+    vnc_sessions: Mutex<HashMap<String, vnc::VncSessionHandle>>,
+    /// One SSH tunnel per VNC host, alive while any session for it is.
+    vnc_tunnels: Arc<tokio::sync::Mutex<HashMap<i64, port_forward::Tunnel>>>,
 }
 
 fn db_err(e: r2d2::Error) -> String {
@@ -260,6 +269,11 @@ fn split_local_mongo_hosts(conn: &rusqlite::Connection) -> usize {
             redis_uri: None,
             redis_tunnel_host_id: None,
             jump_host_id: None,
+            vnc_host: None,
+            vnc_port: None,
+            vnc_username: None,
+            vnc_tunnel_host_id: None,
+            vnc_view_only: None,
         };
 
         let new_id = match db::add_host(conn, &new_host) {
@@ -688,8 +702,12 @@ fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String
 #[tauri::command]
 async fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
     with_db(&state, |conn| db::update_host(conn, id, &host))?;
-    // The URI may have changed; a cached client would keep using the old one.
+    // The address may have changed, and every one of these caches the old one.
+    // Redis was missing here: an edited URI stayed invisible until the app was
+    // restarted, and the stale tunnel stayed open behind it.
     forget_mongo_clients(&state, id).await;
+    forget_redis(&state, id).await;
+    vnc_disconnect_host(state, id).await?;
     Ok(())
 }
 
@@ -697,8 +715,13 @@ async fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> 
 async fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     with_db(&state, |conn| db::delete_host(conn, id))?;
     forget_mongo_clients(&state, id).await;
+    forget_redis(&state, id).await;
+    vnc_disconnect_host(state.clone(), id).await?;
     crypto::delete_password(id).ok();
     crypto::delete_secret(&mongo_account(id)).ok();
+    // Both of these were orphaned: the row went, the keyring entry stayed.
+    crypto::delete_secret(&redis_account(id)).ok();
+    crypto::delete_secret(&vnc_account(id)).ok();
     Ok(())
 }
 
@@ -2329,6 +2352,384 @@ fn redis_clear_secret(host_id: i64) -> Result<(), String> {
     crypto::delete_secret(&redis_account(host_id))
 }
 
+// ---------------------------------------------------------------------------
+// VNC
+// ---------------------------------------------------------------------------
+
+/// The keyring account for a host's VNC password.
+///
+/// Non-numeric by construction, so it cannot collide with an SSH host password
+/// stored under the bare id, nor with `redis-<id>` or `mongo-remote-<id>` in the
+/// shared fallback file.
+fn vnc_account(host_id: i64) -> String {
+    format!("vnc-{}", host_id)
+}
+
+/// The VNC password for a host, or `None` when it has none stored.
+///
+/// The two "keyring retrieve failed" messages in this module are worded
+/// differently on purpose. A VNC tab on an SSH host can need *two* secrets --
+/// one for the bastion, one for the VNC server -- and the frontend's
+/// prompt-and-retry has to know which one to ask for. Both still contain the
+/// substring the shared detector looks for.
+fn load_vnc_password(host_id: i64) -> Result<Option<String>, String> {
+    match crypto::get_secret(&vnc_account(host_id)) {
+        Ok(password) => Ok(Some(password)),
+        // No entry is normal: a server with no password, or `None` security.
+        Err(_) => Ok(None),
+    }
+}
+
+/// Where to actually dial for a host's VNC server, and whether it is tunnelled.
+///
+/// An SSH host carrying VNC settings tunnels **through itself** unless told
+/// otherwise, because a VNC server almost always binds 127.0.0.1 and would
+/// not be reachable any other way.
+async fn vnc_dial_target(
+    state: &State<'_, AppState>,
+    host: &db::Host,
+    ssh_password: Option<String>,
+) -> Result<(String, u16, bool), String> {
+    let address = host
+        .vnc_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "no VNC connection configured".to_string())?;
+    let port = u16::try_from(host.vnc_port.unwrap_or(5900))
+        .map_err(|_| format!("invalid VNC port {:?}", host.vnc_port))?;
+
+    let bastion_id = match host.vnc_tunnel_host_id {
+        Some(id) => Some(id),
+        None if !host.host.trim().is_empty() => Some(host.id),
+        None => None,
+    };
+    let Some(bastion_id) = bastion_id else {
+        return Ok((address.to_string(), port, false));
+    };
+
+    let local_port = vnc_tunnel_port(state, host, bastion_id, address, port, ssh_password).await?;
+    Ok(("127.0.0.1".to_string(), local_port, true))
+}
+
+/// Bring up this host's SSH tunnel if it has one, returning the local port.
+///
+/// Mirrors `redis_tunnel_port`: double-checked so two tabs opening at once
+/// cannot build two tunnels, and `start_ephemeral_local` is blocking so it goes
+/// to a blocking task.
+///
+/// The tunnel opens its **own** SSH session per connection
+/// (`port_forward::handle_local_connection`), entirely separate from this
+/// host's entry in `exec_sessions`. That is what makes a VNC tab safe beside a
+/// shell tab on the same host: the rule against running two things on one
+/// `ssh2::Session` is not in play here, and must not be "optimised" into being.
+async fn vnc_tunnel_port(
+    state: &State<'_, AppState>,
+    host: &db::Host,
+    bastion_id: i64,
+    remote_host: &str,
+    remote_port: u16,
+    ssh_password: Option<String>,
+) -> Result<u16, String> {
+    if let Some(tunnel) = state.vnc_tunnels.lock().await.get(&host.id) {
+        return Ok(tunnel.local_port);
+    }
+
+    let via = if bastion_id == host.id {
+        host.clone()
+    } else {
+        with_db(state, |conn| db::get_host_by_id(conn, bastion_id))?.ok_or_else(|| {
+            "the SSH host this VNC connection tunnels through no longer exists".to_string()
+        })?
+    };
+
+    // `resolve_target`, so a bastion that is itself behind a jump host works,
+    // and its host key is checked like every other SSH connection.
+    let target = resolve_target(state, &via, ssh_password)?;
+    let (remote_host, remote_port) = (remote_host.to_string(), remote_port);
+
+    let mut tunnels = state.vnc_tunnels.lock().await;
+    if let Some(tunnel) = tunnels.get(&host.id) {
+        return Ok(tunnel.local_port);
+    }
+
+    let tunnel = tokio::task::spawn_blocking(move || {
+        port_forward::start_ephemeral_local(target, remote_host, remote_port)
+    })
+    .await
+    .map_err(|e| format!("VNC tunnel task panicked: {}", e))??;
+
+    let port = tunnel.local_port;
+    tunnels.insert(host.id, tunnel);
+    tracing::info!(host_id = host.id, local_port = port, "VNC tunnel opened");
+    Ok(port)
+}
+
+/// Drop a host's tunnel once no session is using it any more.
+///
+/// The refcount lives here rather than in the frontend because a VNC tab can
+/// sit on an SSH host that also has a shell tab open, and the store's
+/// "last tab for this host" test cannot see the difference.
+async fn release_vnc_host(state: &State<'_, AppState>, host_id: i64) {
+    let still_in_use = state
+        .vnc_sessions
+        .lock()
+        .map(|s| s.values().any(|h| h.host_id == host_id))
+        .unwrap_or(false);
+    if !still_in_use {
+        state.vnc_tunnels.lock().await.remove(&host_id);
+    }
+}
+
+#[tauri::command]
+async fn vnc_connect(
+    window: Window,
+    state: State<'_, AppState>,
+    host_id: i64,
+    password: Option<String>,
+    ssh_password: Option<String>,
+) -> Result<vnc::VncSessionInfo, String> {
+    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
+        .ok_or_else(|| format!("host {} not found", host_id))?;
+
+    let (address, port, tunnelled) = vnc_dial_target(&state, &host, ssh_password).await?;
+
+    let vnc_password = match password {
+        Some(p) => Some(p),
+        None => load_vnc_password(host_id)?,
+    };
+    let session_id = format!("vnc-{}", uuid::Uuid::new_v4());
+    let view_only = host.vnc_view_only != 0;
+    let username = host.vnc_username.clone();
+
+    let session_id_for_thread = session_id.clone();
+    let (handle, info) = tokio::task::spawn_blocking(move || {
+        vnc::start(
+            window,
+            session_id_for_thread,
+            host_id,
+            &address,
+            port,
+            vnc_password.as_deref(),
+            username.as_deref(),
+            tunnelled,
+            view_only,
+        )
+    })
+    .await
+    .map_err(|e| format!("VNC connect task panicked: {}", e))?
+    .map_err(|e| uri::redact_uris_in_text(&e))?;
+
+    state
+        .vnc_sessions
+        .lock()
+        .map_err(|_| "session registry poisoned".to_string())?
+        .insert(session_id, handle);
+
+    Ok(info)
+}
+
+/// Hand the session the channel its frames go down.
+///
+/// Until this arrives the thread requests no frames at all, which is what
+/// removes the dropped-first-frame race rather than papering over it.
+#[tauri::command]
+fn vnc_open_frame_channel(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.attach_channel(channel);
+        Ok(())
+    })
+}
+
+/// Run `f` against a live session, or report that it is gone.
+fn with_vnc<T>(
+    state: &State<'_, AppState>,
+    session_id: &str,
+    f: impl FnOnce(&vnc::VncSessionHandle) -> Result<T, String>,
+) -> Result<T, String> {
+    let sessions = state
+        .vnc_sessions
+        .lock()
+        .map_err(|_| "session registry poisoned".to_string())?;
+    let handle = sessions
+        .get(session_id)
+        .ok_or_else(|| "this VNC session is no longer open".to_string())?;
+    f(handle)
+}
+
+#[tauri::command]
+async fn vnc_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let host_id = {
+        let mut sessions = state
+            .vnc_sessions
+            .lock()
+            .map_err(|_| "session registry poisoned".to_string())?;
+        sessions.remove(&session_id).map(|h| {
+            h.disconnect();
+            h.host_id
+        })
+    };
+    if let Some(host_id) = host_id {
+        release_vnc_host(&state, host_id).await;
+    }
+    Ok(())
+}
+
+/// Close every session for a host. Used when the last tab for it goes away.
+#[tauri::command]
+async fn vnc_disconnect_host(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
+    {
+        let mut sessions = state
+            .vnc_sessions
+            .lock()
+            .map_err(|_| "session registry poisoned".to_string())?;
+        sessions.retain(|_, handle| {
+            if handle.host_id == host_id {
+                handle.disconnect();
+                false
+            } else {
+                true
+            }
+        });
+    }
+    release_vnc_host(&state, host_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+fn vnc_pointer(
+    state: State<'_, AppState>,
+    session_id: String,
+    x: u16,
+    y: u16,
+    button_mask: u8,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.send_input(vnc::proto::encode_pointer_event(button_mask, x, y));
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn vnc_key(
+    state: State<'_, AppState>,
+    session_id: String,
+    keysym: u32,
+    down: bool,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.send_input(vnc::proto::encode_key_event(down, keysym));
+        Ok(())
+    })
+}
+
+/// Press every keysym in order, then release them in reverse.
+///
+/// Exists for Ctrl+Alt+Delete, which no browser will ever deliver as a keydown
+/// -- Windows intercepts it and Linux window managers grab it.
+#[tauri::command]
+fn vnc_key_sequence(
+    state: State<'_, AppState>,
+    session_id: String,
+    keysyms: Vec<u32>,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        let mut bytes = Vec::new();
+        for &keysym in &keysyms {
+            bytes.extend_from_slice(&vnc::proto::encode_key_event(true, keysym));
+        }
+        for &keysym in keysyms.iter().rev() {
+            bytes.extend_from_slice(&vnc::proto::encode_key_event(false, keysym));
+        }
+        handle.send_input(bytes);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn vnc_frame_ack(state: State<'_, AppState>, session_id: String, seq: u32) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.ack(seq);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn vnc_refresh(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.refresh();
+        Ok(())
+    })
+}
+
+/// Stop or resume requesting frames while the panel is out of sight.
+#[tauri::command]
+fn vnc_set_paused(
+    state: State<'_, AppState>,
+    session_id: String,
+    paused: bool,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.set_paused(paused);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn vnc_set_view_only(
+    state: State<'_, AppState>,
+    session_id: String,
+    view_only: bool,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.set_view_only(view_only);
+        Ok(())
+    })
+}
+
+/// Push the local clipboard to the remote.
+///
+/// Returns whether anything was lost: the base protocol's cut text is
+/// ISO-8859-1 and has nowhere to put a character outside it, so the caller can
+/// say so once rather than silently replacing it.
+#[tauri::command]
+fn vnc_send_clipboard(
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> Result<bool, String> {
+    with_vnc(&state, &session_id, |handle| {
+        if handle.is_view_only() {
+            return Ok(false);
+        }
+        let (bytes, lossy) = vnc::proto::encode_client_cut_text(&text);
+        handle.send_input(bytes);
+        Ok(lossy)
+    })
+}
+
+#[tauri::command]
+fn vnc_store_secret(host_id: i64, password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("password is empty".to_string());
+    }
+    crypto::store_secret(&vnc_account(host_id), &password)
+}
+
+#[tauri::command]
+fn vnc_has_secret(host_id: i64) -> Result<bool, String> {
+    Ok(crypto::get_secret(&vnc_account(host_id)).is_ok())
+}
+
+#[tauri::command]
+fn vnc_clear_secret(host_id: i64) -> Result<(), String> {
+    crypto::delete_secret(&vnc_account(host_id))
+}
+
 #[tauri::command]
 fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
     let ops = state.mongo_ops.lock().unwrap_or_else(|e| e.into_inner());
@@ -2429,6 +2830,8 @@ fn main() {
             redis_conns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             redis_tunnels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             redis_ops: Arc::new(Mutex::new(HashMap::new())),
+            vnc_sessions: Mutex::new(HashMap::new()),
+            vnc_tunnels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
         .setup(move |app| {
             // The window is built here, rather than declared in
@@ -2560,6 +2963,21 @@ fn main() {
             redis_store_secret,
             redis_has_secret,
             redis_clear_secret,
+            vnc_connect,
+            vnc_open_frame_channel,
+            vnc_disconnect,
+            vnc_disconnect_host,
+            vnc_pointer,
+            vnc_key,
+            vnc_key_sequence,
+            vnc_frame_ack,
+            vnc_refresh,
+            vnc_set_paused,
+            vnc_set_view_only,
+            vnc_send_clipboard,
+            vnc_store_secret,
+            vnc_has_secret,
+            vnc_clear_secret,
             mongodb::scan_restore_folder,
         ])
         .run(tauri::generate_context!())
@@ -2585,6 +3003,11 @@ mod tests {
             redis_uri: None,
             redis_tunnel_host_id: None,
             jump_host_id: None,
+            vnc_host: None,
+            vnc_port: None,
+            vnc_username: None,
+            vnc_tunnel_host_id: None,
+            vnc_view_only: None,
         }
     }
 
@@ -2732,6 +3155,11 @@ mod tests {
             redis_uri: None,
             redis_tunnel_host_id: None,
             jump_host_id: None,
+            vnc_host: None,
+            vnc_port: None,
+            vnc_username: None,
+            vnc_tunnel_host_id: None,
+            vnc_view_only: 0,
         }
     }
 

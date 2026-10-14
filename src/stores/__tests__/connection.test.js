@@ -178,3 +178,27 @@ describe('host key trust across a jump host', () => {
     expect(store.tabs).toHaveLength(0)
   })
 })
+
+describe('setTabConnected', () => {
+  it('lets a remote-desktop panel turn its host row off when the session dies', async () => {
+    // The tab is opened before its panel connects, and only the panel learns
+    // that the password was refused or the server went away. The row read the
+    // store's flag, which nothing ever cleared, so it stayed green.
+    const { hostRowState } = await import('../../utils/hostRowState.js')
+    const store = storeWithHost({ id: 7, name: 'kiosk', vnc_host: '10.0.0.5', vnc_port: 5901 })
+    const tabId = store.openVncTab(7)
+
+    store.setTabConnected(tabId, false)
+    expect(hostRowState(store, 7).connected).toBe(false)
+
+    store.setTabConnected(tabId, true)
+    expect(hostRowState(store, 7).connected).toBe(true)
+  })
+
+  it('leaves other tabs alone', () => {
+    const store = storeWithHost({ id: 7, name: 'kiosk', vnc_host: '10.0.0.5', vnc_port: 5901 })
+    store.openVncTab(7)
+    store.setTabConnected('some-other-tab', false)
+    expect(store.tabs[0].connected).toBe(true)
+  })
+})

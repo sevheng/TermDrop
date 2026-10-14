@@ -55,6 +55,7 @@ export default {
         'redis': 'rgb(var(--td-redis) / <alpha-value>)',
         'selected': 'rgb(var(--td-selected) / <alpha-value>)',
         'surface': 'rgb(var(--td-surface) / <alpha-value>)',
+        'vnc': 'rgb(var(--td-vnc) / <alpha-value>)',
         'syn-blue': 'rgb(var(--td-syn-blue) / <alpha-value>)',
         'syn-cyan': 'rgb(var(--td-syn-cyan) / <alpha-value>)',
         'syn-purple': 'rgb(var(--td-syn-purple) / <alpha-value>)',

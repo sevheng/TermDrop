@@ -1015,6 +1015,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5472,15 +5481,21 @@ dependencies = [
 name = "termdrop"
 version = "0.3.1"
 dependencies = [
+ "aes",
  "aes-gcm",
  "base64 0.22.1",
  "bson",
+ "cipher",
+ "des",
  "dirs 5.0.1",
+ "flate2",
  "futures-util",
  "hex",
  "hmac",
  "keyring",
+ "md-5",
  "mongodb",
+ "num-bigint 0.4.6",
  "r2d2",
  "r2d2_sqlite",
  "rand 0.8.6",
