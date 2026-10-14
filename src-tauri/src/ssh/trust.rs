@@ -16,7 +16,7 @@
 //! actually work against the file we point them at.
 
 use super::known_hosts::{self, HostEntry, Trust};
-use ssh2::{HashType, Session};
+use ssh2::Session;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -195,19 +195,22 @@ fn presented(session: &Session, host: &str, port: u16) -> Result<(Vec<u8>, HostK
     let (key, key_type) = session
         .host_key()
         .ok_or_else(|| "the server presented no host key".to_string())?;
-    let hash = session
-        .host_key_hash(HashType::Sha256)
-        .ok_or_else(|| "could not fingerprint the server's host key".to_string())?;
+    Ok((key.to_vec(), describe(key, key_type, host, port)))
+}
 
-    Ok((
-        key.to_vec(),
-        HostKeyInfo {
-            host: host.to_string(),
-            port,
-            fingerprint: known_hosts::fingerprint(hash),
-            key_type: key_type_name(key_type).to_string(),
-        },
-    ))
+/// What the user is shown about a key, from the key itself.
+///
+/// From the key, not `Session::host_key_hash`: that is already the SHA-256
+/// digest, and `fingerprint` hashes its input, so passing it in showed SHA-256
+/// of SHA-256 -- a value the `ssh-keygen -lf` check the dialog suggests could
+/// never reproduce. Split out of `presented` so a test can hold it to that.
+fn describe(key: &[u8], key_type: ssh2::HostKeyType, host: &str, port: u16) -> HostKeyInfo {
+    HostKeyInfo {
+        host: host.to_string(),
+        port,
+        fingerprint: known_hosts::fingerprint(key),
+        key_type: key_type_name(key_type).to_string(),
+    }
 }
 
 fn key_type_name(key_type: ssh2::HostKeyType) -> &'static str {
@@ -376,6 +379,23 @@ mod tests {
         assert_eq!(for_background(refusal_payload(&refused)), "the key changed");
 
         assert_eq!(for_background("auth failed".into()), "auth failed");
+    }
+
+    #[test]
+    fn the_fingerprint_shown_is_the_one_ssh_keygen_prints() {
+        // Checked against `ssh-keygen -lf` on this key, not just its shape. The
+        // shape test passed while every dialog showed SHA-256 of the SHA-256,
+        // so the verification the dialog asks for always disagreed with it.
+        use base64::Engine;
+        let key = base64::engine::general_purpose::STANDARD
+            .decode("AAAAC3NzaC1lZDI1NTE5AAAAIBFdKE+QBAchO5hWv1oc7bZtY8tGqLzwQ6Mfl9EY6tlk")
+            .unwrap();
+        let info = describe(&key, ssh2::HostKeyType::Ed25519, "example", 22);
+        assert_eq!(
+            info.fingerprint,
+            "SHA256:pIn9ElXDd3pr6MGdJFvYjQlZ6GOpBgqtjENj/5SPYsE"
+        );
+        assert_eq!(info.key_type, "ssh-ed25519");
     }
 
     fn info() -> HostKeyInfo {
