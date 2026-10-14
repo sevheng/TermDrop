@@ -47,8 +47,10 @@ use super::proto::{self, server_message, RectHeader};
 /// lost and asking for another frame anyway.
 ///
 /// A dropped acknowledgement must degrade the frame rate, never freeze the
-/// session — a hidden tab, a slow paint or a reload should all recover on their
-/// own rather than needing a reconnect.
+/// session — a slow paint or a reload should recover on its own rather than
+/// needing a reconnect. A hidden tab is not a lost acknowledgement: it says so
+/// with `set_paused`, because withholding acks alone only slowed it to one
+/// frame per timeout, about four a second of frames nobody could see.
 const ACK_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// A cut-text payload larger than this is not a clipboard.
@@ -67,6 +69,9 @@ pub struct VncSessionHandle {
     view_only: Arc<AtomicBool>,
     /// Set when the next request must be a full refresh instead of incremental.
     needs_full: Arc<AtomicBool>,
+    /// Set while the panel is out of sight. No update is requested, but the
+    /// socket is still read, so a bell or clipboard update is not held back.
+    paused: Arc<AtomicBool>,
     /// Registered by the panel once it is ready to paint. The thread requests
     /// no frames at all until this is set, which removes the dropped-first-frame
     /// race rather than papering over it.
@@ -90,6 +95,10 @@ impl VncSessionHandle {
 
     pub fn refresh(&self) {
         self.needs_full.store(true, Ordering::Relaxed);
+    }
+
+    pub fn set_paused(&self, value: bool) {
+        self.paused.store(value, Ordering::Relaxed);
     }
 
     pub fn set_view_only(&self, value: bool) {
@@ -160,6 +169,7 @@ pub fn start(
     let (ack_tx, ack_rx) = mpsc::unbounded_channel();
     let channel = Arc::new(Mutex::new(None));
     let needs_full = Arc::new(AtomicBool::new(true));
+    let paused = Arc::new(AtomicBool::new(false));
     let size = Arc::new(Mutex::new((hs.server_init.width, hs.server_init.height)));
 
     let info = VncSessionInfo {
@@ -179,6 +189,7 @@ pub fn start(
         shutdown: shutdown.clone(),
         view_only: Arc::new(AtomicBool::new(view_only)),
         needs_full: needs_full.clone(),
+        paused: paused.clone(),
         channel: channel.clone(),
     };
 
@@ -197,6 +208,7 @@ pub fn start(
         conn,
         channel,
         needs_full,
+        paused,
         size,
         shutdown,
         outgoing_tx: input_tx,
@@ -349,6 +361,7 @@ struct LoopState {
     conn: Conn,
     channel: Arc<Mutex<Option<Channel<InvokeResponseBody>>>>,
     needs_full: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     size: Arc<Mutex<(u16, u16)>>,
     shutdown: Arc<AtomicBool>,
     /// Requests go out through the writer thread like any other message, so
@@ -396,12 +409,14 @@ struct Pacing {
     unacked: u32,
     /// When the oldest unacknowledged frame went out.
     oldest_unacked: Option<Instant>,
+    /// The renderer is out of sight and has asked for nothing.
+    paused: bool,
 }
 
 impl Pacing {
     /// Whether another update may be requested now.
     fn may_request(&self, channel_ready: bool) -> bool {
-        !self.request_in_flight && self.unacked < MAX_UNACKED && channel_ready
+        !self.paused && !self.request_in_flight && self.unacked < MAX_UNACKED && channel_ready
     }
 
     fn requested(&mut self) {
@@ -425,7 +440,13 @@ impl Pacing {
     /// Give up on a lost acknowledgement, reporting whether one was dropped.
     ///
     /// A renderer that never answers must cost frame rate, never the session.
+    ///
+    /// Not while paused: a hidden renderer withholds its acknowledgements on
+    /// purpose, and expiring them is exactly what used to let it keep pulling.
     fn expire_ack(&mut self, now: Instant, timeout: Duration) -> bool {
+        if self.paused {
+            return false;
+        }
         match self.oldest_unacked {
             Some(at) if now.duration_since(at) > timeout => {
                 // Give up on all of them: a renderer that has stopped
@@ -461,6 +482,7 @@ fn run_loop(mut state: LoopState, mut ack_rx: mpsc::UnboundedReceiver<u32>) {
         while ack_rx.try_recv().is_ok() {
             pacing.acked(Instant::now());
         }
+        pacing.paused = state.paused.load(Ordering::Relaxed);
         if pacing.expire_ack(Instant::now(), ACK_TIMEOUT) {
             tracing::debug!(
                 session = %state.session_id,
@@ -744,6 +766,29 @@ mod tests {
             "a silent renderer must not wedge the session"
         );
         assert!(!pacing.expire_ack(late, ACK_TIMEOUT), "only once");
+    }
+
+    #[test]
+    fn a_paused_renderer_is_not_mistaken_for_a_lost_acknowledgement() {
+        // A hidden tab withholds its acknowledgements. The timeout used to
+        // expire them and request again, so a busy desktop in a background tab
+        // kept streaming at one frame per timeout.
+        let start = Instant::now();
+        let mut pacing = Pacing::default();
+        pacing.requested();
+        pacing.update_arrived(Update::Sent, start);
+        pacing.paused = true;
+        assert!(!pacing.may_request(true), "paused asks for nothing");
+
+        let late = start + ACK_TIMEOUT * 10;
+        assert!(
+            !pacing.expire_ack(late, ACK_TIMEOUT),
+            "no expiry while paused"
+        );
+        assert!(!pacing.may_request(true), "still nothing after the timeout");
+
+        pacing.paused = false;
+        assert!(pacing.may_request(true), "resumes as soon as it is visible");
     }
 
     #[test]

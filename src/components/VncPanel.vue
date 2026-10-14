@@ -398,8 +398,21 @@ function ackFrame(seq) {
   invoke('vnc_frame_ack', { sessionId: sessionId.value, seq }).catch(() => {})
 }
 
+/**
+ * Tell the backend to stop or resume requesting frames.
+ *
+ * Withholding acknowledgements is not enough on its own: the backend expires
+ * an unanswered frame after its timeout and asks for the next one, so a hidden
+ * tab on a busy desktop kept streaming at about four frames a second.
+ */
+function setPaused(paused) {
+  if (!sessionId.value) return
+  invoke('vnc_set_paused', { sessionId: sessionId.value, paused }).catch(() => {})
+}
+
 /** Resume a stream that was paused mid-frame, without waiting for the timeout. */
 function resumeStream() {
+  setPaused(false)
   if (withheldAck !== null) ackFrame(withheldAck)
   refresh()
 }
@@ -616,7 +629,8 @@ onMounted(async () => {
 })
 
 function onVisibility() {
-  if (document.visibilityState === 'visible' && connected.value) resumeStream()
+  if (document.visibilityState === 'hidden') setPaused(true)
+  else if (props.isActive && connected.value) resumeStream()
 }
 
 onBeforeUnmount(() => {
@@ -626,14 +640,17 @@ onBeforeUnmount(() => {
   disconnect()
 })
 
-// A backgrounded tab stops acknowledging, which stalls the request pump and
-// makes the server stop sending. Coming back needs a full refresh, since the
-// incremental updates missed while away were never sent.
+// A backgrounded tab pauses the request pump, so the server stops sending.
+// Coming back needs a full refresh, since the incremental updates missed while
+// away were never sent.
 watch(
   () => props.isActive,
   active => {
     if (active && connected.value) resumeStream()
-    if (!active) releaseAllKeys()
+    if (!active) {
+      setPaused(true)
+      releaseAllKeys()
+    }
   },
 )
 

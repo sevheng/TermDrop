@@ -2666,6 +2666,19 @@ fn vnc_refresh(state: State<'_, AppState>, session_id: String) -> Result<(), Str
     })
 }
 
+/// Stop or resume requesting frames while the panel is out of sight.
+#[tauri::command]
+fn vnc_set_paused(
+    state: State<'_, AppState>,
+    session_id: String,
+    paused: bool,
+) -> Result<(), String> {
+    with_vnc(&state, &session_id, |handle| {
+        handle.set_paused(paused);
+        Ok(())
+    })
+}
+
 #[tauri::command]
 fn vnc_set_view_only(
     state: State<'_, AppState>,
@@ -2959,6 +2972,7 @@ fn main() {
             vnc_key_sequence,
             vnc_frame_ack,
             vnc_refresh,
+            vnc_set_paused,
             vnc_set_view_only,
             vnc_send_clipboard,
             vnc_store_secret,
