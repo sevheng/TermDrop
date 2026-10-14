@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-14
+
 ### Security
 - **Host keys are checked before any credential is sent.** TermDrop used to log in to whatever answered at a host's address, so anyone able to intercept the connection received your password. Every SSH connection — terminal, SFTP, Docker, system stats, port forwards and tunnels — now verifies the server's key first.
   - **The first connection asks.** A host you have never connected to shows its key fingerprint and asks whether to trust it; the acceptance is tied to that exact fingerprint, so a different server answering the retry is still refused
@@ -31,14 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Editing an SSH host no longer takes it out of its group or removes its star.** The edit form did not carry either field, and saving wrote every column, so both were reset on every edit.
-- **Remote desktops felt laggy, and mostly it was one bug.** When the remote had nothing new to draw — which a desktop sitting idle mostly does — TermDrop waited a quarter of a second before asking again, because it was waiting to hear back about a picture that was never sent. Moving the mouse and watching the remote pointer catch up a beat later was that, not the network.
-  - **Keystrokes and clicks no longer queue behind the screen.** Sending and receiving now happen independently, so input goes out the moment you make it instead of waiting for whatever frame was in mid-flight — which on a large display could be over a tenth of a second.
-  - **The pointer no longer waits for the next repaint before moving.** The first movement of a gesture is now sent immediately, which is the one the eye is actually waiting on.
-  - **A remote desktop in a background tab now really does pause**, instead of quietly carrying on decoding frames nobody was looking at.
-  - The mouse pointer's shape is no longer re-encoded from scratch every time it changes, which on macOS is constantly.
 - **Editing a Redis host's connection kept using the old one.** The cached connection and its SSH tunnel were only dropped when the app restarted, so a corrected address appeared to do nothing. Deleting a Redis host also left its password behind in the OS keyring. Both are now cleaned up with the row.
 
 ### Changed
+- **A repeated notification is counted instead of stacked.** The same message arriving again while it is still on screen now bumps a count on the one already showing, rather than adding another. A remote desktop ringing its bell repeatedly used to fill the side of the window with identical notifications.
 - **Launching no longer flashes a white window.** The window used to appear before it could paint anything, so every launch showed a blank white rectangle and then the app dropping into it. It now opens on a TermDrop splash in your own theme and cross-fades into the app once the host list is actually loaded — so it never fades into an empty sidebar that then fills in.
   - The window is created already carrying the theme's background colour rather than being recoloured afterwards, because the recolouring step does nothing at all on macOS
   - **The app starts faster too.** The terminal engine is ~400 KB and was being loaded on every launch even though no terminal tab is open yet; it is now fetched while the app sits idle, which cut the startup payload from roughly 680 KB to 240 KB. The stale-file cleanup and the update check also moved off the startup path
