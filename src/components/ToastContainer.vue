@@ -7,6 +7,7 @@
       :class="toastClass(toast.type)"
     >
       <span class="flex-1">{{ toast.message }}</span>
+      <span v-if="toast.count > 1" class="shrink-0 text-white/70 tabular-nums">×{{ toast.count }}</span>
       <button
         @click="dismiss(toast.id)"
         class="shrink-0 text-white/70 hover:text-white leading-none"
@@ -40,8 +41,18 @@ function toastClass(type) {
 }
 
 function addToast(message, type = 'error', duration = 4000) {
+  // A repeat of a toast still on screen counts up instead of stacking. A remote
+  // desktop rings its bell once per BEL, so `yes $'\a'` used to fill the
+  // window with identical toasts and bury the toolbar under them.
+  const existing = toasts.value.find(t => t.message === message && t.type === type)
+  if (existing) {
+    existing.count += 1
+    clearTimeout(timerMap.get(existing.id))
+    timerMap.set(existing.id, setTimeout(() => dismiss(existing.id), duration))
+    return
+  }
   const id = Date.now() + Math.random()
-  toasts.value.push({ id, message, type })
+  toasts.value.push({ id, message, type, count: 1 })
   const timer = setTimeout(() => dismiss(id), duration)
   timerMap.set(id, timer)
 }
