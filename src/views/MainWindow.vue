@@ -208,6 +208,18 @@
       @save="onForwardSaved"
     />
 
+    <HostKeyDialog
+      :show="hostKeyPrompt !== null"
+      :info="hostKeyPrompt || {}"
+      @respond="answerHostKey"
+    />
+
+    <HostKeyMismatchDialog
+      :show="hostKeyRefusal !== null"
+      :info="hostKeyRefusal || {}"
+      @close="hostKeyRefusal = null"
+    />
+
     <ConfirmDialog
       :show="confirmDialog.show"
       :title="confirmDialog.title"
@@ -271,6 +283,10 @@ const PortForwardPanel = defineAsyncComponent(() => import('../components/PortFo
 const PortForwardModal = defineAsyncComponent(() => import('../components/PortForwardModal.vue'))
 const SettingsPanel = defineAsyncComponent(() => import('../components/SettingsPanel.vue'))
 const ShortcutsHelp = defineAsyncComponent(() => import('../components/ShortcutsHelp.vue'))
+const HostKeyDialog = defineAsyncComponent(() => import('../components/HostKeyDialog.vue'))
+const HostKeyMismatchDialog = defineAsyncComponent(
+  () => import('../components/HostKeyMismatchDialog.vue'),
+)
 const DockerPanel = defineAsyncComponent(() => import('../components/DockerPanel.vue'))
 const SecurityPanel = defineAsyncComponent(() => import('../components/SecurityPanel.vue'))
 const MongodbPanel = defineAsyncComponent(() => import('../components/MongodbPanel.vue'))
@@ -296,6 +312,30 @@ const sidebarWidth = ref(220)
 const sftpWidth = ref(260)
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
+
+/**
+ * Host key dialogs, driven by window events from the store.
+ *
+ * The store cannot mount a component, so it asks the same way the password
+ * prompt already does. Two separate dialogs rather than one with a mode: the
+ * first-contact question and the changed-key alarm must never share a button
+ * row, because that is how a "connect anyway" ends up one prop away.
+ */
+const hostKeyPrompt = ref(null)
+const hostKeyRefusal = ref(null)
+
+function onHostKeyPrompt(event) {
+  hostKeyPrompt.value = event.detail
+}
+
+function onHostKeyRefused(event) {
+  hostKeyRefusal.value = event.detail
+}
+
+function answerHostKey(accepted) {
+  hostKeyPrompt.value = null
+  window.dispatchEvent(new CustomEvent('host-key-response', { detail: { accepted } }))
+}
 
 const promptDialog = ref({
   show: false,
@@ -533,6 +573,8 @@ onMounted(() => {
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.addEventListener('edit-port-forward', onEditPortForward)
   window.addEventListener('prompt-dialog-open', onPromptDialogOpen)
+  window.addEventListener('host-key-prompt', onHostKeyPrompt)
+  window.addEventListener('host-key-refused', onHostKeyRefused)
 })
 
 onUnmounted(() => {
@@ -540,5 +582,7 @@ onUnmounted(() => {
   window.removeEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.removeEventListener('edit-port-forward', onEditPortForward)
   window.removeEventListener('prompt-dialog-open', onPromptDialogOpen)
+  window.removeEventListener('host-key-prompt', onHostKeyPrompt)
+  window.removeEventListener('host-key-refused', onHostKeyRefused)
 })
 </script>

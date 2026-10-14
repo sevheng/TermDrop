@@ -10,6 +10,7 @@ Host prod prod-alias
 
 host staging
   hostname staging.example.com
+  ProxyJump deploy@prod:2222, second-hop
 
 Host wild*
     HostName ignored.example.com

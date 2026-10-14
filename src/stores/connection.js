@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
+import { hopOf, parseTrustError, shouldAskToTrust } from '../utils/trustError.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
@@ -258,7 +259,31 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  async function connect(hostId, providedPassword = null) {
+  /**
+   * Ask the user whether to trust a host key, once.
+   *
+   * Resolves to the fingerprint they accepted, or null. The fingerprint is
+   * what gets sent back — not a yes — so the backend can require it to equal
+   * the key the server presents on the retry.
+   */
+  function askToTrust(info) {
+    return new Promise(resolve => {
+      const onResponse = event => {
+        window.removeEventListener('host-key-response', onResponse)
+        resolve(event.detail?.accepted ? info.fingerprint : null)
+      }
+      window.addEventListener('host-key-response', onResponse)
+      window.dispatchEvent(new CustomEvent('host-key-prompt', { detail: info }))
+    })
+  }
+
+  /**
+   * `accepted` carries the host key fingerprints the user has agreed to on
+   * this attempt, one per hop: `{ target?, jump? }`. A host behind a jump host
+   * can need two answers -- the bastion's key, then its own -- and each is
+   * asked about at most once.
+   */
+  async function connect(hostId, providedPassword = null, accepted = {}) {
     // Start the terminal chunk now so it loads against the SSH handshake
     // rather than against the tab's first render. Idempotent -- the idle
     // warm-up in MainWindow has usually already done it.
@@ -273,10 +298,38 @@ export const useConnectionStore = defineStore('connection', () => {
     if (!isKeyAuth && providedPassword) {
       sshArgs.password = providedPassword
     }
+    if (accepted.target) {
+      sshArgs.acceptHostKey = accepted.target
+    }
+    if (accepted.jump) {
+      sshArgs.acceptJumpHostKey = accepted.jump
+    }
     try {
       sessionId = await invoke('ssh_connect', sshArgs)
     } catch (err) {
       connectingHostId.value = null
+
+      // A changed or revoked key gets the alarm and stops here. There is no
+      // branch that retries past it, which is what makes the dialog's lack of
+      // a "connect anyway" button true rather than decorative.
+      const trust = parseTrustError(err)
+      if (trust?.kind === 'refused') {
+        window.dispatchEvent(new CustomEvent('host-key-refused', { detail: trust }))
+        throw err
+      }
+
+      const unknown = shouldAskToTrust(err, accepted)
+      if (unknown) {
+        const fingerprint = await askToTrust(unknown)
+        if (fingerprint) {
+          return connect(hostId, providedPassword, {
+            ...accepted,
+            [hopOf(unknown)]: fingerprint,
+          })
+        }
+        throw err
+      }
+
       if (!isKeyAuth && isMissingKeyringPassword(err) && !providedPassword) {
         const password = await showPromptDialog(
           'Password required',
@@ -286,7 +339,7 @@ export const useConnectionStore = defineStore('connection', () => {
         )
         if (password) {
           await storePassword(hostId, password).catch(() => {})
-          return connect(hostId, password)
+          return connect(hostId, password, accepted)
         }
       }
       toast('SSH connection failed: ' + err, 'error')

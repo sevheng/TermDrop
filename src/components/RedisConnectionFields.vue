@@ -115,6 +115,7 @@
 import { ref, computed } from 'vue'
 import { Eye, EyeOff } from 'lucide-vue-next'
 import SelectMenu from './SelectMenu.vue'
+import { sshHostOptions } from '../utils/hostOptions.js'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -133,16 +134,7 @@ const emit = defineEmits([
 
 const showPassword = ref(false)
 
-/** The bastion choices, with the address as a hint so two hosts sharing a
- *  name are still tellable apart. */
-const tunnelOptions = computed(() => [
-  { value: '', label: 'Connect directly' },
-  ...props.sshHosts.map(h => ({
-    value: h.id,
-    label: h.name,
-    hint: `${h.username}@${h.host}`,
-  })),
-])
+const tunnelOptions = computed(() => sshHostOptions(props.sshHosts))
 
 /** One writable computed per field, so v-model works without a watcher. */
 function field(key) {

@@ -1,9 +1,12 @@
 pub mod exec;
 pub mod io_loop;
+pub mod jump;
+pub mod known_hosts;
 pub mod pty;
 pub mod session;
+pub mod trust;
 
-pub use session::create_exec_session;
+pub use session::{create_exec_session, Accept, SshTarget};
 
 use ssh2::{Channel as SshChannel, Session};
 use std::sync::{Arc, Mutex};
@@ -23,15 +26,6 @@ pub struct ExecPtyHandle {
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
-}
-
-/// Connection parameters shared by the interactive shell and exec-PTY paths.
-struct ConnectParams {
-    host: String,
-    port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
 }
 
 /// Event names and payload id key that distinguish the interactive shell
@@ -67,7 +61,7 @@ const EXEC_PTY_EVENTS: PtyEvents = PtyEvents {
 fn spawn_pty_thread(
     window: Window,
     id: String,
-    params: ConnectParams,
+    target: SshTarget,
     events: PtyEvents,
     open_channel: impl FnOnce(&Session) -> Result<SshChannel, String> + Send + 'static,
     write_rx: mpsc::UnboundedReceiver<String>,
@@ -76,13 +70,11 @@ fn spawn_pty_thread(
     data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
 ) {
     std::thread::spawn(move || {
-        let session = match session::create_session(
-            &params.host,
-            params.port,
-            &params.username,
-            params.password.as_deref(),
-            params.key_path.as_deref(),
-        ) {
+        // Never prompts. The terminal opens after the exec session, which is
+        // the one that carries the user's acceptance, so a key the user just
+        // accepted is on file by now; a docker-exec PTY reuses a host that
+        // already has a terminal.
+        let session = match session::create_session(&target, &Accept::none()) {
             Ok(s) => s,
             Err(e) => {
                 let payload = serde_json::json!({ events.id_key: &id, "error": e });
@@ -125,11 +117,7 @@ pub fn connect(
     window: Window,
     session_id: String,
     host_id: i64,
-    host: String,
-    port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
+    target: SshTarget,
     initial_cols: u32,
     initial_rows: u32,
 ) -> Result<SshSessionHandle, String> {
@@ -141,13 +129,7 @@ pub fn connect(
     spawn_pty_thread(
         window,
         session_id,
-        ConnectParams {
-            host,
-            port,
-            username,
-            password,
-            key_path,
-        },
+        target,
         SHELL_EVENTS,
         move |session| pty::create_pty_channel(session, initial_cols, initial_rows),
         write_rx,
@@ -171,11 +153,7 @@ pub fn exec_pty_connect(
     window: Window,
     pty_session_id: String,
     host_id: i64,
-    host: String,
-    port: u16,
-    username: String,
-    password: Option<String>,
-    key_path: Option<String>,
+    target: SshTarget,
     command: String,
 ) -> Result<ExecPtyHandle, String> {
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
@@ -185,13 +163,7 @@ pub fn exec_pty_connect(
     spawn_pty_thread(
         window,
         pty_session_id,
-        ConnectParams {
-            host,
-            port,
-            username,
-            password,
-            key_path,
-        },
+        target,
         EXEC_PTY_EVENTS,
         move |session| pty::create_exec_pty_channel(session, &command),
         write_rx,

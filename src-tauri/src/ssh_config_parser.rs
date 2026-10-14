@@ -9,6 +9,10 @@ pub struct SshConfigHost {
     pub username: String,
     pub auth_type: String,
     pub key_path: Option<String>,
+    /// The first hop of `ProxyJump`, as written (`alias`, `user@host`,
+    /// `host:port`). Linked to a saved host on the frontend, after import, when
+    /// the hosts it could name have ids.
+    pub proxy_jump: Option<String>,
 }
 
 /// Parse ~/.ssh/config and return a list of importable hosts.
@@ -108,6 +112,7 @@ fn flush_block(
     let mut user = None;
     let mut port = 22i64;
     let mut identity_file = None;
+    let mut proxy_jump = None;
 
     for (key, value) in fields {
         match key.as_str() {
@@ -119,6 +124,7 @@ fn flush_block(
                 }
             }
             "identityfile" => identity_file = Some(expand_tilde(value, home_dir)),
+            "proxyjump" => proxy_jump = first_jump(value),
             _ => {}
         }
     }
@@ -141,7 +147,21 @@ fn flush_block(
             username,
             auth_type: auth_type.to_string(),
             key_path: identity_file.clone(),
+            proxy_jump: proxy_jump.clone(),
         });
+    }
+}
+
+/// The first hop of a `ProxyJump` value, or `None` for `none`.
+///
+/// A comma-separated chain is cut to its first entry: TermDrop connects through
+/// one jump host, and the first is the one this machine can reach.
+fn first_jump(value: &str) -> Option<String> {
+    let first = value.split(',').next()?.trim();
+    if first.is_empty() || first.eq_ignore_ascii_case("none") {
+        None
+    } else {
+        Some(first.to_string())
     }
 }
 
@@ -222,6 +242,17 @@ mod tests {
         assert_eq!(hosts[4].name, "concrete");
         assert_eq!(hosts[4].host, "concrete");
         assert_eq!(hosts[4].username, "ops");
+    }
+
+    #[test]
+    fn proxy_jump_keeps_the_first_hop_and_ignores_none() {
+        let hosts = parse();
+        assert_eq!(hosts[2].name, "staging");
+        assert_eq!(hosts[2].proxy_jump.as_deref(), Some("deploy@prod:2222"));
+        assert_eq!(hosts[0].proxy_jump, None);
+
+        let none = parse_ssh_config_str("Host a\n  ProxyJump none\n", "u", None);
+        assert_eq!(none[0].proxy_jump, None);
     }
 
     #[test]

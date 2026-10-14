@@ -50,7 +50,12 @@ import { ref } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
 import { invoke } from '../utils/invoke.js'
 import { toast } from '../utils/toast.js'
-import { normalizeImportHost, summarizeImport } from '../utils/hostImport.js'
+import {
+  hostRowForUpdate,
+  linkProxyJumps,
+  normalizeImportHost,
+  summarizeImport,
+} from '../utils/hostImport.js'
 
 /**
  * Lists the hosts found in ~/.ssh/config with checkboxes and imports the
@@ -92,8 +97,28 @@ async function confirmSshConfigImport() {
     showSshConfigDialog.value = false
     const { message, type } = summarizeImport(summary)
     toast(message, type)
+    await linkJumpHosts(toImport)
   } catch (err) {
     toast('Import failed: ' + err, 'error')
+  }
+}
+
+/**
+ * Point imported hosts at their `ProxyJump` host. Done after the import, when
+ * the hosts a hop can name finally have ids; anything it cannot match safely
+ * is listed rather than guessed.
+ */
+async function linkJumpHosts(imported) {
+  if (!imported.some((h) => h.proxy_jump)) return
+  const { links, unresolved } = linkProxyJumps(imported, store.hosts)
+  for (const { host, jumpId } of links) {
+    await store.updateHost(host.id, hostRowForUpdate(host, { jump_host_id: jumpId }))
+  }
+  if (links.length) await store.loadHosts()
+  if (unresolved.length) {
+    const first = unresolved[0]
+    const more = unresolved.length > 1 ? ` and ${unresolved.length - 1} more` : ''
+    toast(`Jump host not linked for ${first.name} (${first.reason})${more}. Set it by editing the host.`, 'warning')
   }
 }
 

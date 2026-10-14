@@ -6,8 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **Host keys are checked before any credential is sent.** TermDrop used to log in to whatever answered at a host's address, so anyone able to intercept the connection received your password. Every SSH connection — terminal, SFTP, Docker, system stats, port forwards and tunnels — now verifies the server's key first.
+  - **The first connection asks.** A host you have never connected to shows its key fingerprint and asks whether to trust it; the acceptance is tied to that exact fingerprint, so a different server answering the retry is still refused
+  - **Hosts you already trust in a terminal need no prompt.** Your `~/.ssh/known_hosts` (and `/etc/ssh/ssh_known_hosts`) is read and honoured, but never written. Keys you accept in TermDrop are kept in TermDrop's own `known_hosts` file in the app's data folder
+  - **A changed or revoked key stops the connection** with no option to continue. The dialog explains what happened and gives the `ssh-keygen -R` command to run once you have confirmed the change is legitimate
+  - A server that offers a different *type* of key than the one on file is treated as a new key to confirm, not as a changed identity, so hosts you have trusted for years do not raise a false alarm
+  - Port forwards and Redis/VNC tunnels never prompt, because they open connections in the background with nobody to ask. Connect to the SSH host in a terminal tab once to trust it
+
 ### Added
+- **Jump hosts.** An SSH host can now be reached through another saved SSH host, like OpenSSH's `ProxyJump`, for servers that are only reachable through a bastion. Pick it under **Connect via** when adding or editing the host.
+  - Everything goes through it: the terminal, SFTP, the Docker, stats and security panels, reconnect, port forwards, and Redis tunnels whose SSH host is itself behind a jump host
+  - Both hosts' keys are checked. The first connection can ask twice (the jump host, then the host behind it), and the host behind it is checked under its own name rather than as a local relay, so its entry in `known_hosts` stays correct
+  - Importing from `~/.ssh/config` reads `ProxyJump` and links each host to the matching saved host. One it cannot match is listed rather than guessed
+  - One hop for now, and the jump host's password must already be saved. A deleted jump host is reported when you connect, rather than quietly connecting directly
 - **A desktop notification when a backup or restore finishes.** Backing up a large database takes long enough that you go and do something else, and the in-app toast announcing the result was only visible if you had stayed on the window. The app now posts a system notification as well — but only when its window is in the background, so it does not tell you twice when you were watching. Covers MongoDB backup and restore and Redis backup and restore. ([#12](https://github.com/sevheng/TermDrop/issues/12))
+
+### Fixed
+- **Editing an SSH host no longer takes it out of its group or removes its star.** The edit form did not carry either field, and saving wrote every column, so both were reset on every edit.
 
 ### Changed
 - **Launching no longer flashes a white window.** The window used to appear before it could paint anything, so every launch showed a blank white rectangle and then the app dropping into it. It now opens on a TermDrop splash in your own theme and cross-fades into the app once the host list is actually loaded — so it never fades into an empty sidebar that then fills in.

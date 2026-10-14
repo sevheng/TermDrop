@@ -100,3 +100,117 @@ export function summarizeImport({ added = 0, replaced = 0, failed = [], skipped 
   }
   return { message, type: failed.length ? 'warning' : 'success' }
 }
+
+/**
+ * Split a `ProxyJump` hop — `alias`, `user@host`, `host:port`, `[v6]:port` —
+ * into its parts. `port` is null when not given.
+ */
+export function parseJumpSpec(spec) {
+  let rest = String(spec).trim()
+  let user = null
+  const at = rest.lastIndexOf('@')
+  if (at !== -1) {
+    user = rest.slice(0, at)
+    rest = rest.slice(at + 1)
+  }
+  let port = null
+  const bracketed = rest.match(/^\[(.+)\](?::(\d+))?$/)
+  if (bracketed) {
+    rest = bracketed[1]
+    port = bracketed[2] ? Number(bracketed[2]) : null
+  } else {
+    const colon = rest.match(/^([^:]+):(\d+)$/)
+    if (colon) {
+      rest = colon[1]
+      port = Number(colon[2])
+    }
+  }
+  return { user, host: rest, port }
+}
+
+const isSsh = h => !!h.host
+
+/**
+ * Link freshly imported hosts to their `ProxyJump` host.
+ *
+ * Runs after import because the rows a hop could name only have ids then.
+ * `imported` is what `parse_ssh_config` returned for the selected hosts;
+ * `hosts` is the host list after reloading.
+ *
+ * A hop matches a saved SSH host by name first (ssh_config aliases are how
+ * people write it), then by address, honouring a port when the hop gives one.
+ * Anything ambiguous or unsupported is reported rather than guessed:
+ * connecting a host through the wrong bastion is worse than not linking it.
+ *
+ * Returns `{ links: [{ host, jumpId }], unresolved: [{ name, reason }] }`.
+ */
+export function linkProxyJumps(imported, hosts) {
+  const newest = matches => matches.reduce((a, b) => (b.id > a.id ? b : a), matches[0])
+  const links = []
+  const unresolved = []
+
+  for (const entry of imported) {
+    if (!entry.proxy_jump) continue
+    const row = newest(
+      hosts.filter(
+        h => isSsh(h) && h.name === entry.name && h.host === entry.host && h.port === entry.port,
+      ),
+    )
+    if (!row) continue
+
+    const spec = parseJumpSpec(entry.proxy_jump)
+    const byName = hosts.filter(h => isSsh(h) && h.name === spec.host && h.id !== row.id)
+    const byAddress = hosts.filter(
+      h =>
+        isSsh(h) &&
+        h.host === spec.host &&
+        h.id !== row.id &&
+        (spec.port == null || h.port === spec.port) &&
+        (spec.user == null || h.username === spec.user),
+    )
+    const candidates = byName.length ? byName : byAddress
+    if (candidates.length === 0) {
+      unresolved.push({ name: entry.name, reason: `no saved host matches ${entry.proxy_jump}` })
+      continue
+    }
+    links.push({ host: row, jumpId: newest(candidates).id })
+  }
+
+  // One hop only: a jump host that is itself behind one, already or as part
+  // of this import, would be refused at connect time.
+  const jumped = new Set([
+    ...hosts.filter(h => h.jump_host_id != null).map(h => h.id),
+    ...links.map(l => l.host.id),
+  ])
+  return {
+    links: links.filter(l => {
+      if (!jumped.has(l.jumpId)) return true
+      unresolved.push({ name: l.host.name, reason: 'its jump host has a jump host of its own' })
+      return false
+    }),
+    unresolved,
+  }
+}
+
+/**
+ * The `NewHost` shape for rewriting an existing row with one field changed.
+ * `update_host` writes every column, so every column must be carried.
+ */
+export function hostRowForUpdate(row, changes = {}) {
+  return {
+    name: row.name,
+    host: row.host,
+    port: row.port,
+    username: row.username,
+    auth_type: row.auth_type,
+    key_path: row.key_path || null,
+    group: row.group ?? null,
+    favorite: row.favorite ?? null,
+    mongo_uri: row.mongo_uri ?? null,
+    mongo_local_uri: row.mongo_local_uri ?? null,
+    redis_uri: row.redis_uri ?? null,
+    redis_tunnel_host_id: row.redis_tunnel_host_id ?? null,
+    jump_host_id: row.jump_host_id ?? null,
+    ...changes,
+  }
+}

@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { parseHostsFile, normalizeImportHost, summarizeImport, stripMongoPassword } from '../hostImport.js'
+import {
+  parseHostsFile,
+  normalizeImportHost,
+  summarizeImport,
+  stripMongoPassword,
+  parseJumpSpec,
+  linkProxyJumps,
+  hostRowForUpdate,
+} from '../hostImport.js'
 
 describe('parseHostsFile', () => {
   it('accepts a bare array, which is what export writes', () => {
@@ -111,5 +119,84 @@ describe('stripMongoPassword', () => {
     })
     expect(host.mongo_uri).not.toContain('secret')
     expect(host.mongo_uri).toBe('mongodb://admin@localhost:27017')
+  })
+})
+
+describe('parseJumpSpec', () => {
+  it('reads every form ssh_config allows for one hop', () => {
+    expect(parseJumpSpec('bastion')).toEqual({ user: null, host: 'bastion', port: null })
+    expect(parseJumpSpec('ops@bastion')).toEqual({ user: 'ops', host: 'bastion', port: null })
+    expect(parseJumpSpec('ops@10.0.0.1:2222')).toEqual({ user: 'ops', host: '10.0.0.1', port: 2222 })
+    expect(parseJumpSpec('[fe80::1]:22')).toEqual({ user: null, host: 'fe80::1', port: 22 })
+  })
+})
+
+describe('linkProxyJumps', () => {
+  const row = (id, over = {}) => ({
+    id,
+    name: `h${id}`,
+    host: `10.0.0.${id}`,
+    port: 22,
+    username: 'u',
+    ...over,
+  })
+
+  it('links by alias first', () => {
+    const hosts = [row(1, { name: 'bastion' }), row(2, { name: 'db' })]
+    const imported = [{ name: 'db', host: '10.0.0.2', port: 22, proxy_jump: 'bastion' }]
+    const { links, unresolved } = linkProxyJumps(imported, hosts)
+    expect(links.map(l => [l.host.id, l.jumpId])).toEqual([[2, 1]])
+    expect(unresolved).toEqual([])
+  })
+
+  it('falls back to the address, honouring port and user', () => {
+    const hosts = [
+      row(1, { host: 'jump.example.com', port: 22 }),
+      row(3, { host: 'jump.example.com', port: 2222, username: 'ops' }),
+      row(2, { name: 'db' }),
+    ]
+    const imported = [
+      { name: 'db', host: '10.0.0.2', port: 22, proxy_jump: 'ops@jump.example.com:2222' },
+    ]
+    expect(linkProxyJumps(imported, hosts).links[0].jumpId).toBe(3)
+  })
+
+  it('reports a hop it cannot match instead of guessing', () => {
+    const hosts = [row(2, { name: 'db' })]
+    const imported = [{ name: 'db', host: '10.0.0.2', port: 22, proxy_jump: 'nowhere' }]
+    const { links, unresolved } = linkProxyJumps(imported, hosts)
+    expect(links).toEqual([])
+    expect(unresolved[0]).toMatchObject({ name: 'db' })
+  })
+
+  it('refuses a chain, including one formed within the same import', () => {
+    const hosts = [row(1, { name: 'outer' }), row(2, { name: 'inner' }), row(3, { name: 'db' })]
+    const imported = [
+      { name: 'inner', host: '10.0.0.2', port: 22, proxy_jump: 'outer' },
+      { name: 'db', host: '10.0.0.3', port: 22, proxy_jump: 'inner' },
+    ]
+    const { links, unresolved } = linkProxyJumps(imported, hosts)
+    expect(links.map(l => l.host.name)).toEqual(['inner'])
+    expect(unresolved.map(u => u.name)).toEqual(['db'])
+  })
+
+  it('never links a host to itself', () => {
+    const hosts = [row(1, { name: 'db' })]
+    const imported = [{ name: 'db', host: '10.0.0.1', port: 22, proxy_jump: 'db' }]
+    expect(linkProxyJumps(imported, hosts).links).toEqual([])
+  })
+})
+
+describe('hostRowForUpdate', () => {
+  it('carries every column, so a one-field change resets nothing', () => {
+    const row = {
+      id: 5, name: 'db', host: 'h', port: 22, username: 'u', auth_type: 'key', key_path: '/k',
+      group: 'prod', favorite: 1, mongo_uri: null, mongo_local_uri: null, redis_uri: null,
+      redis_tunnel_host_id: null, jump_host_id: null, created_at: 'x',
+    }
+    const out = hostRowForUpdate(row, { jump_host_id: 9 })
+    expect(out).toMatchObject({ group: 'prod', favorite: 1, key_path: '/k', jump_host_id: 9 })
+    expect(out.id).toBeUndefined()
+    expect(out.created_at).toBeUndefined()
   })
 })

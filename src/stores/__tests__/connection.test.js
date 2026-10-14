@@ -112,3 +112,69 @@ describe('attachSftp', () => {
     expect(args.password).toBeUndefined()
   })
 })
+
+describe('host key trust across a jump host', () => {
+  const refusal = over =>
+    'TERMDROP_TRUST:' +
+    JSON.stringify({
+      kind: 'unknown',
+      host: 'h',
+      port: 22,
+      fingerprint: 'SHA256:x',
+      keyType: 'ssh-ed25519',
+      message: '',
+      hop: 'target',
+      ...over,
+    })
+
+  /** Answer every trust prompt with `accept`, recording what was asked. */
+  function answerPrompts(accept) {
+    const asked = []
+    const onPrompt = e => {
+      asked.push(e.detail)
+      window.dispatchEvent(new CustomEvent('host-key-response', { detail: { accepted: accept } }))
+    }
+    window.addEventListener('host-key-prompt', onPrompt)
+    return { asked, stop: () => window.removeEventListener('host-key-prompt', onPrompt) }
+  }
+
+  it('asks about the bastion, then the target, sending each back on its own argument', async () => {
+    invokeImpl = (command, args) => {
+      if (command !== 'ssh_connect') return Promise.resolve(null)
+      if (!args.acceptJumpHostKey) {
+        return Promise.reject(refusal({ hop: 'jump', host: 'bastion', fingerprint: 'SHA256:b' }))
+      }
+      if (!args.acceptHostKey) {
+        return Promise.reject(refusal({ hop: 'target', host: 'db', fingerprint: 'SHA256:t' }))
+      }
+      return Promise.resolve('session-1')
+    }
+    const prompts = answerPrompts(true)
+
+    const store = storeWithHost()
+    await expect(store.connect(1, 'pw')).resolves.toBe('session-1')
+    prompts.stop()
+
+    expect(prompts.asked.map(p => p.host)).toEqual(['bastion', 'db'])
+    const [, last] = invokes.filter(([c]) => c === 'ssh_connect').at(-1)
+    expect(last.acceptJumpHostKey).toBe('SHA256:b')
+    expect(last.acceptHostKey).toBe('SHA256:t')
+  })
+
+  it('does not ask about the same hop twice', async () => {
+    // Still unknown after the user accepted it: the key changed between
+    // attempts, and asking again would trust a server they were not shown.
+    invokeImpl = command =>
+      command === 'ssh_connect'
+        ? Promise.reject(refusal({ hop: 'jump', fingerprint: 'SHA256:b' }))
+        : Promise.resolve(null)
+    const prompts = answerPrompts(true)
+
+    const store = storeWithHost()
+    await expect(store.connect(1, 'pw')).rejects.toBeDefined()
+    prompts.stop()
+
+    expect(prompts.asked).toHaveLength(1)
+    expect(store.tabs).toHaveLength(0)
+  })
+})

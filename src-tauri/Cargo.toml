@@ -29,6 +29,12 @@ ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+# known_hosts parsing. All three are already in Cargo.lock as transitive
+# dependencies, so declaring them adds nothing to the build graph.
+hmac = "0.12"   # hashed host names are HMAC-SHA1 over the salt
+sha2 = "0.10"   # SHA256 fingerprints, the form ssh-keygen -lf prints
+sha1 = "0.10"
+hex = "0.4"
 whoami = "2.1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

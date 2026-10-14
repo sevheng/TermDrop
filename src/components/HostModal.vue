@@ -131,6 +131,23 @@
           <p v-else class="text-xs text-ink-3 mt-1">Supports ~ for home directory</p>
         </div>
 
+        <div>
+          <label class="block text-xs text-ink-2 mb-1.5">Connect via</label>
+          <SelectMenu
+            block
+            :modelValue="form.jump_host_id ?? ''"
+            :options="jumpOptions"
+            @update:modelValue="form.jump_host_id = $event === '' ? null : Number($event)"
+          />
+          <p v-if="jumpMissing" class="text-xs text-bad mt-1">
+            The jump host this host used has been deleted. Choose another, or connect directly.
+          </p>
+          <p v-else class="text-xs text-ink-3 mt-1">
+            For a host only reachable through a bastion. The host and port above are resolved
+            from the jump host, not from this machine.
+          </p>
+        </div>
+
 
       </div>
 
@@ -160,6 +177,9 @@ import { ref, watch, computed, onUnmounted } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Eye, EyeOff, Loader2, FileSearch } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
+import SelectMenu from './SelectMenu.vue'
+import { useConnectionStore } from '../stores/connection.js'
+import { jumpHostCandidates, sshHostOptions } from '../utils/hostOptions.js'
 
 const props = defineProps({
   show: Boolean,
@@ -170,6 +190,16 @@ const emit = defineEmits(['save', 'close'])
 
 const isEditing = computed(() => !!props.host)
 
+const store = useConnectionStore()
+const jumpOptions = computed(() =>
+  sshHostOptions(jumpHostCandidates(store.hosts, props.host?.id ?? null)),
+)
+/** A saved jump host id whose row is gone. Shown rather than silently
+ *  dropped, so saving the form is what changes the route, not opening it. */
+const jumpMissing = computed(
+  () => form.value.jump_host_id != null && !store.hosts.some(h => h.id === form.value.jump_host_id),
+)
+
 const form = ref({
   name: '',
   host: '',
@@ -179,6 +209,7 @@ const form = ref({
   key_path: '',
   password: '',
   mongo_uri: '',
+  jump_host_id: null,
 })
 
 const errors = ref({})
@@ -196,6 +227,7 @@ function resetForm() {
       key_path: props.host.key_path || '',
       password: '',
       mongo_uri: props.host.mongo_uri || '',
+      jump_host_id: props.host.jump_host_id ?? null,
     }
   } else {
     form.value = {
@@ -207,6 +239,7 @@ function resetForm() {
       key_path: '',
       password: '',
       mongo_uri: '',
+      jump_host_id: null,
     }
   }
   errors.value = {}
@@ -292,6 +325,12 @@ async function onSave() {
       mongo_uri: form.value.mongo_uri.trim() || null,
       // A MongoDB connection is its own host; this column is legacy.
       mongo_local_uri: null,
+      jump_host_id: form.value.jump_host_id,
+      // `update_host` writes every column, so anything this form does not edit
+      // must be carried through or an edit silently resets it. Leaving these
+      // out is how editing a host used to ungroup it and drop its star.
+      group: props.host?.group ?? null,
+      favorite: props.host?.favorite ?? null,
     }
 
     const password = form.value.auth_type === 'password' ? form.value.password : null
