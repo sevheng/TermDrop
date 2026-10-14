@@ -101,6 +101,7 @@
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :hostId="tab.hostId"
+            :tabId="tab.id"
             :isActive="tab.id === store.activeTabId"
             class="w-full h-full absolute top-0 left-0"
           />

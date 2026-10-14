@@ -148,6 +148,8 @@ import IconButton from './IconButton.vue'
 const props = defineProps({
   hostId: { type: Number, required: true },
   isActive: { type: Boolean, default: true },
+  /** The store's tab, whose `connected` flag this panel keeps true to the session. */
+  tabId: { type: String, default: null },
 })
 
 const store = useConnectionStore()
@@ -652,6 +654,16 @@ watch(
       releaseAllKeys()
     }
   },
+)
+
+// The host row reads the store, not this panel. Immediate, so the row is not
+// green while the first connection is still being attempted.
+watch(
+  connected,
+  value => {
+    if (props.tabId) store.setTabConnected(props.tabId, value)
+  },
+  { immediate: true },
 )
 
 // The keyed v-for can reuse this instance for a different host.
