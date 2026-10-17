@@ -7,7 +7,7 @@ import { toast } from '../utils/toast.js'
 import { isMissingKeyringPassword } from '../utils/secretPrompt.js'
 import { hopOf, parseTrustError, shouldAskToTrust } from '../utils/trustError.js'
 import { showPromptDialog } from '../composables/usePromptDialog.js'
-import { TAB_KIND } from '../utils/tabKinds.js'
+import { TAB_KIND, nextLocalTabName } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
 import { loadTerminalTab } from '../components/terminalTabLoader.js'
 
@@ -366,9 +366,56 @@ export const useConnectionStore = defineStore('connection', () => {
     return sessionId
   }
 
+  // Shells this machine has, from `list_local_shells`. Null until the menu
+  // first opens; re-detected each time it does, since installing a WSL distro
+  // should not need a restart.
+  const localShells = ref(null)
+
+  async function loadLocalShells() {
+    try {
+      localShells.value = await invoke('list_local_shells')
+    } catch (err) {
+      console.warn('Shell detection failed:', err)
+      localShells.value = localShells.value ?? []
+    }
+    return localShells.value
+  }
+
+  /**
+   * Open a shell on this machine. No host, no SFTP: the tab is ready as soon
+   * as the process has started. `shell` is an entry from `localShells`, or
+   * null for the default. Only its id goes to the backend, which resolves it
+   * against its own detected list.
+   */
+  async function openLocalTerminal(shell = null) {
+    loadTerminalTab()
+    let sessionId
+    try {
+      sessionId = await invoke('local_connect', {
+        shellId: shell?.id ?? null,
+        ...estimateTerminalSize(),
+      })
+    } catch (err) {
+      toast('Could not start a local shell: ' + err, 'error')
+      throw err
+    }
+    const tab = {
+      id: sessionId,
+      type: TAB_KIND.LOCAL,
+      sftpSessionId: null,
+      hostId: null,
+      name: nextLocalTabName(tabs.value, shell?.label ?? 'Local'),
+      connected: true,
+      connecting: false,
+    }
+    tabs.value = [...tabs.value, tab]
+    activeTabId.value = sessionId
+    return sessionId
+  }
+
   async function disconnect(sessionId) {
     const tab = tabs.value.find(t => t.id === sessionId)
-    if (tab) {
+    if (tab?.sftpSessionId) {
       await invoke('sftp_disconnect', { sftpSessionId: tab.sftpSessionId }).catch(() => {})
     }
     await invoke('ssh_disconnect', { sessionId }).catch(() => {})
@@ -378,7 +425,7 @@ export const useConnectionStore = defineStore('connection', () => {
     }
     // The backend drops its cached report when the last tab for a host goes
     // away; mirror that so a stale report is never shown as current.
-    if (tab && !tabs.value.some(t => t.hostId === tab.hostId)) {
+    if (tab?.hostId != null && !tabs.value.some(t => t.hostId === tab.hostId)) {
       securityReports.value.delete(tab.hostId)
     }
   }
@@ -593,6 +640,9 @@ export const useConnectionStore = defineStore('connection', () => {
     exportHosts,
     importHosts,
     connect,
+    openLocalTerminal,
+    localShells,
+    loadLocalShells,
     disconnect,
     openMongoTab,
     openRedisTab,
