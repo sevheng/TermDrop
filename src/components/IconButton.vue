@@ -7,12 +7,12 @@
     :aria-busy="pending || undefined"
     :disabled="disabled || pending"
     :class="[
-      'inline-flex items-center justify-center rounded shrink-0 transition-colors',
+      'inline-flex items-center justify-center rounded-sm shrink-0 transition-colors',
       'text-ink-2 hover:bg-raised',
       TONE_HOVER[tone] || 'hover:text-ink',
       size === 'md' ? 'h-7 w-7' : 'h-6 w-6',
       active ? 'bg-active text-ink' : '',
-      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent',
+      'focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent',
       'disabled:opacity-40 disabled:pointer-events-none',
     ]"
     @click="$emit('click', $event)"

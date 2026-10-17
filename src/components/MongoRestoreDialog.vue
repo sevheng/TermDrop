@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('cancel')" :show="state.show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] shadow-xl">
+    @close="$emit('cancel')" :show="state.show" dim="bg-black/60" z="z-100" panel-class="p-5 w-md shadow-xl">
       <h3 class="text-base font-semibold text-ink mb-3">
         Confirm restore into <span class="text-accent-soft">{{ connectionName }}</span>
       </h3>
@@ -11,7 +11,7 @@
         </p>
         <div v-if="!state.isArchive && state.sourceDbs.length > 0">
           <p class="text-ink-2 mb-1">Data found in folder:</p>
-          <ul class="max-h-32 overflow-y-auto bg-canvas rounded p-2 space-y-1 text-xs">
+          <ul class="max-h-32 overflow-y-auto bg-canvas rounded-sm p-2 space-y-1 text-xs">
             <li v-for="db in state.sourceDbs" :key="db.name">
               <span class="text-accent-soft">{{ db.name }}</span>:
               <span class="text-ink">{{ db.collections.map(c => c.name).join(', ') }}</span>
@@ -27,7 +27,7 @@
           </p>
           <div>
             <p class="text-ink-2 mb-1">Collections to restore:</p>
-            <ul class="max-h-32 overflow-y-auto bg-canvas rounded p-2 space-y-0.5 text-xs">
+            <ul class="max-h-32 overflow-y-auto bg-canvas rounded-sm p-2 space-y-0.5 text-xs">
               <li v-for="entry in state.entries" :key="entry.db">
                 <span class="text-accent-soft">{{ entry.db }}</span>:
                 <span class="text-ink">{{ entry.collections.join(', ') }}</span>
@@ -75,13 +75,13 @@
       <div class="flex justify-end gap-2 mt-5">
         <button
           @click="$emit('cancel')"
-          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
+          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded-sm hover:bg-raised transition-colors"
         >
           Cancel
         </button>
         <button
           @click="$emit('confirm')"
-          class="px-3 py-1.5 text-sm text-white rounded transition-colors"
+          class="px-3 py-1.5 text-sm text-white rounded-sm transition-colors"
           :class="state.dropFirst
             ? 'bg-bad-solid hover:bg-bad-solid-hover'
             : 'bg-accent hover:bg-accent-hover'"

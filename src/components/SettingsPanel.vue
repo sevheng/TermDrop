@@ -23,7 +23,7 @@
               :key="opt"
               type="button"
               @click="selectedTheme = opt"
-              class="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs rounded border capitalize transition-colors"
+              class="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-sm border capitalize transition-colors"
               :class="selectedTheme === opt
                 ? 'border-accent bg-accent/10 text-ink'
                 : 'border-line bg-input text-ink-2 hover:text-ink'"
@@ -40,7 +40,7 @@
             v-model="downloadPath"
             type="text"
             placeholder="~/Downloads"
-            class="w-full bg-input border border-line rounded px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent"
+            class="w-full bg-input border border-line rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden focus:border-accent"
           />
         </div>
       </div>
@@ -54,7 +54,7 @@
           <button
             @click="manualCheck"
             :disabled="checking"
-            class="px-3 py-1.5 text-xs bg-input hover:bg-input-hover text-ink rounded disabled:opacity-50"
+            class="px-3 py-1.5 text-xs bg-input hover:bg-input-hover text-ink rounded-sm disabled:opacity-50"
           >
             {{ checking ? 'Checking...' : 'Check for Updates' }}
           </button>
@@ -63,7 +63,7 @@
 
       <div class="flex justify-end gap-2 mt-6">
         <button @click="$emit('close')" class="px-4 py-2 text-sm text-ink-2 hover:text-ink">Cancel</button>
-        <button @click="save" class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded">Save</button>
+        <button @click="save" class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded-sm">Save</button>
       </div>
   </ModalShell>
 </template>

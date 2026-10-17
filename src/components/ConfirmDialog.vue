@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('cancel')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-80 shadow-xl">
+    @close="$emit('cancel')" :show="show" dim="bg-black/60" z="z-100" panel-class="p-5 w-80 shadow-xl">
       <div class="flex items-start gap-3 mb-4">
         <div class="shrink-0 mt-0.5">
           <AlertTriangle :size="20" class="text-warn" />
@@ -14,14 +14,14 @@
       <div class="flex justify-end gap-2">
         <button
           @click="onCancel"
-          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
+          class="px-3 py-1.5 text-sm text-ink-2 hover:text-ink rounded-sm hover:bg-raised transition-colors"
         >
           {{ cancelText }}
         </button>
         <button
           @click="onConfirm"
           :class="[
-            'px-3 py-1.5 text-sm text-white rounded transition-colors',
+            'px-3 py-1.5 text-sm text-white rounded-sm transition-colors',
             danger
               ? 'bg-bad-solid hover:bg-bad-solid-hover'
               : 'bg-accent-solid hover:bg-accent-solid-hover'

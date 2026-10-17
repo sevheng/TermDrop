@@ -120,7 +120,7 @@ const tunnelOptions = computed(() => [
 /** The same input treatment the other connection dialogs use. */
 function inputClass(key) {
   const base =
-    'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+    'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = props.errors[key] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

@@ -24,7 +24,7 @@
           <button
             v-if="dockerPane.type === 'logs'"
             @click="toggleFollow"
-            class="text-2xs px-2 py-0.5 rounded font-medium transition-colors"
+            class="text-2xs px-2 py-0.5 rounded-sm font-medium transition-colors"
             :class="dockerPane.following
               ? 'bg-good/20 text-good hover:bg-good/30'
               : 'bg-input text-ink-2 hover:bg-input-hover hover:text-ink'"
@@ -230,7 +230,7 @@
     <!-- Custom tooltip -->
     <div
       v-if="tooltip.show"
-      class="fixed z-50 px-2 py-1 bg-surface text-ink text-xs rounded shadow-lg pointer-events-none whitespace-nowrap border border-line"
+      class="fixed z-50 px-2 py-1 bg-surface text-ink text-xs rounded-sm shadow-lg pointer-events-none whitespace-nowrap border border-line"
       :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
     >
       {{ tooltip.text }}
@@ -239,14 +239,14 @@
     <!-- Search bar -->
     <div
       v-if="searchVisible"
-      class="absolute top-2 right-2 bg-surface border border-line rounded shadow-lg p-2 z-20 flex items-center gap-2"
+      class="absolute top-2 right-2 bg-surface border border-line rounded-sm shadow-lg p-2 z-20 flex items-center gap-2"
     >
       <input
         ref="searchInput"
         v-model="searchQuery"
         type="text"
         placeholder="Find..."
-        class="bg-input border border-line rounded px-2 py-1 text-xs text-ink w-40 focus:outline-none focus:border-accent placeholder-ink-3"
+        class="bg-input border border-line rounded-sm px-2 py-1 text-xs text-ink w-40 focus:outline-hidden focus:border-accent placeholder-ink-3"
         @keydown.enter="findNext"
         @keydown.shift.enter="findPrevious"
         @keydown.esc="closeSearch"
@@ -281,7 +281,7 @@
       <button
         @click="reconnect"
         :disabled="isReconnecting"
-        class="px-4 py-1.5 bg-accent-solid hover:bg-accent-solid-hover disabled:bg-input text-ink rounded text-xs font-medium"
+        class="px-4 py-1.5 bg-accent-solid hover:bg-accent-solid-hover disabled:bg-input text-ink rounded-sm text-xs font-medium"
       >
         {{ isReconnecting ? 'Reconnecting...' : 'Reconnect' }}
       </button>
@@ -291,7 +291,7 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[8rem]"
+      class="fixed bg-surface border border-line rounded-sm shadow-lg py-1 z-50 min-w-32"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <button @click="copySelection" class="block w-full text-left px-3 py-1 text-xs text-ink hover:bg-raised">Copy</button>

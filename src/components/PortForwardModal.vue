@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-md shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-5">{{ isEditing ? 'Edit Port Forward' : 'Add Port Forward' }}</h3>
 
       <div class="space-y-4">
@@ -20,11 +20,11 @@
         <!-- Kind -->
         <div>
           <label class="block text-xs text-ink-2 mb-1.5">Type</label>
-          <div class="flex bg-input rounded p-1">
+          <div class="flex bg-input rounded-sm p-1">
             <button
               type="button"
               @click="form.kind = 'local'"
-              class="flex-1 py-1.5 text-sm rounded transition-colors"
+              class="flex-1 py-1.5 text-sm rounded-sm transition-colors"
               :class="form.kind === 'local' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Local
@@ -32,7 +32,7 @@
             <button
               type="button"
               @click="form.kind = 'dynamic'"
-              class="flex-1 py-1.5 text-sm rounded transition-colors"
+              class="flex-1 py-1.5 text-sm rounded-sm transition-colors"
               :class="form.kind === 'dynamic' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Dynamic (SOCKS)
@@ -42,7 +42,7 @@
 
         <!-- Local Address -->
         <div class="flex gap-3">
-          <div class="flex-[2]">
+          <div class="flex-2">
             <label class="block text-xs text-ink-2 mb-1.5">Local Host</label>
             <input v-model="form.local_host" type="text" :class="inputClass('local_host')" />
           </div>
@@ -61,7 +61,7 @@
 
         <!-- Remote Address (local only) -->
         <div v-if="form.kind === 'local'" class="flex gap-3">
-          <div class="flex-[2]">
+          <div class="flex-2">
             <label class="block text-xs text-ink-2 mb-1.5">Remote Host <span class="text-bad">*</span></label>
             <input
               v-model="form.remote_host"
@@ -87,7 +87,7 @@
 
         <!-- Dynamic hint -->
         <p v-else class="text-xs text-ink-2">
-          Dynamic forwarding creates a SOCKS5 proxy on the local address. Configure your browser or app to use <code class="bg-input px-1 rounded">{{ form.local_host }}:{{ form.local_port }}</code> as a SOCKS5 proxy.
+          Dynamic forwarding creates a SOCKS5 proxy on the local address. Configure your browser or app to use <code class="bg-input px-1 rounded-sm">{{ form.local_host }}:{{ form.local_port }}</code> as a SOCKS5 proxy.
         </p>
       </div>
 
@@ -96,7 +96,7 @@
         <button
           @click="onSave"
           :disabled="loading"
-          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded-sm flex items-center gap-2"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Forward') }}
@@ -168,7 +168,7 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const base = 'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

@@ -83,7 +83,7 @@
               <div class="flex items-center gap-1.5">
                 <span class="text-xs text-ink">{{ check.name }}</span>
                 <span
-                  class="text-2xs px-1 py-0 rounded font-medium uppercase"
+                  class="text-2xs px-1 py-0 rounded-sm font-medium uppercase"
                   :class="statusMeta(check.status).badge"
                 >
                   {{ check.status }}
@@ -92,7 +92,7 @@
               <p class="text-2xs text-ink-2 mt-0.5">{{ check.message }}</p>
               <p
                 v-if="check.detail"
-                class="text-2xs text-ink-3 mt-0.5 font-mono whitespace-pre-wrap break-words"
+                class="text-2xs text-ink-3 mt-0.5 font-mono whitespace-pre-wrap wrap-break-word"
               >{{ check.detail }}</p>
 
               <!-- What to do about it. Collapsed by default so the list stays
@@ -115,7 +115,7 @@
                   </p>
                   <template v-if="check.remediation.command">
                     <pre
-                      class="mt-1 px-1.5 py-1 bg-surface border border-line rounded text-2xs text-ink font-mono whitespace-pre-wrap break-all"
+                      class="mt-1 px-1.5 py-1 bg-surface border border-line rounded-sm text-2xs text-ink font-mono whitespace-pre-wrap break-all"
                     >{{ check.remediation.command }}</pre>
                     <div class="flex items-center gap-2 mt-1">
                       <button

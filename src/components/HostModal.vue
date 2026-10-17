@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl">
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-md shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isEditing ? 'Edit Host' : 'Add Host' }}
       </h3>
@@ -45,7 +45,7 @@
             />
             <p v-if="errors.port" class="text-xs text-bad mt-1">{{ errors.port }}</p>
           </div>
-          <div class="flex-[2]">
+          <div class="flex-2">
             <label class="block text-xs text-ink-2 mb-1.5">Username <span class="text-bad">*</span></label>
             <input
               v-model="form.username"
@@ -61,11 +61,11 @@
         <!-- Auth Type Toggle -->
         <div>
           <label class="block text-xs text-ink-2 mb-1.5">Authentication</label>
-          <div class="flex bg-input rounded p-1">
+          <div class="flex bg-input rounded-sm p-1">
             <button
               type="button"
               @click="form.auth_type = 'password'"
-              class="flex-1 py-1.5 text-sm rounded transition-colors"
+              class="flex-1 py-1.5 text-sm rounded-sm transition-colors"
               :class="form.auth_type === 'password' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               Password
@@ -73,7 +73,7 @@
             <button
               type="button"
               @click="form.auth_type = 'key'"
-              class="flex-1 py-1.5 text-sm rounded transition-colors"
+              class="flex-1 py-1.5 text-sm rounded-sm transition-colors"
               :class="form.auth_type === 'key' ? 'bg-accent-solid text-white' : 'text-ink-2 hover:text-ink'"
             >
               SSH Key
@@ -121,7 +121,7 @@
             <button
               type="button"
               @click="browseKey"
-              class="px-3 py-2 bg-input border border-line rounded text-sm text-ink hover:bg-active shrink-0"
+              class="px-3 py-2 bg-input border border-line rounded-sm text-sm text-ink hover:bg-active shrink-0"
             >
               <FileSearch :size="14" class="inline mr-1" />
               Browse
@@ -163,7 +163,7 @@
         <button
           @click="onSave"
           :disabled="loading"
-          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded flex items-center gap-2"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover disabled:bg-accent-solid/50 disabled:opacity-70 text-white rounded-sm flex items-center gap-2"
         >
           <Loader2 v-if="loading" :size="14" class="animate-spin" />
           {{ loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Add Host') }}
@@ -251,7 +251,7 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const base = 'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

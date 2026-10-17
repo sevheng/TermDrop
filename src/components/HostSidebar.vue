@@ -13,7 +13,7 @@
           <IconButton :icon="Download" label="Import hosts" @click="showImportMenu = !showImportMenu" />
           <div
             v-if="showImportMenu"
-            class="absolute left-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[180px] py-1"
+            class="absolute left-0 top-full mt-1 bg-surface border border-line rounded-sm shadow-xl z-50 min-w-[180px] py-1"
           >
             <button
               @click="importSshConfig(); showImportMenu = false"
@@ -36,7 +36,7 @@
           <IconButton :icon="Plus" label="Add a host" @click="showAddMenu = !showAddMenu" />
           <div
             v-if="showAddMenu"
-            class="absolute right-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[140px] py-1"
+            class="absolute right-0 top-full mt-1 bg-surface border border-line rounded-sm shadow-xl z-50 min-w-[140px] py-1"
           >
             <button
               @click="openModal(); showAddMenu = false"
@@ -79,7 +79,7 @@
           v-model="searchQuery"
           type="text"
           placeholder="Search hosts..."
-          class="w-full bg-input border border-line rounded pl-6 pr-2 py-1 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent"
+          class="w-full bg-input border border-line rounded-sm pl-6 pr-2 py-1 text-xs text-ink placeholder-ink-3 focus:outline-hidden focus:border-accent"
         />
       </div>
     </div>
@@ -191,7 +191,7 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[10rem] max-h-[calc(100vh-16px)] overflow-y-auto"
+      class="fixed bg-surface border border-line rounded-sm shadow-lg py-1 z-50 min-w-40 max-h-[calc(100vh-16px)] overflow-y-auto"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Host menu -->

@@ -7,7 +7,7 @@
   >
     <div
       ref="modalRef"
-      class="bg-surface border border-line rounded shadow-xl flex flex-col max-w-[90vw] max-h-[80vh]"
+      class="bg-surface border border-line rounded-sm shadow-xl flex flex-col max-w-[90vw] max-h-[80vh]"
       :style="{ width: modalWidth + 'px', height: modalHeight + 'px', minWidth: '320px', minHeight: '200px' }"
     >
       <!-- Header -->
@@ -21,13 +21,13 @@
         <div class="flex items-center gap-1.5 shrink-0">
           <!-- Search (text only) -->
           <template v-if="fileType === 'text'">
-            <div class="flex items-center gap-1 bg-input rounded px-1.5 py-0.5">
+            <div class="flex items-center gap-1 bg-input rounded-sm px-1.5 py-0.5">
               <Search :size="10" class="text-ink-2" />
               <input
                 v-model="searchQuery"
                 type="text"
                 placeholder="Find..."
-                class="bg-transparent text-2xs text-ink w-24 focus:outline-none placeholder-ink-3"
+                class="bg-transparent text-2xs text-ink w-24 focus:outline-hidden placeholder-ink-3"
                 @keydown.esc="searchQuery = ''"
               />
               <span v-if="searchQuery" class="text-2xs text-ink-2">
@@ -47,10 +47,10 @@
               >▼</button>
             </div>
           </template>
-          <button @click="$emit('download')" class="text-2xs text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded" title="Download">
+          <button @click="$emit('download')" class="text-2xs text-ink-2 hover:text-ink px-1.5 py-0.5 bg-input rounded-sm" title="Download">
             ⬇
           </button>
-          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-2xs text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded" title="Edit">
+          <button v-if="fileType === 'text'" @click="$emit('edit')" class="text-2xs text-white bg-accent-solid hover:bg-accent-solid-hover px-2 py-0.5 rounded-sm" title="Edit">
             Edit
           </button>
           <button @click="$emit('close')" class="text-ink-2 hover:text-ink leading-none">×</button>
@@ -75,7 +75,7 @@
             v-if="imageDataUrl"
             :src="imageDataUrl"
             :alt="fileName"
-            class="max-w-full max-h-full object-contain rounded"
+            class="max-w-full max-h-full object-contain rounded-sm"
             draggable="false"
           />
         </div>
@@ -87,7 +87,7 @@
           <p class="text-xs text-ink-2 mb-4">This file cannot be previewed.</p>
           <button
             @click="$emit('download')"
-            class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-3 py-1.5 rounded"
+            class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-3 py-1.5 rounded-sm"
           >
             Download File
           </button>

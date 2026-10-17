@@ -50,7 +50,7 @@
       >
         <!-- The command is the answer here, so it stays copyable rather than
              being flattened into prose. -->
-        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs mt-3">
+        <div class="bg-surface border border-line rounded-sm px-3 py-2 text-left max-w-xs mt-3">
           <p class="text-2xs text-ink-3 mb-1">Start it by running in a terminal:</p>
           <code class="text-2xs text-good font-mono block">sudo systemctl start docker</code>
         </div>
@@ -63,7 +63,7 @@
         title="Docker permission denied"
         hint="Your user is not in the docker group"
       >
-        <div class="bg-surface border border-line rounded px-3 py-2 text-left max-w-xs mt-3">
+        <div class="bg-surface border border-line rounded-sm px-3 py-2 text-left max-w-xs mt-3">
           <p class="text-2xs text-ink-3 mb-1">Fix by running in a terminal:</p>
           <code class="text-2xs text-good font-mono block">sudo usermod -aG docker $USER</code>
           <p class="text-2xs text-ink-3 mt-1">Then reconnect this session</p>

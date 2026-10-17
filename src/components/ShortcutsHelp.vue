@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-5 w-[28rem] max-w-[90vw] shadow-xl max-h-[80vh] flex flex-col">
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-100" panel-class="p-5 w-md max-w-[90vw] shadow-xl max-h-[80vh] flex flex-col">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-base font-semibold text-ink">Keyboard Shortcuts</h3>
         <button @click="onClose" class="text-ink-3 hover:text-ink">×</button>
@@ -12,7 +12,7 @@
           <div class="space-y-1">
             <div v-for="s in terminalShortcuts" :key="s.keys" class="flex justify-between text-sm">
               <span class="text-ink">{{ s.label }}</span>
-              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+              <kbd class="bg-input px-1.5 py-0.5 rounded-sm text-xs text-ink font-mono">{{ s.keys }}</kbd>
             </div>
           </div>
         </section>
@@ -22,7 +22,7 @@
           <div class="space-y-1">
             <div v-for="s in tabShortcuts" :key="s.keys" class="flex justify-between text-sm">
               <span class="text-ink">{{ s.label }}</span>
-              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+              <kbd class="bg-input px-1.5 py-0.5 rounded-sm text-xs text-ink font-mono">{{ s.keys }}</kbd>
             </div>
           </div>
         </section>
@@ -32,7 +32,7 @@
           <div class="space-y-1">
             <div v-for="s in hostListShortcuts" :key="s.keys" class="flex justify-between text-sm">
               <span class="text-ink">{{ s.label }}</span>
-              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+              <kbd class="bg-input px-1.5 py-0.5 rounded-sm text-xs text-ink font-mono">{{ s.keys }}</kbd>
             </div>
           </div>
         </section>
@@ -42,7 +42,7 @@
           <div class="space-y-1">
             <div v-for="s in sftpShortcuts" :key="s.keys" class="flex justify-between text-sm">
               <span class="text-ink">{{ s.label }}</span>
-              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+              <kbd class="bg-input px-1.5 py-0.5 rounded-sm text-xs text-ink font-mono">{{ s.keys }}</kbd>
             </div>
           </div>
         </section>
@@ -54,12 +54,12 @@
           <div class="space-y-1">
             <div v-for="s in vncShortcuts" :key="s.keys" class="flex justify-between text-sm">
               <span class="text-ink">{{ s.label }}</span>
-              <kbd class="bg-input px-1.5 py-0.5 rounded text-xs text-ink font-mono">{{ s.keys }}</kbd>
+              <kbd class="bg-input px-1.5 py-0.5 rounded-sm text-xs text-ink font-mono">{{ s.keys }}</kbd>
             </div>
           </div>
           <p class="text-2xs text-ink-3 mt-2">
             A remote desktop takes every keystroke, including the shortcuts above — so
-            <kbd class="bg-input px-1 rounded font-mono">Ctrl + Alt + Shift</kbd> is the way back out.
+            <kbd class="bg-input px-1 rounded-sm font-mono">Ctrl + Alt + Shift</kbd> is the way back out.
           </p>
         </section>
       </div>
@@ -67,7 +67,7 @@
       <div class="mt-4 pt-3 border-t border-line text-right tabular-nums">
         <button
           @click="onClose"
-          class="px-3 py-1.5 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded transition-colors"
+          class="px-3 py-1.5 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded-sm transition-colors"
         >
           Close
         </button>

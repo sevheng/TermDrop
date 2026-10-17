@@ -46,7 +46,7 @@
           <label
             v-for="coll in db.collections"
             :key="coll"
-            class="group flex items-center gap-1.5 text-xs text-ink hover:bg-raised px-1 py-0.5 rounded"
+            class="group flex items-center gap-1.5 text-xs text-ink hover:bg-raised px-1 py-0.5 rounded-sm"
             :class="[
               selectable || browsable ? 'cursor-pointer' : '',
               isActive(db.name, coll) ? 'bg-selected hover:bg-selected' : '',

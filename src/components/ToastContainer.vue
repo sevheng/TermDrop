@@ -1,9 +1,9 @@
 <template>
-  <div class="fixed top-4 right-4 z-[100] space-y-2 pointer-events-none">
+  <div class="fixed top-4 right-4 z-100 space-y-2 pointer-events-none">
     <div
       v-for="toast in toasts"
       :key="toast.id"
-      class="px-4 py-3 rounded shadow-lg text-sm max-w-sm pointer-events-auto flex items-start gap-3"
+      class="px-4 py-3 rounded-sm shadow-lg text-sm max-w-sm pointer-events-auto flex items-start gap-3"
       :class="toastClass(toast.type)"
     >
       <span class="flex-1">{{ toast.message }}</span>

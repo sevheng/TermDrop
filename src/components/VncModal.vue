@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[28rem] shadow-xl max-h-[90vh] overflow-y-auto">
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-md shadow-xl max-h-[90vh] overflow-y-auto">
       <h3 class="text-lg font-semibold text-ink mb-5">
         {{ isEditing ? 'Edit remote desktop' : 'Add remote desktop' }}
       </h3>
@@ -36,13 +36,13 @@
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="$emit('close')"
-          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded-sm hover:bg-raised transition-colors"
         >
           Cancel
         </button>
         <button
           @click="submit"
-          class="px-4 py-2 text-sm text-white rounded bg-accent-solid hover:bg-accent-solid-hover transition-colors"
+          class="px-4 py-2 text-sm text-white rounded-sm bg-accent-solid hover:bg-accent-solid-hover transition-colors"
         >
           {{ isEditing ? 'Save' : 'Add' }}
         </button>
@@ -71,7 +71,7 @@ const isEditing = computed(() => !!props.host)
 /** The same input treatment every other connection dialog uses. */
 function inputClass(key) {
   const base =
-    'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+    'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = errors[key] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

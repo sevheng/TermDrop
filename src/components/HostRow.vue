@@ -1,6 +1,6 @@
 <template>
   <div
-    class="group relative flex items-center gap-2 h-8 pl-2 pr-1 rounded-sm cursor-pointer"
+    class="group relative flex items-center gap-2 h-8 pl-2 pr-1 rounded-xs cursor-pointer"
     :class="[
       state.active ? 'bg-selected' : 'hover:bg-raised',
       // Keyboard focus is a third state: not selected, but where the arrows
@@ -59,8 +59,8 @@
     -->
     <div
       class="absolute right-1 inset-y-0 hidden items-center gap-0.5 pl-6 group-hover:flex group-focus-within:flex"
-      :class="state.active ? 'bg-gradient-to-l from-selected via-selected to-transparent'
-                           : 'bg-gradient-to-l from-raised via-raised to-transparent'"
+      :class="state.active ? 'bg-linear-to-l from-selected via-selected to-transparent'
+                           : 'bg-linear-to-l from-raised via-raised to-transparent'"
     >
       <IconButton
         :icon="Star"

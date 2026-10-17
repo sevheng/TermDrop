@@ -22,7 +22,7 @@
             v-model="filterText"
             spellcheck="false"
             placeholder='{"field": "value"}'
-            class="w-full bg-input border rounded px-2 py-1.5 text-xs font-mono text-ink focus:outline-none"
+            class="w-full bg-input border rounded-sm px-2 py-1.5 text-xs font-mono text-ink focus:outline-hidden"
             :class="filterError ? 'border-bad' : 'border-line focus:border-accent'"
             @keydown.ctrl.enter="runQuery(0)"
             @keydown.meta.enter="runQuery(0)"
@@ -34,14 +34,14 @@
             v-model="sortText"
             spellcheck="false"
             placeholder='{"_id": -1}'
-            class="w-full bg-input border rounded px-2 py-1.5 text-xs font-mono text-ink focus:outline-none"
+            class="w-full bg-input border rounded-sm px-2 py-1.5 text-xs font-mono text-ink focus:outline-hidden"
             :class="sortError ? 'border-bad' : 'border-line focus:border-accent'"
             @keydown.ctrl.enter="runQuery(0)"
             @keydown.meta.enter="runQuery(0)"
           />
         </div>
         <div class="flex items-end gap-2">
-          <div class="flex rounded overflow-hidden border border-line">
+          <div class="flex rounded-sm overflow-hidden border border-line">
             <button
               v-for="mode in ['table', 'json']"
               :key="mode"
@@ -57,7 +57,7 @@
           <button
             @click="runQuery(0)"
             :disabled="loading"
-            class="px-3 py-1.5 text-xs rounded bg-accent-solid hover:bg-accent-solid-hover text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-3 py-1.5 text-xs rounded-sm bg-accent-solid hover:bg-accent-solid-hover text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {{ loading ? 'Running…' : 'Run' }}
           </button>
@@ -155,7 +155,7 @@
         <div
           v-for="(doc, i) in documents"
           :key="i"
-          class="border border-line/60 rounded overflow-hidden"
+          class="border border-line/60 rounded-sm overflow-hidden"
         >
           <div
             class="flex items-center gap-2 px-2 py-1 text-xs font-mono cursor-pointer hover:bg-raised"
@@ -207,14 +207,14 @@
         <button
           @click="runQuery(page - 1)"
           :disabled="loading || page === 0"
-          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded-sm text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Prev
         </button>
         <button
           @click="runQuery(page + 1)"
           :disabled="loading || page >= maxPage"
-          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded-sm text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Next
         </button>
