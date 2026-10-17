@@ -72,7 +72,7 @@ We use the standard fork-and-pull workflow:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 24 or later (see `.nvmrc`)
+- [Node.js](https://nodejs.org/) 24.15 or later (see `.nvmrc`)
 - [Rust](https://rustup.rs/) stable toolchain — CI tracks stable, so a lint that
   a newer release adds will fail there even when it passes locally; run
   `rustup update` before assuming CI is wrong
