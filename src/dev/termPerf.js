@@ -109,8 +109,12 @@ async function settle(probe, quietMs, timeoutMs = 120000) {
 
 const send = (sessionId, data) => invoke('ssh_write', { sessionId, data })
 
+const WINDOWS = navigator.userAgent.includes('Windows')
+
 async function openShell(store) {
-  const sessionId = await store.openLocalTerminal()
+  // On Windows, plain cmd: PowerShell's line editor redraws around each key.
+  const shell = WINDOWS ? (await store.loadLocalShells()).find(s => s.id === 'cmd') ?? null : null
+  const sessionId = await store.openLocalTerminal(shell)
   const deadline = performance.now() + 15000
   while (!probes.has(sessionId)) {
     if (performance.now() > deadline) throw new Error('terminal never attached')
@@ -120,9 +124,11 @@ async function openShell(store) {
   await settle(probe, 1500)
   // A plain shell, so the user's prompt and line-editor plugins do not
   // become part of what is measured.
-  await send(sessionId, "exec env PS1='$ ' /bin/sh\r")
-  await sleep(300)
-  await settle(probe, 1000)
+  if (!WINDOWS) {
+    await send(sessionId, "exec env PS1='$ ' /bin/sh\r")
+    await sleep(300)
+    await settle(probe, 1000)
+  }
   return { sessionId, probe }
 }
 
