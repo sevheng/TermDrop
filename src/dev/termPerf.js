@@ -21,7 +21,8 @@ const WORKLOADS = {
   base64: 'head -c 6000000 /dev/urandom | base64',
 }
 const RUNS = 3
-const ECHO_SAMPLES = 200
+const ONLY = import.meta.env.VITE_TERM_PERF_ONLY // 'latency' skips the throughput and idle phases
+const ECHO_SAMPLES = ONLY === 'latency' ? 400 : 200
 const IDLE_SECONDS = 30
 const IDLE_TABS = 5
 
@@ -179,19 +180,23 @@ export async function runTermPerf(store) {
   toast('Terminal benchmark running — leave the window alone', 'info')
   try {
     await sleep(2000)
-    await phase('idle-no-tabs', async () => { await sleep(10000); return {} })
+    if (!ONLY) await phase('idle-no-tabs', async () => { await sleep(10000); return {} })
 
     const main = await openShell(store)
     opened.push(main.sessionId)
-    for (const [label, command] of Object.entries(WORKLOADS)) {
-      await phase(`throughput-${label}`, () => throughput(main.sessionId, main.probe, command))
+    if (!ONLY) {
+      for (const [label, command] of Object.entries(WORKLOADS)) {
+        await phase(`throughput-${label}`, () => throughput(main.sessionId, main.probe, command))
+      }
     }
     await phase('echo-latency', () => echoLatency(main.probe))
 
-    for (let i = 1; i < IDLE_TABS; i++) opened.push((await openShell(store)).sessionId)
-    store.setActiveTab(main.sessionId)
-    await sleep(2000)
-    await phase(`idle-${IDLE_TABS}-tabs`, async () => { await sleep(IDLE_SECONDS * 1000); return { tabs: opened.length } })
+    if (!ONLY) {
+      for (let i = 1; i < IDLE_TABS; i++) opened.push((await openShell(store)).sessionId)
+      store.setActiveTab(main.sessionId)
+      await sleep(2000)
+      await phase(`idle-${IDLE_TABS}-tabs`, async () => { await sleep(IDLE_SECONDS * 1000); return { tabs: opened.length } })
+    }
 
     report.finished = new Date().toISOString()
     const path = await invoke('dev_perf_report', { name, report: JSON.stringify(report, null, 2) })

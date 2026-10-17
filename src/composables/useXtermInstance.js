@@ -162,9 +162,13 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
     // from release builds.
     const perf = import.meta.env.DEV ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term) : null
     channel.onmessage = (message) => {
-      // Handle various possible data formats from Tauri Channel
+      // The backend sends raw bytes, which Tauri delivers as an ArrayBuffer
+      // (inlined below 1 KB, fetched above it). The other shapes are what a
+      // JSON-serialised channel produced, kept for the fallback event path.
       let data = null
-      if (message instanceof Uint8Array) {
+      if (message instanceof ArrayBuffer) {
+        data = new Uint8Array(message)
+      } else if (message instanceof Uint8Array) {
         data = message
       } else if (Array.isArray(message)) {
         data = new Uint8Array(message)

@@ -10,7 +10,7 @@ pub use session::{create_exec_session, Accept, SshTarget};
 
 use ssh2::{Channel as SshChannel, Session};
 use std::sync::{Arc, Mutex};
-use tauri::{ipc::Channel, Emitter, Window};
+use tauri::{Emitter, Window};
 use tokio::sync::mpsc;
 
 pub struct SshSessionHandle {
@@ -21,14 +21,14 @@ pub struct SshSessionHandle {
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub resize_tx: mpsc::UnboundedSender<(u32, u32)>,
-    pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
+    pub data_channel: io_loop::TerminalChannel,
 }
 
 pub struct ExecPtyHandle {
     pub host_id: i64,
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
-    pub data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
+    pub data_channel: io_loop::TerminalChannel,
 }
 
 /// Event names and payload id key that distinguish the interactive shell
@@ -70,7 +70,7 @@ fn spawn_pty_thread(
     write_rx: mpsc::UnboundedReceiver<String>,
     disconnect_rx: mpsc::UnboundedReceiver<()>,
     resize_rx: Option<mpsc::UnboundedReceiver<(u32, u32)>>,
-    data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
+    data_channel: io_loop::TerminalChannel,
 ) {
     std::thread::spawn(move || {
         // Never prompts. The terminal opens after the exec session, which is
@@ -127,7 +127,7 @@ pub fn connect(
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
     let (resize_tx, resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
-    let data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>> = Arc::new(Mutex::new(None));
+    let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
 
     spawn_pty_thread(
         window,
@@ -162,7 +162,7 @@ pub fn exec_pty_connect(
 ) -> Result<ExecPtyHandle, String> {
     let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
-    let data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>> = Arc::new(Mutex::new(None));
+    let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
 
     spawn_pty_thread(
         window,

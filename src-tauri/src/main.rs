@@ -932,7 +932,7 @@ fn ssh_resize(
 fn open_data_channel(
     state: State<'_, AppState>,
     session_id: String,
-    channel: tauri::ipc::Channel<Vec<u8>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
@@ -944,7 +944,7 @@ fn open_data_channel(
 fn open_exec_pty_data_channel(
     state: State<'_, AppState>,
     pty_session_id: String,
-    channel: tauri::ipc::Channel<Vec<u8>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<(), String> {
     let mut sessions = state.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions

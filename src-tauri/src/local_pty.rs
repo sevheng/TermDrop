@@ -12,9 +12,8 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self as std_mpsc, RecvTimeoutError, TryRecvError};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{ipc::Channel, Emitter, Window};
+use tauri::{Emitter, Window};
 use tokio::sync::mpsc;
 
 /// After the child exits, how long to wait for each further chunk before
@@ -187,7 +186,7 @@ pub fn connect(
     shell: LocalShell,
     cols: u32,
     rows: u32,
-    data_channel: Arc<Mutex<Option<Channel<Vec<u8>>>>>,
+    data_channel: io_loop::TerminalChannel,
 ) -> Result<SshSessionHandle, String> {
     let home: Option<PathBuf> = dirs::home_dir();
     let pty = LocalPty::spawn(&shell.program, &shell.args, home.as_deref(), cols, rows)?;
