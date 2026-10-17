@@ -16,8 +16,9 @@ use cipher::{BlockEncrypt, KeyInit};
 use des::Des;
 use md5::{Digest, Md5};
 use num_bigint::BigUint;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::Rng;
 
 use super::proto::{security_type_name, SecurityType};
 
@@ -265,9 +266,9 @@ pub fn ard_response_with(
 /// Build the ARD response, drawing the private key and padding from the OS.
 pub fn ard_response(params: &ArdParams, username: &str, password: &str) -> Result<Vec<u8>, String> {
     let mut private_key = vec![0u8; params.prime.len()];
-    OsRng.fill_bytes(&mut private_key);
+    UnwrapErr(SysRng).fill_bytes(&mut private_key);
     let mut padding = [0u8; ARD_CREDENTIAL_LEN];
-    OsRng.fill_bytes(&mut padding);
+    UnwrapErr(SysRng).fill_bytes(&mut padding);
     ard_response_with(params, username, password, &private_key, &padding)
 }
 
@@ -541,7 +542,7 @@ mod tests {
     #[test]
     fn ard_response_is_random_per_call() {
         // Two calls must not produce the same bytes: the private key and the
-        // padding are both freshly drawn, and a repeat would mean OsRng was
+        // padding are both freshly drawn, and a repeat would mean SysRng was
         // not actually consulted.
         let params = test_params(vec![0x03; 16]);
         let a = ard_response(&params, "alice", "s3cret").unwrap();

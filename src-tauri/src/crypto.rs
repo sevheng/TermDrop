@@ -1,6 +1,5 @@
 use base64::Engine;
 use keyring::Entry;
-use rand::RngCore;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -162,7 +161,7 @@ fn load_or_create_fallback_key(base_dir: &Path) -> Result<[u8; 32], String> {
     }
 
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::fill(&mut key);
     let b64 = base64::engine::general_purpose::STANDARD.encode(key);
     std::fs::write(&key_path, b64).map_err(|e| format!("write fallback key file: {}", e))?;
 
@@ -256,7 +255,7 @@ fn encrypt(plaintext: &str, key: &[u8; 32]) -> Result<String, String> {
     let cipher =
         Aes256Gcm::new_from_slice(key).map_err(|e| format!("initialize cipher: {:?}", e))?;
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    rand::fill(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_bytes())
