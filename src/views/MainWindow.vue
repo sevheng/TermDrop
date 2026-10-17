@@ -71,7 +71,7 @@
             />
             <div
               v-if="showShellMenu"
-              class="absolute right-0 top-full mt-1 bg-surface border border-line rounded shadow-xl z-50 min-w-[200px] max-h-80 overflow-y-auto py-1"
+              class="absolute right-0 top-full mt-1 bg-surface border border-line rounded-sm shadow-xl z-50 min-w-[200px] max-h-80 overflow-y-auto py-1"
             >
               <div
                 v-if="shellsLoading && !store.localShells?.length"

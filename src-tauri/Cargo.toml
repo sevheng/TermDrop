@@ -19,18 +19,21 @@ tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.25"
-dirs = "5"
+r2d2_sqlite = "0.35"
+dirs = "7"
 aes-gcm = "0.10"
-rand = "0.8"
+rand = "0.10"
 ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 # known_hosts parsing. All three are already in Cargo.lock as transitive
-# dependencies, so declaring them adds nothing to the build graph.
+# dependencies, so declaring them adds nothing to the build graph. Held at
+# these versions (with the VNC crypto crates below) until tauri-codegen,
+# dbus-secret-service and friends move to the 0.11/0.13 RustCrypto line;
+# bumping only ours would compile a second copy of each.
 hmac = "0.12"   # hashed host names are HMAC-SHA1 over the salt
 sha2 = "0.10"   # SHA256 fingerprints, the form ssh-keygen -lf prints
 sha1 = "0.10"
@@ -40,7 +43,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 mongodb = "3"
-bson = "2"
+bson = "2"   # must match the bson mongodb uses (mongodb 3.x is on bson 2)
 futures-util = "0.3"
 tauri-plugin-clipboard-manager = "2"
 redis = { version = "1.7.0", features = ["tokio-comp", "tokio-native-tls-comp"] }
@@ -59,6 +62,10 @@ portable-pty = "0.9"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 
+# keyring held at 3: v4 splits into keyring-core plus a separate store crate
+# per platform, and the macOS/Windows stores are compiled only there, which
+# CI does not build. Moving needs a release build on each OS and a check that
+# passwords saved by v3 are still found.
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 

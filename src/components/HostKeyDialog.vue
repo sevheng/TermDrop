@@ -1,7 +1,7 @@
 <template>
   <!-- First contact. An ordinary decision, so an ordinary dialog. -->
   <ModalShell
-    @close="respond(false)" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-[30rem] shadow-xl">
+    @close="respond(false)" :show="show" dim="bg-black/60" z="z-50" panel-class="p-6 w-120 shadow-xl">
       <h3 class="text-lg font-semibold text-ink mb-2">Trust this host?</h3>
       <p class="text-sm text-ink-2 mb-4">
         TermDrop has not connected to
@@ -13,7 +13,7 @@
         host behind it is checked separately.
       </p>
 
-      <div class="rounded border border-line bg-input p-3 mb-4 space-y-2">
+      <div class="rounded-sm border border-line bg-input p-3 mb-4 space-y-2">
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-ink-2">Fingerprint</span>
           <span class="text-2xs text-ink-3">{{ info.keyType }}</span>
@@ -30,7 +30,7 @@
            giving the exact command makes it something people might do. -->
       <p class="text-xs text-ink-2 mb-1">Verify it from a machine you trust:</p>
       <div class="flex items-center gap-2 mb-5">
-        <code class="flex-1 text-2xs text-ink-2 font-mono bg-input rounded px-2 py-1.5 break-all">
+        <code class="flex-1 text-2xs text-ink-2 font-mono bg-input rounded-sm px-2 py-1.5 break-all">
           {{ verifyCommand }}
         </code>
         <IconButton :icon="Copy" label="Copy command" @click="copy(verifyCommand)" />
@@ -40,13 +40,13 @@
         <button
           ref="cancelEl"
           @click="respond(false)"
-          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded-sm hover:bg-raised transition-colors"
         >
           Cancel
         </button>
         <button
           @click="respond(true)"
-          class="px-4 py-2 text-sm text-white rounded bg-accent-solid hover:bg-accent-solid-hover transition-colors"
+          class="px-4 py-2 text-sm text-white rounded-sm bg-accent-solid hover:bg-accent-solid-hover transition-colors"
         >
           Trust this host
         </button>

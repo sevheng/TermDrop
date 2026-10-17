@@ -6,7 +6,7 @@
         v-model="uri"
         @input="$emit('uri-input')"
         placeholder="redis://:password@localhost:6379/0"
-        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 font-mono outline-none focus:ring-1 focus:ring-accent"
+        class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 font-mono outline-hidden focus:ring-1 focus:ring-accent"
       />
       <p v-if="errors.uri" class="text-2xs text-bad mt-1">{{ errors.uri }}</p>
     </div>
@@ -18,7 +18,7 @@
           v-model="host"
           @input="$emit('field-input')"
           placeholder="localhost"
-          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
+          class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 outline-hidden focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="w-24">
@@ -27,7 +27,7 @@
           v-model="port"
           @input="$emit('field-input')"
           placeholder="6379"
-          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
+          class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 outline-hidden focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="w-20">
@@ -36,7 +36,7 @@
           v-model="database"
           @input="$emit('field-input')"
           placeholder="0"
-          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
+          class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 outline-hidden focus:ring-1 focus:ring-accent"
         />
       </div>
     </div>
@@ -50,7 +50,7 @@
         <input
           v-model="username"
           @input="$emit('field-input')"
-          class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
+          class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 outline-hidden focus:ring-1 focus:ring-accent"
         />
       </div>
       <div class="flex-1">
@@ -61,7 +61,7 @@
             :type="showPassword ? 'text' : 'password'"
             @input="$emit('field-input')"
             :placeholder="hasStoredSecret ? '•••••••• (stored)' : ''"
-            class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 pr-7 outline-none focus:ring-1 focus:ring-accent"
+            class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 pr-7 outline-hidden focus:ring-1 focus:ring-accent"
           />
           <button
             type="button"

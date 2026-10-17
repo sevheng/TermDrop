@@ -2,7 +2,7 @@
   <ModalShell
     @close="$emit('close')"
     :show="show"
-    panel-class="p-6 w-[30rem] shadow-xl max-h-[90vh] overflow-y-auto"
+    panel-class="p-6 w-120 shadow-xl max-h-[90vh] overflow-y-auto"
   >
     <h3 class="text-base font-medium text-ink mb-4">
       {{ host ? 'Edit' : 'Add' }} Redis connection
@@ -13,12 +13,12 @@
       <input
         v-model="form.name"
         placeholder="Production cache"
-        class="w-full bg-input text-ink text-xs rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
+        class="w-full bg-input text-ink text-xs rounded-sm px-2 py-1.5 outline-hidden focus:ring-1 focus:ring-accent"
       />
       <p v-if="errors.name" class="text-2xs text-bad mt-1">{{ errors.name }}</p>
     </div>
 
-    <fieldset class="border border-line rounded p-3 mb-5">
+    <fieldset class="border border-line rounded-sm p-3 mb-5">
       <legend class="text-xs text-ink-2 px-1">Connection</legend>
       <!--
         Not `v-model`: `form` is a const reactive object, so reassigning it is
@@ -40,13 +40,13 @@
     <div class="flex justify-end gap-2">
       <button
         @click="$emit('close')"
-        class="px-3 py-1.5 text-xs rounded text-ink hover:bg-input"
+        class="px-3 py-1.5 text-xs rounded-sm text-ink hover:bg-input"
       >
         Cancel
       </button>
       <button
         @click="submit"
-        class="px-3 py-1.5 text-xs rounded bg-accent-solid hover:bg-accent-solid-hover text-white"
+        class="px-3 py-1.5 text-xs rounded-sm bg-accent-solid hover:bg-accent-solid-hover text-white"
       >
         Save
       </button>

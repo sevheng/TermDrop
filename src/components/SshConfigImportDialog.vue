@@ -13,7 +13,7 @@
         <div
           v-for="(host, index) in sshConfigHosts"
           :key="index"
-          class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-raised"
+          class="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-raised"
         >
           <input
             type="checkbox"
@@ -30,13 +30,13 @@
       <div class="px-4 py-3 border-t border-line flex justify-end gap-2">
         <button
           @click="showSshConfigDialog = false"
-          class="px-3 py-1.5 text-xs text-ink hover:bg-input rounded"
+          class="px-3 py-1.5 text-xs text-ink hover:bg-input rounded-sm"
         >
           Cancel
         </button>
         <button
           @click="confirmSshConfigImport"
-          class="px-3 py-1.5 text-xs bg-accent-solid hover:bg-accent-solid-hover text-white rounded"
+          class="px-3 py-1.5 text-xs bg-accent-solid hover:bg-accent-solid-hover text-white rounded-sm"
         >
           Import {{ selectedSshHosts.size }} host{{ selectedSshHosts.size === 1 ? '' : 's' }}
         </button>

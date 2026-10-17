@@ -32,7 +32,7 @@
         </button>
         <button
           @click="onSave"
-          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded-sm"
         >
           {{ isRename ? 'Rename' : 'Create' }}
         </button>
@@ -77,7 +77,7 @@ watch(() => props.show, (visible) => {
 })
 
 function inputClass(field) {
-  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const base = 'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = errors.value[field] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

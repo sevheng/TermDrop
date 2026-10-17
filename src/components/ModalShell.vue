@@ -27,7 +27,7 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   dim: { type: String, default: 'bg-black/60' },
   z: { type: String, default: 'z-50' },
-  panelClass: { type: String, default: 'p-6 w-[28rem] shadow-xl' },
+  panelClass: { type: String, default: 'p-6 w-md shadow-xl' },
   /** Some dialogs are dismissed by their own buttons only. */
   closeOnEscape: { type: Boolean, default: true },
 })

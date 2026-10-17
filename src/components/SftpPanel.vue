@@ -13,7 +13,7 @@
         <button
           v-if="index === 0"
           @click="navigateTo(segment.path)"
-          class="text-ink-2 hover:text-ink p-0.5 rounded shrink-0"
+          class="text-ink-2 hover:text-ink p-0.5 rounded-sm shrink-0"
           title="Go to root"
         >
           <Home :size="12" />
@@ -21,7 +21,7 @@
         <button
           v-else
           @click="index < breadcrumbs.length - 1 && navigateTo(segment.path)"
-          class="px-1 py-0.5 rounded truncate max-w-[120px]"
+          class="px-1 py-0.5 rounded-sm truncate max-w-[120px]"
           :class="index === breadcrumbs.length - 1
             ? 'text-ink font-medium cursor-default bg-input/50'
             : 'text-ink-2 hover:text-ink hover:bg-input/30 cursor-pointer'"
@@ -40,8 +40,8 @@
     <!-- Toolbar -->
     <div class="px-2 py-1.5 border-b border-line flex gap-1.5 flex-wrap items-center">
       <IconButton :icon="ArrowUp" label="Go up a directory" @click="goUp" />
-      <button @click="onUpload" class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-1.5 py-0.5 rounded">Upload</button>
-      <button @click="onMkdir" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded">+ Folder</button>
+      <button @click="onUpload" class="text-xs bg-accent-solid hover:bg-accent-solid-hover text-white px-1.5 py-0.5 rounded-sm">Upload</button>
+      <button @click="onMkdir" class="text-xs bg-input hover:bg-active text-ink px-1.5 py-0.5 rounded-sm">+ Folder</button>
       <IconButton :icon="RefreshCw" label="Refresh this directory" :pending="loading" @click="loadFiles" />
       <div class="relative ml-auto">
         <IconButton
@@ -53,7 +53,7 @@
         <div
           v-if="showColumnMenu"
           @click.stop
-          class="absolute right-0 top-full mt-0.5 bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[7rem]"
+          class="absolute right-0 top-full mt-0.5 bg-surface border border-line rounded-sm shadow-lg py-1 z-50 min-w-28"
         >
           <label class="flex items-center gap-1.5 px-2 py-0.5 text-xs text-ink cursor-pointer hover:bg-raised">
             <input v-model="showColumns.size" type="checkbox" class="accent-accent" />
@@ -91,7 +91,7 @@
         v-model="filterQuery"
         type="text"
         placeholder="Filter files..."
-        class="w-full bg-input border border-line rounded px-2 py-0.5 text-xs text-ink focus:outline-none focus:border-accent placeholder-ink-3"
+        class="w-full bg-input border border-line rounded-sm px-2 py-0.5 text-xs text-ink focus:outline-hidden focus:border-accent placeholder-ink-3"
       />
     </div>
 
@@ -149,7 +149,7 @@
     <div
       v-if="contextMenu.show"
       ref="contextMenuEl"
-      class="fixed bg-surface border border-line rounded shadow-lg py-1 z-50 min-w-[8rem]"
+      class="fixed bg-surface border border-line rounded-sm shadow-lg py-1 z-50 min-w-32"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
       <!-- Multi-selection mode -->
@@ -229,15 +229,15 @@
             <span v-else-if="t.done && !t.fileName.includes('failed')" class="text-accent">Done</span>
             <span v-else-if="t.done && t.fileName.includes('failed')" class="text-bad">Failed</span>
           </div>
-          <div class="h-1.5 bg-input rounded overflow-hidden">
+          <div class="h-1.5 bg-input rounded-sm overflow-hidden">
             <div
               v-if="t.total === 0 && !t.done"
-              class="h-full rounded bg-accent animate-pulse"
+              class="h-full rounded-sm bg-accent animate-pulse"
               style="width: 100%"
             ></div>
             <div
               v-else
-              class="h-full rounded transition-all duration-300"
+              class="h-full rounded-sm transition-all duration-300"
               :class="t.done ? 'bg-good' : 'bg-accent'"
               :style="{ width: t.total === 0 ? '100%' : Math.min(100, (t.bytes / t.total) * 100) + '%' }"
             ></div>
@@ -369,7 +369,7 @@ const sortedFiles = computed(() => {
     if (a.is_dir !== b.is_dir) {
       return a.is_dir ? -1 : 1
     }
-    let cmp = 0
+    let cmp
     switch (sortKey.value) {
       case 'size':
         cmp = (a.size || 0) - (b.size || 0)

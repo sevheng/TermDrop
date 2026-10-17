@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
-import { CanvasAddon } from '@xterm/addon-canvas'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Channel } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -16,6 +16,14 @@ export const TERMINAL_FONT_FAMILY =
   '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
 const DEFAULT_FONT_SIZE = 14
 
+// A terminal whose WebGL context is lost this many times inside the window
+// stays on the DOM renderer for good, so a flaky driver cannot flicker.
+const MAX_CONTEXT_LOSSES = 3
+const CONTEXT_LOSS_WINDOW_MS = 60_000
+
+// Logged once per app run, not once per tab.
+let warnedNoWebgl = false
+
 /** The saved terminal font size, or the default when unset. */
 export async function loadTerminalFontSize() {
   const setting = await invoke('get_setting', { key: 'font_size' })
@@ -24,9 +32,16 @@ export async function loadTerminalFontSize() {
 
 /**
  * Create an xterm Terminal with the app's standard addons (fit, optional
- * search, canvas renderer, clickable links), open it in `container`, and
- * fit it once. The canvas renderer is deliberate: WebGL lost its context on
- * tab switches.
+ * search, clickable links), open it in `container`, and fit it once.
+ *
+ * Rendering: xterm 6 has only the DOM renderer built in and WebGL as an
+ * addon (the Canvas addon TermDrop used to rely on is gone). WebGL used to
+ * blank tabs because every hidden tab held its own context and WebKit drops
+ * the oldest once too many are live. So a terminal holds a context **only
+ * while visible**: the caller attaches the GPU renderer on activation and
+ * detaches it on deactivation, and a hidden tab falls back to the DOM
+ * renderer, which costs nothing under `display: none`. A lost context also
+ * falls back to DOM until the next activation.
  *
  * Returns the terminal plus helpers for the two things every instance
  * needs: a binary data channel from the backend and a ResizeObserver that
@@ -43,7 +58,6 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
 
   const fitAddon = new FitAddon()
   const searchAddon = search ? new SearchAddon() : null
-  const canvasAddon = new CanvasAddon()
   const webLinksAddon = new WebLinksAddon((event, uri) => {
     event.preventDefault()
     openUrl(uri).catch((err) => {
@@ -52,13 +66,57 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
   })
   term.loadAddon(fitAddon)
   if (searchAddon) term.loadAddon(searchAddon)
-  term.loadAddon(canvasAddon)
   term.loadAddon(webLinksAddon)
 
   term.open(container)
   fitAddon.fit()
 
   let resizeObserver = null
+  let webgl = null
+  let contextLosses = []
+  let gpuDisabled = false
+
+  /**
+   * Render with WebGL. Safe to call repeatedly. Without WebGL (some VMs, WSL
+   * without a GPU) the terminal simply stays on the DOM renderer.
+   */
+  function attachGpuRenderer() {
+    if (webgl || gpuDisabled) return
+    try {
+      const addon = new WebglAddon()
+      addon.onContextLoss(() => {
+        const now = Date.now()
+        contextLosses = contextLosses.filter(t => now - t < CONTEXT_LOSS_WINDOW_MS)
+        contextLosses.push(now)
+        if (contextLosses.length >= MAX_CONTEXT_LOSSES) {
+          gpuDisabled = true
+          console.warn('WebGL context lost repeatedly; this terminal stays on the DOM renderer')
+        }
+        detachGpuRenderer()
+      })
+      term.loadAddon(addon)
+      webgl = addon
+    } catch (err) {
+      gpuDisabled = true
+      if (!warnedNoWebgl) {
+        warnedNoWebgl = true
+        console.warn('WebGL unavailable; terminals use the DOM renderer:', err)
+      }
+    }
+  }
+
+  /** Release the WebGL context and fall back to the DOM renderer. */
+  function detachGpuRenderer() {
+    if (!webgl) return
+    const addon = webgl
+    webgl = null
+    try {
+      addon.dispose()
+    } catch {
+      // Already torn down with its context.
+    }
+    term.refresh(0, term.rows - 1)
+  }
 
   /** Refit whenever `el` changes size. Safe to call repeatedly. */
   function observeResize(el) {
@@ -99,8 +157,19 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
 
   function dispose() {
     unobserveResize()
+    detachGpuRenderer()
     term.dispose()
   }
 
-  return { term, fitAddon, searchAddon, observeResize, unobserveResize, openDataChannel, dispose }
+  return {
+    term,
+    fitAddon,
+    searchAddon,
+    observeResize,
+    unobserveResize,
+    openDataChannel,
+    attachGpuRenderer,
+    detachGpuRenderer,
+    dispose,
+  }
 }

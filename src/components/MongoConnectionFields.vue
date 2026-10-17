@@ -16,7 +16,7 @@
   </div>
 
   <div class="flex gap-3">
-    <div class="flex-[2]">
+    <div class="flex-2">
       <label class="block text-xs text-ink-2 mb-1.5">
         Host <span v-if="!isSrv" class="text-bad">*</span>
       </label>
@@ -171,7 +171,7 @@ const authSource = field('authSource')
 const options = field('options')
 
 function inputClass(key) {
-  const base = 'w-full bg-input border rounded px-3 py-2 text-sm text-ink focus:outline-none transition-colors'
+  const base = 'w-full bg-input border rounded-sm px-3 py-2 text-sm text-ink focus:outline-hidden transition-colors'
   const error = props.errors[key] ? 'border-bad focus:border-bad' : 'border-line focus:border-accent'
   return `${base} ${error}`
 }

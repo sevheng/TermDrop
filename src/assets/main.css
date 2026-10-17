@@ -4,19 +4,120 @@
    the Latin subsets — the Cyrillic, Greek and Vietnamese cuts would ship in
    the installer whether or not a glyph from them is ever drawn. latin-ext
    covers accented host and group names. */
-@import '@fontsource/ibm-plex-sans/latin-400.css';
-@import '@fontsource/ibm-plex-sans/latin-500.css';
-@import '@fontsource/ibm-plex-sans/latin-600.css';
-@import '@fontsource/ibm-plex-sans/latin-ext-400.css';
-@import '@fontsource/jetbrains-mono/latin-400.css';
-@import '@fontsource/jetbrains-mono/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-400.css' layer(base);
+@import '@fontsource/ibm-plex-sans/latin-500.css' layer(base);
+@import '@fontsource/ibm-plex-sans/latin-600.css' layer(base);
+@import '@fontsource/ibm-plex-sans/latin-ext-400.css' layer(base);
+@import '@fontsource/jetbrains-mono/latin-400.css' layer(base);
+@import '@fontsource/jetbrains-mono/latin-500.css' layer(base);
 
-@import '../themes/tokens.css';
-@import '../themes/base.css';
+@import '../themes/tokens.css' layer(base);
+@import '../themes/base.css' layer(base);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Components carry no `dark:` variants -- html.dark swaps the token values
+   instead -- but the variant is kept class-based, as it was in v3. */
+@custom-variant dark (&:is(.dark *));
+
+/* Every colour the UI uses, by role. The values live in tokens.css as RGB
+   channels and change under html.dark, so the theme is `inline`: utilities
+   resolve `rgb(var(--td-…))` where they are used, and opacity modifiers like
+   `bg-surface/50` go through color-mix. The type scale is backed by CSS vars
+   so it tightens from one file. */
+@theme inline {
+  --text-2xs: var(--td-text-2xs);
+  --text-2xs--line-height: var(--td-lh-2xs);
+  --text-xs: var(--td-text-xs);
+  --text-xs--line-height: var(--td-lh-xs);
+  --text-sm: var(--td-text-sm);
+  --text-sm--line-height: var(--td-lh-sm);
+  --text-base: var(--td-text-base);
+  --text-base--line-height: var(--td-lh-base);
+  --text-lg: var(--td-text-lg);
+  --text-lg--line-height: var(--td-lh-lg);
+
+  --font-sans: var(--td-font-ui);
+  --font-mono: var(--td-font-mono);
+
+  --color-accent: rgb(var(--td-accent));
+  --color-accent-hover: rgb(var(--td-accent-hover));
+  --color-accent-soft: rgb(var(--td-accent-soft));
+  --color-accent-soft-hover: rgb(var(--td-accent-soft-hover));
+  --color-accent-solid: rgb(var(--td-accent-solid));
+  --color-accent-solid-hover: rgb(var(--td-accent-solid-hover));
+  --color-active: rgb(var(--td-active));
+  --color-bad: rgb(var(--td-bad));
+  --color-bad-bg: rgb(var(--td-bad-bg));
+  --color-bad-hover: rgb(var(--td-bad-hover));
+  --color-bad-line: rgb(var(--td-bad-line));
+  --color-bad-solid: rgb(var(--td-bad-solid));
+  --color-bad-solid-hover: rgb(var(--td-bad-solid-hover));
+  --color-canvas: rgb(var(--td-canvas));
+  --color-good: rgb(var(--td-good));
+  --color-good-hover: rgb(var(--td-good-hover));
+  --color-good-solid: rgb(var(--td-good-solid));
+  --color-good-solid-hover: rgb(var(--td-good-solid-hover));
+  --color-ink: rgb(var(--td-ink));
+  --color-ink-2: rgb(var(--td-ink-2));
+  --color-ink-3: rgb(var(--td-ink-3));
+  --color-input: rgb(var(--td-input));
+  --color-input-hover: rgb(var(--td-input-hover));
+  --color-line: rgb(var(--td-line));
+  --color-mongo: rgb(var(--td-mongo));
+  --color-mongo-solid: rgb(var(--td-mongo-solid));
+  --color-mongo-solid-hover: rgb(var(--td-mongo-solid-hover));
+  --color-overlay: rgb(var(--td-overlay));
+  --color-raised: rgb(var(--td-raised));
+  --color-redis: rgb(var(--td-redis));
+  --color-selected: rgb(var(--td-selected));
+  --color-surface: rgb(var(--td-surface));
+  --color-vnc: rgb(var(--td-vnc));
+  --color-syn-blue: rgb(var(--td-syn-blue));
+  --color-syn-cyan: rgb(var(--td-syn-cyan));
+  --color-syn-purple: rgb(var(--td-syn-purple));
+  --color-syn-teal: rgb(var(--td-syn-teal));
+  --color-syn-yellow: rgb(var(--td-syn-yellow));
+  --color-tag-1: rgb(var(--td-tag-1));
+  --color-tag-2: rgb(var(--td-tag-2));
+  --color-tag-3: rgb(var(--td-tag-3));
+  --color-tag-4: rgb(var(--td-tag-4));
+  --color-tag-5: rgb(var(--td-tag-5));
+  --color-tag-6: rgb(var(--td-tag-6));
+  --color-tag-7: rgb(var(--td-tag-7));
+  --color-tag-8: rgb(var(--td-tag-8));
+  --color-warn: rgb(var(--td-warn));
+  --color-warn-bg: rgb(var(--td-warn-bg));
+  --color-warn-line: rgb(var(--td-warn-line));
+  --color-warn-soft: rgb(var(--td-warn-soft));
+  --color-warn-solid: rgb(var(--td-warn-solid));
+  --color-warn-solid-hover: rgb(var(--td-warn-solid-hover));
+}
+
+/* Tailwind 4 defaults a bare `border` to currentcolor; v3 used its gray-200.
+   Neither follows the theme, so a bare border takes the line token. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: rgb(var(--td-line));
+  }
+
+  /* v3's preflight gave every button the pointer, and 139 of 140 buttons
+     here rely on it; v4 leaves the default arrow. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* v4 draws placeholders at half the text colour, which in the light theme
+     makes hint text look like a value. */
+  ::placeholder {
+    color: rgb(var(--td-placeholder));
+  }
+}
 
 body {
   margin: 0;

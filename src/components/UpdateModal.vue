@@ -1,6 +1,6 @@
 <template>
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-[100]" panel-class="p-6 w-[420px] shadow-2xl">
+    @close="$emit('close')" :show="show" dim="bg-black/60" z="z-100" panel-class="p-6 w-[420px] shadow-2xl">
       <div class="flex items-center gap-2 mb-3">
         <span class="text-2xl">🎉</span>
         <h3 class="text-lg font-semibold text-ink">Update Available</h3>
@@ -10,7 +10,7 @@
         <strong>TermDrop v{{ version }}</strong> is now available.
       </p>
 
-      <div v-if="notes" class="bg-canvas rounded p-3 mb-4 max-h-40 overflow-y-auto text-xs text-ink-2 leading-relaxed">
+      <div v-if="notes" class="bg-canvas rounded-sm p-3 mb-4 max-h-40 overflow-y-auto text-xs text-ink-2 leading-relaxed">
         <pre class="whitespace-pre-wrap font-mono">{{ notes }}</pre>
       </div>
 
@@ -27,12 +27,12 @@
       <div class="flex justify-end gap-2">
         <button
           @click="$emit('close')"
-          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded-sm"
           :disabled="downloading"
         >Later</button>
         <button
           @click="install"
-          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded disabled:opacity-50"
+          class="px-4 py-2 text-sm bg-accent-solid hover:bg-accent-solid-hover text-white rounded-sm disabled:opacity-50"
           :disabled="downloading"
         >{{ downloading ? 'Installing...' : 'Download & Install' }}</button>
       </div>

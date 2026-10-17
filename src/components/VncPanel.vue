@@ -11,19 +11,19 @@
       <template #badges>
         <span
           v-if="info?.tunnelled"
-          class="px-1.5 py-0.5 rounded text-2xs bg-active text-syn-cyan"
+          class="px-1.5 py-0.5 rounded-sm text-2xs bg-active text-syn-cyan"
         >
           tunnelled
         </span>
         <span
           v-if="viewOnly"
-          class="px-1.5 py-0.5 rounded text-2xs bg-warn-bg text-warn"
+          class="px-1.5 py-0.5 rounded-sm text-2xs bg-warn-bg text-warn"
         >
           view only
         </span>
         <span
           v-if="showStats"
-          class="px-1.5 py-0.5 rounded text-2xs bg-raised text-ink-3 tabular-nums"
+          class="px-1.5 py-0.5 rounded-sm text-2xs bg-raised text-ink-3 tabular-nums"
           :title="statsHint"
         >
           {{ stats.fps }}fps · {{ stats.gap }}ms gap · {{ stats.paint }}ms paint ·
@@ -60,10 +60,10 @@
 
     <div
       v-if="error"
-      class="m-3 p-3 rounded border border-bad-line bg-bad-bg text-bad text-xs flex items-start gap-3"
+      class="m-3 p-3 rounded-sm border border-bad-line bg-bad-bg text-bad text-xs flex items-start gap-3"
     >
       <span class="flex-1">{{ error }}</span>
-      <button class="px-2 py-1 rounded bg-raised text-ink hover:bg-input" @click="connect">
+      <button class="px-2 py-1 rounded-sm bg-raised text-ink hover:bg-input" @click="connect">
         Reconnect
       </button>
     </div>
@@ -82,7 +82,7 @@
         v-show="connected && !connecting"
         ref="canvasEl"
         tabindex="0"
-        class="block outline-none"
+        class="block outline-hidden"
         :class="[scale >= 1 ? 'pixelated' : '', hasFocus ? 'ring-1 ring-accent' : '']"
         :style="{
           width: cssW + 'px',

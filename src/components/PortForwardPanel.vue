@@ -23,11 +23,11 @@
       />
 
       <div v-for="fw in forwards" :key="fw.id" class="mb-2">
-        <div class="bg-surface rounded p-2 border border-line">
+        <div class="bg-surface rounded-sm p-2 border border-line">
           <div class="flex items-center justify-between mb-1">
             <span class="text-xs font-medium text-ink truncate">{{ fw.name }}</span>
             <span
-              class="text-2xs px-1.5 py-0.5 rounded font-medium"
+              class="text-2xs px-1.5 py-0.5 rounded-sm font-medium"
               :class="activeStatus[fw.id] ? 'bg-good/20 text-good' : 'bg-input text-ink-2'"
             >
               {{ activeStatus[fw.id] ? 'Active' : 'Stopped' }}
@@ -49,20 +49,20 @@
             <button
               v-if="!activeStatus[fw.id]"
               @click="startForward(fw.id)"
-              class="flex-1 text-2xs bg-accent-solid hover:bg-accent-solid-hover text-white py-1 rounded transition-colors"
+              class="flex-1 text-2xs bg-accent-solid hover:bg-accent-solid-hover text-white py-1 rounded-sm transition-colors"
             >
               Start
             </button>
             <button
               v-else
               @click="stopForward(fw.id)"
-              class="flex-1 text-2xs bg-input hover:bg-active text-ink py-1 rounded transition-colors"
+              class="flex-1 text-2xs bg-input hover:bg-active text-ink py-1 rounded-sm transition-colors"
             >
               Stop
             </button>
             <button
               @click="editForward(fw)"
-              class="text-2xs bg-input hover:bg-input-hover text-ink-2 hover:text-ink py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-input hover:bg-input-hover text-ink-2 hover:text-ink py-1 px-2 rounded-sm transition-colors"
               title="Edit"
             >
               <Pencil :size="10" />
@@ -70,14 +70,14 @@
             <button
               v-if="activeStatus[fw.id] && fw.kind === 'local'"
               @click="openForward(fw)"
-              class="text-2xs bg-accent-solid/10 hover:bg-accent-solid/20 text-accent-soft py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-accent-solid/10 hover:bg-accent-solid/20 text-accent-soft py-1 px-2 rounded-sm transition-colors"
               title="Open in browser"
             >
               <ExternalLink :size="10" />
             </button>
             <button
               @click="deleteForward(fw.id)"
-              class="text-2xs bg-bad/10 hover:bg-bad/20 text-bad py-1 px-2 rounded transition-colors"
+              class="text-2xs bg-bad/10 hover:bg-bad/20 text-bad py-1 px-2 rounded-sm transition-colors"
             >
               <Trash2 :size="10" />
             </button>

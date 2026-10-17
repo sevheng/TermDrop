@@ -9,7 +9,7 @@
           @input="$emit('update:pattern', $event.target.value)"
           @keyup.enter="$emit('search')"
           placeholder="Match pattern, e.g. user:*"
-          class="w-full bg-input text-ink text-xs rounded pl-7 pr-2 py-1 outline-none focus:ring-1 focus:ring-accent"
+          class="w-full bg-input text-ink text-xs rounded-sm pl-7 pr-2 py-1 outline-hidden focus:ring-1 focus:ring-accent"
         />
       </div>
       <SelectMenu
@@ -20,7 +20,7 @@
       />
       <button
         @click="$emit('search')"
-        class="text-xs px-2 py-1 rounded bg-accent-solid hover:bg-accent-solid-hover text-white"
+        class="text-xs px-2 py-1 rounded-sm bg-accent-solid hover:bg-accent-solid-hover text-white"
       >
         Search
       </button>
@@ -100,7 +100,7 @@
         <button
           :disabled="!canGoBack || loading"
           @click="$emit('back')"
-          class="px-2 py-0.5 rounded hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent"
+          class="px-2 py-0.5 rounded-sm hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent"
         >
           ‹ prev
         </button>
@@ -108,7 +108,7 @@
         <button
           :disabled="!hasNext || loading"
           @click="$emit('forward')"
-          class="px-2 py-0.5 rounded hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent"
+          class="px-2 py-0.5 rounded-sm hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent"
         >
           next ›
         </button>

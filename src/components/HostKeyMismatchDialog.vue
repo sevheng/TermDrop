@@ -10,7 +10,7 @@
     somewhere else -- remove the entry, then verify the new key out of band.
   -->
   <ModalShell
-    @close="$emit('close')" :show="show" dim="bg-black/70" z="z-50" panel-class="p-6 w-[34rem] shadow-xl">
+    @close="$emit('close')" :show="show" dim="bg-black/70" z="z-50" panel-class="p-6 w-136 shadow-xl">
       <div class="flex items-start gap-3 mb-4">
         <ShieldAlert :size="20" class="text-bad shrink-0 mt-0.5" />
         <div>
@@ -22,20 +22,20 @@
       </div>
 
       <pre
-        class="rounded border border-bad-line bg-bad-bg p-3 mb-5 text-xs text-ink font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
+        class="rounded-sm border border-bad-line bg-bad-bg p-3 mb-5 text-xs text-ink font-mono whitespace-pre-wrap wrap-break-word max-h-64 overflow-y-auto"
       >{{ info.message }}</pre>
 
       <div class="flex justify-end gap-2">
         <button
           @click="copyDetails"
-          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded hover:bg-raised transition-colors"
+          class="px-4 py-2 text-sm text-ink-2 hover:text-ink rounded-sm hover:bg-raised transition-colors"
         >
           Copy details
         </button>
         <button
           ref="closeEl"
           @click="$emit('close')"
-          class="px-4 py-2 text-sm text-white rounded bg-bad-solid hover:opacity-90 transition-colors"
+          class="px-4 py-2 text-sm text-white rounded-sm bg-bad-solid hover:opacity-90 transition-colors"
         >
           Close
         </button>

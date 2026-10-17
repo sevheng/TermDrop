@@ -9,8 +9,8 @@
       aria-haspopup="listbox"
       :disabled="disabled"
       :class="[
-        'flex items-center gap-2 rounded bg-input text-ink border border-line',
-        'hover:border-line focus:outline-none focus:ring-1 focus:ring-accent',
+        'flex items-center gap-2 rounded-sm bg-input text-ink border border-line',
+        'hover:border-line focus:outline-hidden focus:ring-1 focus:ring-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed transition-colors',
         block ? 'w-full justify-between' : '',
         SIZES[size].trigger,
@@ -40,7 +40,7 @@
       role="listbox"
       tabindex="-1"
       :aria-activedescendant="active >= 0 ? `${listId}-${active}` : undefined"
-      class="fixed z-[200] overflow-y-auto rounded border border-line bg-overlay shadow-xl py-1"
+      class="fixed z-200 overflow-y-auto rounded-sm border border-line bg-overlay shadow-xl py-1"
       :style="{ top: `${pos.top}px`, left: `${pos.left}px`, width: `${pos.width}px`, maxHeight: `${pos.maxHeight}px` }"
       @keydown="onListKey"
     >
@@ -89,7 +89,7 @@
  * move, Enter and Space choose, Escape closes without changing anything, and
  * typing jumps to a matching option.
  */
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, useId } from 'vue'
 import { ChevronDown, Check } from 'lucide-vue-next'
 import {
   nextEnabledIndex,
@@ -141,8 +141,9 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'change'])
 
-let seq = 0
-const listId = `select-${(seq += 1)}-${Math.random().toString(36).slice(2, 7)}`
+// The counter this replaced lived inside <script setup>, so it restarted at
+// 1 for every instance; useId is unique per app.
+const listId = `select-${useId()}`
 
 const open = ref(false)
 const active = ref(-1)

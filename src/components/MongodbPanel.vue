@@ -22,7 +22,7 @@
         <button
           @click="backup.backupFolder"
           :disabled="!canBackup"
-          class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors"
+          class="px-2.5 py-1 text-xs rounded-sm flex items-center gap-1.5 transition-colors"
           :class="canBackup
             ? 'bg-accent-solid hover:bg-accent-solid-hover text-white'
             : 'bg-input text-ink-3 cursor-not-allowed'"
@@ -34,7 +34,7 @@
         <button
           @click="backup.backupArchive"
           :disabled="!canBackup"
-          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded-sm text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
           title="Back up to a single archive file"
         >
           Archive
@@ -45,7 +45,7 @@
         <button
           @click="backup.restoreFolder"
           :disabled="backup.busy.value"
-          class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 bg-mongo-solid hover:bg-mongo-solid-hover text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2.5 py-1 text-xs rounded-sm flex items-center gap-1.5 bg-mongo-solid hover:bg-mongo-solid-hover text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Restore from a backup folder"
         >
           <Upload :size="12" />
@@ -54,7 +54,7 @@
         <button
           @click="backup.restoreFile"
           :disabled="backup.busy.value"
-          class="px-2 py-1 text-xs rounded text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-2 py-1 text-xs rounded-sm text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
           title="Restore from an archive file"
         >
           From file

@@ -1,10 +1,10 @@
 <template>
   <ModalShell
-    @close="$emit('cancel')" :show="state.show" z="z-[100]" panel-class="p-6 w-[32rem] shadow-xl">
+    @close="$emit('cancel')" :show="state.show" z="z-100" panel-class="p-6 w-lg shadow-xl">
     <h3 class="text-base font-medium text-ink mb-1">Restore into {{ connectionName }}</h3>
     <p class="text-xs text-ink-2 mb-4 break-all">{{ state.path }}</p>
 
-    <div v-if="state.header" class="bg-canvas rounded p-3 mb-4 text-xs space-y-1">
+    <div v-if="state.header" class="bg-canvas rounded-sm p-3 mb-4 text-xs space-y-1">
       <div class="flex justify-between">
         <span class="text-ink-2">Taken from</span>
         <span class="text-ink">{{ state.header.source }}</span>
@@ -68,13 +68,13 @@
     <div class="flex justify-end gap-2">
       <button
         @click="$emit('cancel')"
-        class="px-3 py-1.5 text-xs rounded text-ink hover:bg-input"
+        class="px-3 py-1.5 text-xs rounded-sm text-ink hover:bg-input"
       >
         Cancel
       </button>
       <button
         @click="$emit('confirm')"
-        class="px-3 py-1.5 text-xs rounded text-white"
+        class="px-3 py-1.5 text-xs rounded-sm text-white"
         :class="state.flushFirst ? 'bg-bad-solid-hover hover:bg-bad-solid' : 'bg-accent-solid hover:bg-accent-solid-hover'"
       >
         {{ state.flushFirst ? 'Empty and restore' : 'Restore' }}

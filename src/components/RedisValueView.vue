@@ -96,7 +96,7 @@
           v-if="!page.done || canPageByOffset"
           :disabled="loading"
           @click="$emit('more')"
-          class="px-2 py-0.5 rounded hover:bg-raised disabled:opacity-40"
+          class="px-2 py-0.5 rounded-sm hover:bg-raised disabled:opacity-40"
         >
           Load more
         </button>

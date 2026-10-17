@@ -3,7 +3,7 @@
   <div
     v-if="editorModal.show"
     ref="editorModalRef"
-    class="fixed z-50 bg-surface border border-line rounded shadow-xl flex flex-col"
+    class="fixed z-50 bg-surface border border-line rounded-sm shadow-xl flex flex-col"
     :style="{ left: editorModal.x + 'px', top: editorModal.y + 'px', width: editorModal.width + 'px', height: editorModal.height + 'px', minWidth: '400px', minHeight: '250px' }"
   >
     <!-- Draggable title bar -->
@@ -18,14 +18,14 @@
       <div class="flex items-center gap-1.5 shrink-0">
         <button
           @click.stop="editorModal.wordWrap = !editorModal.wordWrap"
-          class="text-2xs px-1.5 py-0.5 rounded"
+          class="text-2xs px-1.5 py-0.5 rounded-sm"
           :class="editorModal.wordWrap ? 'bg-accent-solid text-white' : 'bg-input text-ink-2 hover:text-ink'"
           title="Toggle word wrap"
         >↵ Wrap</button>
         <button
           @click.stop="onEditorSave"
           :disabled="editorModal.saving || !editorModal.dirty"
-          class="text-xs px-2.5 py-1 rounded font-medium"
+          class="text-xs px-2.5 py-1 rounded-sm font-medium"
           :class="editorModal.dirty ? 'bg-good-solid hover:bg-good-solid-hover text-white' : 'bg-input text-ink-2 cursor-not-allowed'"
         >
           {{ editorModal.saving ? 'Saving...' : 'Save' }}
@@ -53,7 +53,7 @@
           @input="onEditorInput"
           @keydown="onEditorKeydown"
           @scroll="syncEditorScroll"
-          class="flex-1 bg-canvas text-ink text-xs font-mono p-3 resize-none focus:outline-none leading-5"
+          class="flex-1 bg-canvas text-ink text-xs font-mono p-3 resize-none focus:outline-hidden leading-5"
           :class="editorModal.wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'"
           spellcheck="false"
         ></textarea>

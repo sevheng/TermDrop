@@ -12,14 +12,14 @@
       <template #badges>
         <span
           v-if="serverInfo?.tunnelled"
-          class="text-2xs px-1.5 py-0.5 rounded bg-active text-syn-cyan shrink-0"
+          class="text-2xs px-1.5 py-0.5 rounded-sm bg-active text-syn-cyan shrink-0"
           :title="`Tunnelled through ${tunnelHostName}`"
         >
           via {{ tunnelHostName }}
         </span>
         <span
           v-if="isCluster"
-          class="text-2xs px-1.5 py-0.5 rounded bg-warn-bg text-warn-soft shrink-0"
+          class="text-2xs px-1.5 py-0.5 rounded-sm bg-warn-bg text-warn-soft shrink-0"
           title="SCAN sees only this node, so the key list is one node's keyspace and backup is disabled"
         >
           cluster
@@ -32,14 +32,14 @@
           :disabled="busy || !serverInfo || isCluster"
           :title="isCluster ? 'A cluster backup would cover only this node' : ''"
           @click="backup.backup(pattern)"
-          class="text-xs px-2 py-1 rounded text-ink hover:bg-raised disabled:opacity-40"
+          class="text-xs px-2 py-1 rounded-sm text-ink hover:bg-raised disabled:opacity-40"
         >
           Back up
         </button>
         <button
           :disabled="busy || !serverInfo"
           @click="backup.chooseRestoreFile()"
-          class="text-xs px-2 py-1 rounded text-ink hover:bg-raised disabled:opacity-40"
+          class="text-xs px-2 py-1 rounded-sm text-ink hover:bg-raised disabled:opacity-40"
         >
           Restore
         </button>
@@ -52,7 +52,7 @@
       class="flex items-center gap-3 px-3 py-2 border-b border-line shrink-0"
     >
       <span class="text-xs text-ink shrink-0">{{ currentAction }}</span>
-      <div class="flex-1 h-1.5 bg-input rounded overflow-hidden">
+      <div class="flex-1 h-1.5 bg-input rounded-sm overflow-hidden">
         <div
           class="h-full bg-accent-solid transition-all"
           :style="{ width: `${progress?.percent ?? 0}%` }"
@@ -63,7 +63,7 @@
       </span>
       <button
         @click="backup.cancel()"
-        class="text-xs px-2 py-0.5 rounded text-bad hover:bg-input shrink-0"
+        class="text-xs px-2 py-0.5 rounded-sm text-bad hover:bg-input shrink-0"
       >
         Cancel
       </button>
@@ -78,7 +78,7 @@
       <p class="text-xs text-bad flex-1">{{ connectError }}</p>
       <button
         @click="connect"
-        class="text-xs px-2 py-0.5 rounded text-ink hover:bg-input shrink-0"
+        class="text-xs px-2 py-0.5 rounded-sm text-ink hover:bg-input shrink-0"
       >
         Reconnect
       </button>
