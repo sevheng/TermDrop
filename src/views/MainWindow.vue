@@ -683,6 +683,11 @@ onMounted(() => {
     // the fallback.
     const idle = window.requestIdleCallback || (cb => setTimeout(cb, 200))
     idle(() => loadTerminalTab())
+    // The terminal benchmark (docs/terminal-io-plan.md): dev builds only, and
+    // only when asked for, so Vite drops it from release builds.
+    if (import.meta.env.DEV && import.meta.env.VITE_TERM_PERF) {
+      import('../dev/termPerf.js').then(m => m.runTermPerf(store))
+    }
   })
 
   window.addEventListener('keydown', onKeyDown)

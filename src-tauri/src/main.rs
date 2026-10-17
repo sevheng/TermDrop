@@ -884,6 +884,26 @@ async fn local_connect(
     Ok(session_id)
 }
 
+/// Debug builds only: the terminal benchmark (`src/dev/termPerf.js`) hands its
+/// results here, since a webview has no other way to write a file. Not
+/// registered in release builds at all.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_perf_report(name: String, report: String) -> Result<String, String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("report name must be [A-Za-z0-9-]".into());
+    }
+    let dir = dirs::data_dir()
+        .ok_or("no data dir")?
+        .join("termdrop")
+        .join("perf");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", name));
+    std::fs::write(&path, report).map_err(|e| e.to_string())?;
+    info!(path = %path.display(), "terminal perf report written");
+    Ok(path.display().to_string())
+}
+
 #[tauri::command]
 fn ssh_write(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -2991,6 +3011,8 @@ fn main() {
             store_password,
             ssh_connect,
             ssh_write,
+            #[cfg(debug_assertions)]
+            dev_perf_report,
             ssh_resize,
             open_data_channel,
             open_exec_pty_data_channel,

@@ -157,14 +157,25 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
    */
   function openDataChannel(command, args) {
     const channel = new Channel()
+    // Dev builds only: the terminal benchmark (src/dev/termPerf.js) watches
+    // every message and when xterm has processed it. Vite strips this branch
+    // from release builds.
+    const perf = import.meta.env.DEV ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term) : null
     channel.onmessage = (message) => {
       // Handle various possible data formats from Tauri Channel
+      let data = null
       if (message instanceof Uint8Array) {
-        term.write(message)
+        data = message
       } else if (Array.isArray(message)) {
-        term.write(new Uint8Array(message))
+        data = new Uint8Array(message)
       } else if (typeof message === 'string') {
-        term.write(message)
+        data = message
+      }
+      if (data === null) return
+      if (perf) {
+        term.write(data, () => perf.processed(data))
+      } else {
+        term.write(data)
       }
     }
     invoke(command, { ...args, channel }).catch(() => {})
