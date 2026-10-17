@@ -125,6 +125,18 @@ Output locations:
 - macOS: `src-tauri/target/release/bundle/dmg/*.dmg`
 - Linux: `src-tauri/target/release/bundle/appimage/*.AppImage` or `*.deb`
 
+### README Screenshots
+
+The screenshots, demo GIF and social preview in `.github/assets/` are generated, not hand-captured. If your change affects how one of them looks, regenerate them:
+
+```bash
+npm run screenshots                     # everything (about 90 seconds)
+npm run screenshots -- redis mongodb    # just these screenshot scenes
+npm run screenshots -- --only gif       # just the demo GIF (or screens, card)
+```
+
+This runs the built frontend in headless Chrome against `scripts/screenshots/demo-backend.js`, a stand-in for the Tauri backend with fictional hosts and data, so nothing from your own machine can end up in an image. It needs Chrome or Chromium (or `CHROME_PATH`), ImageMagick and pngquant, plus ffmpeg for the GIF. Scenes are defined in `scripts/screenshots/scenes.mjs`.
+
 ---
 
 ## Project Structure
