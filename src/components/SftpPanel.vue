@@ -369,7 +369,7 @@ const sortedFiles = computed(() => {
     if (a.is_dir !== b.is_dir) {
       return a.is_dir ? -1 : 1
     }
-    let cmp = 0
+    let cmp
     switch (sortKey.value) {
       case 'size':
         cmp = (a.size || 0) - (b.size || 0)

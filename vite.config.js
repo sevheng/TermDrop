@@ -8,17 +8,18 @@ export default defineConfig(async () => ({
   plugins: [vue()],
 
   build: {
-    rollupOptions: {
+    // Vite 8 bundles with Rolldown, which has no object-form manualChunks.
+    // The same two chunks are expressed as code-splitting groups.
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          xterm: [
-            "@xterm/xterm",
-            "@xterm/addon-fit",
-            "@xterm/addon-search",
-            "@xterm/addon-canvas",
-            "@xterm/addon-web-links",
+        codeSplitting: {
+          groups: [
+            { name: "xterm", test: /[\\/]node_modules[\\/]@xterm[\\/]/ },
+            {
+              name: "vendor",
+              test: /[\\/]node_modules[\\/](vue|@vue|pinia|lucide-vue-next)[\\/]/,
+            },
           ],
-          vendor: ["vue", "pinia", "lucide-vue-next"],
         },
       },
     },

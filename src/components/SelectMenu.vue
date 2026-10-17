@@ -89,7 +89,7 @@
  * move, Enter and Space choose, Escape closes without changing anything, and
  * typing jumps to a matching option.
  */
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, useId } from 'vue'
 import { ChevronDown, Check } from 'lucide-vue-next'
 import {
   nextEnabledIndex,
@@ -141,8 +141,9 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'change'])
 
-let seq = 0
-const listId = `select-${(seq += 1)}-${Math.random().toString(36).slice(2, 7)}`
+// The counter this replaced lived inside <script setup>, so it restarted at
+// 1 for every instance; useId is unique per app.
+const listId = `select-${useId()}`
 
 const open = ref(false)
 const active = ref(-1)
