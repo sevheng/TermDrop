@@ -1,261 +1,229 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128@2x.png" width="112" height="112" alt="TermDrop icon">
+
 # TermDrop
 
-> A fast, native SSH client, SFTP browser and datastore console built with
-> [Tauri](https://tauri.app/) v2.
+**SSH, SFTP, Docker, MongoDB, Redis and remote desktops — one fast native app.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri)](https://tauri.app/)
-[![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js)](https://vuejs.org/)
-[![Rust](https://img.shields.io/badge/Rust-000000?logo=rust)](https://www.rust-lang.org/)
+A desktop client for the servers and datastores you look after, built with
+[Tauri](https://tauri.app/) and Rust. Free and open source.
 
-**Windows** · **macOS** · **Linux**
+[![Latest release](https://img.shields.io/github/v/release/sevheng/TermDrop?label=release&color=3B9EFF)](https://github.com/sevheng/TermDrop/releases/latest)
+[![CI](https://github.com/sevheng/TermDrop/actions/workflows/ci.yml/badge.svg)](https://github.com/sevheng/TermDrop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-555)
+
+[**Download**](#download) · [Features](#features) · [Build from source](#build-from-source) · [Contributing](#contributing)
+
+<br>
+
+<img src=".github/assets/demo.gif" width="880" alt="TermDrop demo: opening an SSH host, browsing files over SFTP, checking Docker and a security audit, then a Redis key and a MongoDB collection">
+
+</div>
 
 ---
 
-<!--
-## Screenshots
+## Why TermDrop
 
-> TODO: Add screenshots
+Most days on a server mean juggling a terminal, an SFTP client, a database GUI,
+a Redis browser and a VNC viewer — each with its own host list, its own copy of
+your credentials and no idea that the box is behind a bastion. TermDrop keeps
+them in one window that knows your hosts, your jump hosts and your keys.
 
-Recommended captures:
-1. **Terminal view** — multi-tab SSH session with ANSI colors
-2. **SFTP browser** — file list with breadcrumbs and sorting
-3. **MongoDB browser** — database tree beside the document table
-4. **Redis browser** — keyspace tree with a type-aware value view
-5. **Host manager** — grouped host list with search
-6. **Docker panel** — container list with controls
-7. **Settings panel** — appearance and font size options
-8. **Keyboard shortcuts** — help overlay
--->
+- **Native and light.** A Rust backend and the system webview, not a bundled browser.
+- **Local-first.** No account, no cloud sync, no telemetry. Passwords live in your OS keyring.
+- **Safe by default.** Host keys are verified before any password is sent, and datastore browsing is read-only.
 
 ## Features
 
-### SSH Terminal
-- **Multi-tab** terminal powered by [xterm.js](https://xtermjs.org/) with full ANSI color support
-- **In-terminal search** (`Ctrl + F`)
-- **Copy and select-all** shortcuts (`Ctrl + Shift + C / A`); paste from the
-  right-click menu
-- **Reconnect** button when a session drops, restoring the terminal and its SFTP session
+<table>
+<tr>
+<td width="50%" valign="top">
 
-### SFTP Browser
-- **Visual file browser** with breadcrumb navigation
-- **Upload, download, rename, delete** files and folders
-- **Create folders** and **recursive delete**
-- **Sort** by name, size, or modified date
-- **Drag & drop** file uploads
-- **Copy remote path** to clipboard
-- **Progress bars** for active transfers
+### SSH terminal + SFTP
 
-### MongoDB Browse, Backup & Restore
-- **Browse** — click a collection to read its documents beside the tree, as a
-  table or as JSON, with a filter, sort and pagination. Read-only
-- **Backup** — dump selected collections to a compressed folder or a single
-  archive file
-- **Restore** — load a backup folder or archive back into the connection
-- **Database-level** checkbox to select all collections at once
-- **Bundled MongoDB Database Tools** — no external installation required
+Multi-tab terminal with full colour, search and reconnect, with an SFTP browser
+beside it for uploads, downloads and drag-and-drop. A live status bar shows
+load, memory, disk and network for the host.
 
-### Redis Browse, Backup & Restore
-- **Browse** — databases and their key counts on the left, keys grouped by their
-  `:` prefix. A `MATCH` pattern and a type filter narrow the `SCAN` itself, not
-  just the list on screen. Read-only: there is no command console and no edit path
-- **Type-aware viewers** for strings, hashes, lists, sets, sorted sets and
-  streams, each showing TTL, encoding and size
-- **Nothing can stall a server** — every read is a `SCAN` variant or an explicit
-  range, never `KEYS`, `HGETALL`, `SMEMBERS` or `LRANGE key 0 -1`, so a
-  ten-million-element set opens as fast as an empty one and a 5 MB string is
-  previewed rather than fetched whole
-- **Backup and restore** to a `.tdredis` file, per key via `DUMP`/`RESTORE` — so
-  it works on managed Redis where `SYNC` and `BGSAVE` are blocked. TTLs are kept
-  as remaining time, and a truncated or damaged file is refused rather than
-  half-restored
-- **Optional SSH tunnel** — reach a Redis that listens only on a private network
-  through an SSH host already saved in TermDrop
-- **Binary-safe keys** — a key that is not valid UTF-8 is carried as its exact
-  bytes and shown as base64, so it can still be opened, backed up and restored
+</td>
+<td width="50%" valign="top">
 
-### Host Management
-- **Save and organize** unlimited SSH hosts, MongoDB and Redis connections
-- **Groups** and **favorites** for quick access
-- **Search** hosts by name, address, username, or group
-- **Password** or **SSH key** authentication
-- **Import / export** host list as JSON
-- **OS keyring** password storage — secure and local
+<img src=".github/assets/screenshots/terminal-dark.png" alt="SSH terminal with an SFTP file browser beside it">
 
-### Port Forwarding
-- **Local port forward** — tunnel remote services to local ports
-- **Dynamic SOCKS proxy** — browser-through-SSH support
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-### Server Management (via SSH)
-- **Docker** container list with start/stop/restart/logs/shell access
-- **Security audit** — automated checks for common misconfigurations
-- **System stats** — CPU, memory, disk, network, and process overview
+<img src=".github/assets/screenshots/docker.png" alt="Docker containers listed beside the terminal">
 
-### UI & Customization
-- **Light & dark** themes, chosen in Settings and previewed as you pick — the
-  terminal follows the app, so a light window no longer frames a black terminal
-- **Bundled typefaces** — IBM Plex Sans for the interface and JetBrains Mono for
-  the terminal, so the app looks the same on every platform rather than falling
-  back to whatever the OS supplies
-- **Readable everywhere** — every piece of text meets the WCAG AA contrast
-  standard on every background, in both themes
-- **Keyboard navigable** — arrow keys move through the host list, focus is
-  visible wherever it lands, and dialogs keep Tab inside them and close on Escape
-- **Adjustable** terminal font size
-- **Resizable** sidebar and panels
-- **Keyboard shortcuts** help overlay
-- **Toast notifications** for errors and successes
-- **Auto-updater** — check for and install new releases automatically
+</td>
+<td width="50%" valign="top">
 
----
+### Docker, processes and a security audit
+
+Start, stop and restart containers, follow their logs or open a shell in one.
+Expand the status bar for processes, listening ports and disk usage. The
+security audit checks a host for common misconfigurations and offers the
+command to investigate each one.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### MongoDB
+
+Browse databases and collections, read documents as a table or as JSON with a
+filter, sort and paging, and back up or restore collections with the bundled
+MongoDB Database Tools — nothing to install.
+
+</td>
+<td width="50%" valign="top">
+
+<img src=".github/assets/screenshots/mongodb.png" alt="MongoDB collection browser showing an orders table">
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+<img src=".github/assets/screenshots/redis.png" alt="Redis keyspace grouped by prefix, with a hash value shown">
+
+</td>
+<td width="50%" valign="top">
+
+### Redis
+
+Keys grouped by prefix, type-aware viewers with TTL and encoding, and backup to
+a portable file that works even on managed Redis. Every read is a bounded
+`SCAN` — browsing can never stall a production server.
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary><b>More screenshots</b> — security audit, system panel, tunnels, light theme, local shells</summary>
+<br>
+
+| | |
+|---|---|
+| <img src=".github/assets/screenshots/security.png" alt="Security audit with a score and individual checks"> | <img src=".github/assets/screenshots/system-panel.png" alt="Expanded system panel listing processes"> |
+| **Security audit** — a score plus each check, with the command to dig in | **System panel** — processes, network and disk for the host |
+| <img src=".github/assets/screenshots/tunnels.png" alt="Port forwarding rules for a host"> | <img src=".github/assets/screenshots/terminal-light.png" alt="The app in its light theme"> |
+| **Port forwarding** — local forwards and a SOCKS proxy, per host | **Light theme** — the terminal follows the app |
+| <img src=".github/assets/screenshots/local-shells.png" width="320" alt="Menu listing local shells: zsh, bash, fish"> | <img src=".github/assets/screenshots/add-host-light.png" width="320" alt="The Add Host dialog"> |
+| **Local terminal** — your own shells and WSL distros, beside your servers | **Add a host** — password or key, optionally through a jump host |
+
+</details>
+
+### Everything it does
+
+**Connect**
+- Save SSH hosts, MongoDB and Redis connections and remote desktops, in groups and favourites, with search
+- Password or SSH key authentication; import hosts from `~/.ssh/config` or a JSON export
+- **Jump hosts** — reach servers behind a bastion, like OpenSSH's `ProxyJump`
+- **Host key verification** before any credential is sent, honouring your `~/.ssh/known_hosts`
+
+**Work on a server**
+- Multi-tab xterm.js terminal: search, copy shortcuts, reconnect that keeps the tab and its SFTP session
+- **Local terminal** (`Ctrl + Shift + T`) — zsh, bash, PowerShell, cmd, Git Bash or any WSL distro, beside your SSH tabs
+- SFTP: browse, upload, download, rename, delete, create folders, drag-and-drop, transfer progress
+- Docker: containers, start/stop/restart, logs and exec shells
+- System stats, processes, ports and disk; a security audit with suggested commands
+- Port forwarding: local forwards and a dynamic SOCKS proxy
+
+**Datastores and desktops**
+- **MongoDB** — browse (read-only), back up to a folder or archive, restore
+- **Redis** — browse (read-only) with bounded `SCAN`s, binary-safe keys, backup and restore to `.tdredis`, optional SSH tunnel
+- **Remote desktop** — VNC and macOS Screen Sharing in a tab, directly or through an SSH host
+
+**Everyday**
+- Light and dark themes; bundled IBM Plex Sans and JetBrains Mono so it looks the same everywhere
+- Every text colour meets WCAG AA contrast; fully keyboard navigable
+- Desktop notifications when a long backup or restore finishes
+- Built-in updater
 
 ## Download
 
-Pre-built bundles are available on [GitHub Releases](https://github.com/sevheng/TermDrop/releases):
+Grab the latest build from [**GitHub Releases**](https://github.com/sevheng/TermDrop/releases/latest).
 
-| Platform | Format |
-|----------|--------|
-| Windows | `.msi` installer |
-| macOS | `.dmg` disk image |
-| Linux | `.AppImage` or `.deb` package |
+| Platform | File | Requirements |
+|----------|------|--------------|
+| **Windows** | `TermDrop_<version>_x64_en-US.msi` | Windows 10 or 11, x64 |
+| **macOS** | `TermDrop_<version>_aarch64.dmg` | macOS 11 Big Sur or later, Apple Silicon |
+| **Linux** | `TermDrop_<version>_amd64.AppImage` or `.deb` | x86-64; built on Ubuntu 22.04 |
 
-> No releases yet? Build from source below.
+Updates are signed and offered from inside the app.
 
----
+## Security and privacy
 
-## Development
+- Passwords never touch the local database: they go to the OS keyring, or to an AES-GCM encrypted file when no keyring is available
+- Server host keys are checked before authentication; a changed key stops the connection
+- Commands the security audit suggests are fixed strings, never built from server output, and are only typed at the prompt — you review them and press Enter yourself
+- Host exports and backups carry no passwords
+- No account, no cloud sync, no telemetry, no analytics
 
-### Prerequisites
+Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 
-- [Node.js](https://nodejs.org/) 24 (see `.nvmrc`)
-- [Rust](https://rustup.rs/) stable
+## Build from source
 
-On Linux, Tauri also needs:
+**Prerequisites:** [Node.js](https://nodejs.org/) 24.15+ (see `.nvmrc`) and [Rust](https://rustup.rs/) stable. On Linux, Tauri also needs:
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 ```
 
-### Run locally
-
 ```bash
+git clone https://github.com/sevheng/TermDrop.git
+cd TermDrop
 npm install
-npm run tauri dev
+npm run tauri dev      # run with hot reload
+npm run tauri build    # bundles to src-tauri/target/release/bundle/
 ```
 
-### Checks
-
-The same gate CI runs on every push and pull request:
+The same checks CI runs on every push and pull request:
 
 ```bash
-npm run lint && npm test          # eslint, then vitest
-cd src-tauri
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+npm run lint && npm test
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-### Build
-
-```bash
-npm run tauri build
-```
-
-Output:
-- Windows: `src-tauri/target/release/bundle/msi/*.msi`
-- macOS: `src-tauri/target/release/bundle/dmg/*.dmg`
-- Linux: `src-tauri/target/release/bundle/appimage/*.AppImage` or `*.deb`
-
----
-
-## Keyboard Shortcuts
-
-### Terminal
+<details>
+<summary><b>Keyboard shortcuts</b></summary>
+<br>
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl + F` | Find in terminal |
-| `Ctrl + Shift + C` | Copy selection |
-| `Ctrl + Shift + A` | Select all |
-| `Esc` | Close the find bar |
-| Right-click | Copy, paste and terminal actions |
+| `Ctrl + Shift + T` | New local terminal |
+| `Ctrl + Tab` / `Ctrl + PageDown` | Next tab |
+| `Ctrl + Shift + Tab` / `Ctrl + PageUp` | Previous tab |
+| `Ctrl + W` | Close the active tab |
+| `Ctrl + F` | Find in the terminal |
+| `Ctrl + Shift + C` / `Ctrl + Shift + A` | Copy selection / select all in the terminal |
+| `↑` `↓` `Home` `End` `PageUp` `PageDown` | Move through the host list |
+| `Enter` / `Delete` | Connect to / delete the focused host |
+| `Ctrl/Cmd + Enter` | Run the query in a MongoDB collection |
+| `Ctrl + Alt + Shift` | Release the keyboard from a remote desktop |
+| `Ctrl + Shift + ?` | Show every shortcut |
+| `Esc` | Close the find bar or the active dialog |
 
-### Tabs
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl + Tab` or `Ctrl + PageDown` | Next tab |
-| `Ctrl + Shift + Tab` or `Ctrl + PageUp` | Previous tab |
-| `Ctrl + W` | Close active tab |
-
-### Host List
-
-| Shortcut | Action |
-|----------|--------|
-| `↑` / `↓` | Move through hosts |
-| `Home` / `End` | First / last host |
-| `PageUp` / `PageDown` | Move a page at a time |
-| `Enter` | Connect to the focused host |
-| `Delete` | Delete the focused host |
-
-### SFTP
-
-| Shortcut | Action |
-|----------|--------|
-| Double-click | Open folder |
-| Right-click | File actions |
-| Drag & drop | Upload files |
-
-### MongoDB Panel
-
-| Shortcut | Action |
-|----------|--------|
-| Click a collection | View its documents |
-| Click DB checkbox | Select/deselect all collections for a backup |
-| Ctrl/Cmd+Enter | Run the query, in the document view |
-
-### Redis Panel
-
-| Shortcut | Action |
-|----------|--------|
-| Click a database | Scan its keyspace |
-| Click a key | Show its value, TTL and encoding |
-| `MATCH` box | Narrow the scan itself, not just the list on screen |
-
-### Global
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl + Shift + ?` | Show keyboard shortcuts help |
-| `Ctrl + Tab` or `Ctrl + PageDown` | Next tab |
-| `Ctrl + Shift + Tab` or `Ctrl + PageUp` | Previous tab |
-| `Ctrl + W` | Close active tab |
-| `Esc` | Close the active dialog |
-
----
-
-## Security
-
-- **Passwords never touch the local SQLite database** — they go to the OS
-  keyring, or to an AES-GCM encrypted file when no keyring is available
-- **Backups and host exports carry no passwords**
-- **No cloud sync**, no telemetry, no analytics
-- **All data stays local** on your machine
-- See [`SECURITY.md`](SECURITY.md) for vulnerability disclosure
-
----
+</details>
 
 ## Contributing
 
-Issues and pull requests are welcome!
+Bug reports, ideas and pull requests are welcome.
 
-- Read [`CONTRIBUTING.md`](CONTRIBUTING.md) to get started
-- Read [`SECURITY.md`](SECURITY.md) before reporting security issues
-- See [`CHANGELOG.md`](CHANGELOG.md) for release history
-- Licensed under [MIT](LICENSE)
-
----
+- Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, project layout and conventions
+- Use the [issue forms](https://github.com/sevheng/TermDrop/issues/new/choose) for bugs and feature requests
+- This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md)
+- Release history is in [`CHANGELOG.md`](CHANGELOG.md)
 
 ## License
 
 [MIT](LICENSE) © sevheng
+
+<sub>Screenshots show the real interface with demo data; every hostname and address in them is fictional.</sub>

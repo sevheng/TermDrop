@@ -322,7 +322,7 @@ import { useConnectionStore } from '../stores/connection.js'
 import '@xterm/xterm/css/xterm.css'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
-import { createTerminalInstance, loadTerminalFontSize } from '../composables/useXtermInstance.js'
+import { createTerminalInstance, loadTerminalFont, loadTerminalFontSize } from '../composables/useXtermInstance.js'
 import { useHostStatusPolling } from '../composables/useHostStatusPolling.js'
 
 const props = defineProps({
@@ -572,6 +572,7 @@ async function openDockerPane({ type, containerName, command }) {
   await nextTick()
 
   const fontSize = await loadTerminalFontSize()
+  await loadTerminalFont(fontSize)
   dockerTerminal = createTerminalInstance(dockerPaneContainer.value, { fontSize })
   // The pane only opens from the visible tab, so it can take a context now.
   if (props.isActive && !document.hidden) dockerTerminal.attachGpuRenderer()
@@ -750,6 +751,7 @@ function onVisibilityChange() {
 
 async function initTerminal() {
   const fontSize = await loadTerminalFontSize()
+  await loadTerminalFont(fontSize)
   terminalBgClass.value = 'bg-canvas'
 
   terminal = createTerminalInstance(terminalContainer.value, { fontSize, search: true })

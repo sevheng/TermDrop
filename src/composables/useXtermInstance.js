@@ -24,6 +24,21 @@ const CONTEXT_LOSS_WINDOW_MS = 60_000
 // Logged once per app run, not once per tab.
 let warnedNoWebgl = false
 
+/**
+ * Wait for the bundled terminal font before a terminal is created.
+ *
+ * xterm measures its cell size once, when it opens, and only re-measures on
+ * the next resize. JetBrains Mono is not loaded until something asks for it,
+ * so the first terminal measured the fallback font (15px rows instead of 17px
+ * at 13px), and the first resize then computed its row count from the stale
+ * size and drew past the bottom of its box -- over the system panel when that
+ * was opened.
+ */
+export async function loadTerminalFont(fontSize) {
+  if (typeof document === 'undefined' || !document.fonts) return
+  await document.fonts.load(`${fontSize}px "JetBrains Mono"`).catch(() => {})
+}
+
 /** The saved terminal font size, or the default when unset. */
 export async function loadTerminalFontSize() {
   const setting = await invoke('get_setting', { key: 'font_size' })

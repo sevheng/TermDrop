@@ -2,11 +2,13 @@
 
 ## Supported Versions
 
+Only the latest release receives security fixes. The in-app updater offers it
+automatically.
+
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.3.x   | :white_check_mark: |
-| 0.2.x   | :x:                |
-| 0.1.x   | :x:                |
+| 0.4.x   | :white_check_mark: |
+| < 0.4   | :x:                |
 
 ## Reporting a Vulnerability
 

@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in TermDrop is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. **Security issues go to the
+        email in [SECURITY.md](https://github.com/sevheng/TermDrop/blob/master/SECURITY.md),
+        not here.** Please remove hostnames, IPs, usernames and connection strings
+        from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        1. Open an SSH tab to a host behind a jump host
+        2. Switch to the SFTP panel
+        3. The file list stays empty, expected the home directory
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - SSH terminal
+        - Local terminal
+        - SFTP
+        - Docker / system stats / security audit
+        - Port forwarding / jump hosts
+        - MongoDB
+        - Redis
+        - Remote desktop (VNC / Screen Sharing)
+        - Host list / import / export
+        - Settings / themes / updater
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TermDrop version
+      description: Shown in Settings, or the release you installed.
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "Windows 11 24H2 / macOS 15.1 / Ubuntu 24.04"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The log lives in your data folder under `termdrop/logs/termdrop.log`
+        (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS,
+        `~/.local/share` on Linux). Paste the lines around the problem.
+      render: text

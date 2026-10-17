@@ -30,7 +30,7 @@ Thank you for your interest in contributing to **TermDrop**! This guide covers h
 
 ## Code of Conduct
 
-Be respectful, constructive, and inclusive. We welcome contributors of all experience levels. If you are unsure about anything, open an issue and ask — we are happy to help.
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). In short: be respectful, constructive, and inclusive. We welcome contributors of all experience levels. If you are unsure about anything, open an issue and ask — we are happy to help.
 
 ---
 
@@ -72,7 +72,7 @@ We use the standard fork-and-pull workflow:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 24 or later (see `.nvmrc`)
+- [Node.js](https://nodejs.org/) 24.15 or later (see `.nvmrc`)
 - [Rust](https://rustup.rs/) stable toolchain — CI tracks stable, so a lint that
   a newer release adds will fail there even when it passes locally; run
   `rustup update` before assuming CI is wrong
@@ -124,6 +124,18 @@ Output locations:
 - Windows: `src-tauri/target/release/bundle/msi/*.msi`
 - macOS: `src-tauri/target/release/bundle/dmg/*.dmg`
 - Linux: `src-tauri/target/release/bundle/appimage/*.AppImage` or `*.deb`
+
+### README Screenshots
+
+The screenshots, demo GIF and social preview in `.github/assets/` are generated, not hand-captured. If your change affects how one of them looks, regenerate them:
+
+```bash
+npm run screenshots                     # everything (about 90 seconds)
+npm run screenshots -- redis mongodb    # just these screenshot scenes
+npm run screenshots -- --only gif       # just the demo GIF (or screens, card)
+```
+
+This runs the built frontend in headless Chrome against `scripts/screenshots/demo-backend.js`, a stand-in for the Tauri backend with fictional hosts and data, so nothing from your own machine can end up in an image. It needs Chrome or Chromium (or `CHROME_PATH`), ImageMagick and pngquant, plus ffmpeg for the GIF. Scenes are defined in `scripts/screenshots/scenes.mjs`.
 
 ---
 
