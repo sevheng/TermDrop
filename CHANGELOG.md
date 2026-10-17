@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Dependencies refreshed.**
+  - Tauri 2.12 and its plugins.
+  - Frontend tooling: Vite 8, Vitest 5, ESLint 10, Pinia 4, Tailwind CSS 4.
+  - Terminal: xterm 6.
+  - Rust: rusqlite 0.40, rand 0.10, dirs 7, plus the latest compatible releases of everything else.
+- **Terminals render on the GPU again.** The visible terminal now uses WebGL, which is smoother on heavy output. Background tabs hand their GPU context back, which avoids the blank-tab problem that 0.2.1 worked around by staying on Canvas. If WebGL is unavailable or keeps failing, a terminal switches to the standard renderer automatically.
+
 ## [0.4.0] — 2026-10-14
 
 ### Security
