@@ -53,6 +53,7 @@ aes = "0.8"          # Apple ARD credential block (AES-128-ECB)
 md-5 = "0.10"        # Apple ARD: MD5 of the Diffie-Hellman shared secret
 num-bigint = "0.4"   # Apple ARD: modpow
 flate2 = "1"         # zlib streams inside ZRLE and Tight rects
+portable-pty = "0.9"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"

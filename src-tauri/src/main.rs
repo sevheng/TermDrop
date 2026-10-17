@@ -20,6 +20,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod crypto;
 mod db;
 mod docker;
+mod local_pty;
+mod local_shells;
 mod mongodb;
 mod port_forward;
 mod redis;
@@ -60,6 +62,9 @@ pub struct MongoOpHandle {
 pub struct AppState {
     db: Pool<SqliteConnectionManager>,
     sessions: Mutex<HashMap<String, ssh::SshSessionHandle>>,
+    /// The last `list_local_shells` result, which `local_connect` resolves
+    /// shell ids against.
+    local_shells: Mutex<Vec<local_shells::LocalShell>>,
     exec_sessions: Mutex<HashMap<i64, Arc<Mutex<ssh2::Session>>>>,
     sftp_sessions: Mutex<HashMap<String, Arc<sftp::SftpSessionHandle>>>,
     exec_pty_sessions: Mutex<HashMap<String, ssh::ExecPtyHandle>>,
@@ -811,6 +816,74 @@ async fn ssh_connect(
     Ok(session_id)
 }
 
+/// The shells this machine has, for the local terminal's menu. Re-detected on
+/// every call (the menu asks each time it opens) and cached for
+/// `local_connect`, which resolves the id the menu sends back.
+#[tauri::command]
+async fn list_local_shells(
+    state: State<'_, AppState>,
+) -> Result<Vec<local_shells::LocalShell>, String> {
+    let shells = tokio::task::spawn_blocking(local_shells::detect)
+        .await
+        .map_err(|e| format!("shell detection failed: {}", e))?;
+    *state.local_shells.lock().map_err(|e| e.to_string())? = shells.clone();
+    Ok(shells)
+}
+
+/// Open a shell on this machine in a terminal tab. It shares every other
+/// terminal command with SSH tabs; see `local_pty`.
+///
+/// `shell_id` names an entry from `list_local_shells`, or is omitted for the
+/// default. Only detected shells can be started: the frontend never names a
+/// program.
+#[tauri::command]
+async fn local_connect(
+    window: Window,
+    state: State<'_, AppState>,
+    shell_id: Option<String>,
+    cols: u32,
+    rows: u32,
+) -> Result<String, String> {
+    let shell = match shell_id {
+        None => local_shells::default_shell(),
+        Some(id) => {
+            let cached = state
+                .local_shells
+                .lock()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .find(|s| s.id == id)
+                .cloned();
+            match cached {
+                Some(shell) => shell,
+                None => list_local_shells(state.clone())
+                    .await?
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .ok_or("That shell is no longer available")?,
+            }
+        }
+    };
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let label = shell.label.clone();
+    let handle = local_pty::connect(
+        window,
+        session_id.clone(),
+        shell,
+        cols,
+        rows,
+        Arc::new(Mutex::new(None)),
+    )?;
+    state
+        .sessions
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id.clone(), handle);
+    info!(session_id = %session_id, shell = %label, "Local shell started");
+    Ok(session_id)
+}
+
 #[tauri::command]
 fn ssh_write(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -870,17 +943,22 @@ fn parse_ssh_config() -> Result<Vec<ssh_config_parser::SshConfigHost>, String> {
 fn ssh_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let host_id = {
         let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-        if let Some(session) = sessions.remove(&session_id) {
-            let _ = session.disconnect_tx.send(());
-            session.host_id
-        } else {
-            return Ok(());
+        match sessions.remove(&session_id) {
+            Some(session) => {
+                let _ = session.disconnect_tx.send(());
+                // A local shell has no host state to tear down.
+                match session.host_id {
+                    Some(host_id) => host_id,
+                    None => return Ok(()),
+                }
+            }
+            None => return Ok(()),
         }
     };
 
     // Only remove exec session if no other tabs use this host
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    let still_connected = sessions.values().any(|s| s.host_id == host_id);
+    let still_connected = sessions.values().any(|s| s.host_id == Some(host_id));
     drop(sessions);
 
     if !still_connected {
@@ -941,10 +1019,34 @@ async fn ssh_reconnect(
     sftp_session_id: Option<String>,
     password: Option<String>,
 ) -> Result<(), String> {
-    let host_id = {
+    let (host_id, local_shell, data_channel) = {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions.get(&session_id).ok_or("Session not found")?;
-        session.host_id
+        (
+            session.host_id,
+            session.local_shell.clone(),
+            session.data_channel.clone(),
+        )
+    };
+
+    let Some(host_id) = host_id else {
+        // A local shell: start a fresh one under the same id. The tab's data
+        // channel is still live on the frontend, so it is carried over.
+        let handle = local_pty::connect(
+            window.clone(),
+            session_id.clone(),
+            local_shell.unwrap_or_else(local_shells::default_shell),
+            80,
+            24,
+            data_channel,
+        )?;
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        if let Some(old) = sessions.insert(session_id.clone(), handle) {
+            let _ = old.disconnect_tx.send(());
+        }
+        drop(sessions);
+        let _ = window.emit("ssh-reconnected", session_id);
+        return Ok(());
     };
 
     let host = load_host(&state, host_id)?;
@@ -2817,6 +2919,7 @@ fn main() {
         .manage(AppState {
             db: pool,
             sessions: Mutex::new(HashMap::new()),
+            local_shells: Mutex::new(Vec::new()),
             exec_sessions: Mutex::new(HashMap::new()),
             sftp_sessions: Mutex::new(HashMap::new()),
             exec_pty_sessions: Mutex::new(HashMap::new()),
@@ -2879,6 +2982,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_hosts,
+            local_connect,
+            list_local_shells,
             add_host,
             update_host,
             delete_host,

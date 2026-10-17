@@ -99,6 +99,7 @@ const tabShortcuts = [
   { keys: 'Ctrl + Tab', label: 'Next tab' },
   { keys: 'Ctrl + Shift + Tab', label: 'Previous tab' },
   { keys: 'Ctrl + W', label: 'Close active tab' },
+  { keys: 'Ctrl + Shift + T', label: 'New local terminal' },
 ]
 
 // The arrow-key navigation shipped with the UI pass; nothing announced it.
