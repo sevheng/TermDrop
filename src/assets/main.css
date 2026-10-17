@@ -104,6 +104,19 @@
   ::file-selector-button {
     border-color: rgb(var(--td-line));
   }
+
+  /* v3's preflight gave every button the pointer, and 139 of 140 buttons
+     here rely on it; v4 leaves the default arrow. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* v4 draws placeholders at half the text colour, which in the light theme
+     makes hint text look like a value. */
+  ::placeholder {
+    color: rgb(var(--td-placeholder));
+  }
 }
 
 body {
