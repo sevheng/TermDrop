@@ -30,7 +30,7 @@ Thank you for your interest in contributing to **TermDrop**! This guide covers h
 
 ## Code of Conduct
 
-Be respectful, constructive, and inclusive. We welcome contributors of all experience levels. If you are unsure about anything, open an issue and ask — we are happy to help.
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). In short: be respectful, constructive, and inclusive. We welcome contributors of all experience levels. If you are unsure about anything, open an issue and ask — we are happy to help.
 
 ---
 
