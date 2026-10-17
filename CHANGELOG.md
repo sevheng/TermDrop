@@ -6,18 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-- **Fast terminal output no longer freezes the window.** A command that prints many short lines quickly — a build, `seq`, a busy log — used to arrive as hundreds of thousands of tiny messages, and the window could stop responding for ten seconds while it caught up. Output is now gathered and sent as binary: in our benchmark the same 17 MB printed in 16 s instead of 46 s, with the longest freeze down from 10 s to under half a second. Applies to SSH, local and Docker terminals.
-- **Idle local terminals no longer use CPU.** They now wait for activity instead of checking for it every 10 ms.
-
-### Fixed
-- **The first terminal you open is sized correctly.** It used to measure its rows before the terminal font had loaded, so it kept slightly-too-short rows until something resized it — and opening the system panel then left the terminal drawn over the panel's top half.
+## [0.5.0] — 2026-10-17
 
 ### Added
 - **Local terminal.** Press **Ctrl+Shift+T**, or click the terminal button in the tab bar, to open a shell on your own machine in a tab beside your SSH sessions — handy for `git`, `scp`, or the `ssh-keygen -R` the host-key dialog asks you to run. It starts your default shell (your login shell on macOS and Linux, PowerShell on Windows) in your home folder. Typing `exit` leaves the tab in place so you can reconnect it.
   - **Pick a different shell.** When more than one is installed, the button shows a menu of them; with only one, it opens it straight away. TermDrop finds what's installed: on Windows that's PowerShell, Command Prompt, Git Bash and each of your WSL distros; on macOS and Linux it's the shells listed in `/etc/shells`. Tabs are named after the shell, such as `Ubuntu (WSL)`.
 
 ### Changed
+- **Fast terminal output no longer freezes the window.** A command that prints many short lines quickly — a build, `seq`, a busy log — used to arrive as hundreds of thousands of tiny messages, and the window could stop responding for ten seconds while it caught up. Output is now gathered and sent as binary: in our benchmark the same 17 MB printed in 16 s instead of 46 s, with the longest freeze down from 10 s to under half a second. Applies to SSH, local and Docker terminals.
+- **Idle local terminals no longer use CPU.** They now wait for activity instead of checking for it every 10 ms.
 - **Dependencies refreshed.**
   - Tauri 2.12 and its plugins.
   - Frontend tooling: Vite 8, Vitest 5, ESLint 10, Pinia 4, Tailwind CSS 4.
@@ -25,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Rust: rusqlite 0.40, rand 0.10, dirs 7, plus the latest compatible releases of everything else.
 - **Terminals render on the GPU again.** The visible terminal now uses WebGL, which is smoother on heavy output. Background tabs hand their GPU context back, which avoids the blank-tab problem that 0.2.1 worked around by staying on Canvas. If WebGL is unavailable or keeps failing, a terminal switches to the standard renderer automatically.
 - **macOS 11 (Big Sur) or later is now required.** The updated styling engine needs Safari 16.4's WebKit, which macOS 10.13–10.15 cannot run. Releases were already Apple Silicon only, so in practice they already needed macOS 11.
+
+### Fixed
+- **The first terminal you open is sized correctly.** It used to measure its rows before the terminal font had loaded, so it kept slightly-too-short rows until something resized it — and opening the system panel then left the terminal drawn over the panel's top half.
 
 ## [0.4.0] — 2026-10-14
 
