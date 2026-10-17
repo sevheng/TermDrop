@@ -55,9 +55,9 @@ const OUTPUT_BATCH_SIZE: usize = 4096;
 const OUTPUT_FLUSH_INTERVAL_MS: u64 = 16;
 
 /// The most output gathered into one data-channel message.
-const COALESCE_MAX_BYTES: usize = 64 * 1024;
+pub const COALESCE_MAX_BYTES: usize = 64 * 1024;
 /// The longest output waits to be sent while more keeps arriving.
-const COALESCE_MAX_AGE: Duration = Duration::from_millis(4);
+pub const COALESCE_MAX_AGE: Duration = Duration::from_millis(4);
 
 /// The frontend's data channel. Raw rather than `Vec<u8>`: Tauri serialises a
 /// `Vec<u8>` as a JSON array of decimal numbers, while a Raw payload of 1 KB
@@ -121,6 +121,24 @@ where
         if self.pending.len() >= COALESCE_MAX_BYTES || aged {
             self.flush();
         }
+    }
+
+    /// Gather output without the size and age caps; for a loop that times its
+    /// own flushes rather than polling.
+    pub fn append(&mut self, bytes: &[u8]) {
+        if self.pending.is_empty() {
+            self.pending_since = Some(Instant::now());
+        }
+        self.pending.extend_from_slice(bytes);
+    }
+
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Nothing is waiting to be sent on either path.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.output_buf.is_empty()
     }
 
     /// Send whatever is gathered.

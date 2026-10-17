@@ -1,20 +1,24 @@
 //! A shell on this machine, in an ordinary terminal tab.
 //!
-//! It plugs into the same `io_loop::run_loop`, `SshSessionHandle` and
-//! `ssh-*` events as a remote shell, so `ssh_write`, `ssh_resize`,
-//! `open_data_channel` and `ssh_disconnect` serve both. The handle's
-//! `host_id` is `None`: a local tab belongs to no saved host.
+//! It shares `SshSessionHandle` and the `ssh-*` events with a remote shell, so
+//! `ssh_write`, `ssh_resize`, `open_data_channel` and `ssh_disconnect` serve
+//! both. The handle's `host_id` is `None`: a local tab belongs to no saved host.
+//!
+//! Unlike SSH it does not run `io_loop::run_loop`. ssh2 has nothing to wait
+//! on, so that loop polls with a 10 ms sleep; a local PTY can be waited on, so
+//! `run_local_loop` sleeps until output, a keystroke, a resize, a disconnect or
+//! the shell exiting actually happens.
 
 use crate::local_shells::LocalShell;
-use crate::ssh::io_loop::{self, PtyIo};
+use crate::ssh::io_loop::{self, OutputSink, COALESCE_MAX_AGE, COALESCE_MAX_BYTES};
 use crate::ssh::{SshSessionHandle, SHELL_EVENTS};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self as std_mpsc, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::sleep_until;
 
 /// After the child exits, how long to wait for each further chunk before
 /// calling it EOF. The reader thread can lag the exit by a moment, and the
@@ -27,6 +31,10 @@ const EXIT_DRAIN: Duration = Duration::from_millis(100);
 /// handler is simply lost. The PTY buffers in the meantime.
 const CHANNEL_WAIT: Duration = Duration::from_secs(2);
 
+/// How long fallback text may sit before it is emitted, matching the batch
+/// interval `OutputSink` applies on that path.
+const FALLBACK_INTERVAL: Duration = Duration::from_millis(16);
+
 fn size(cols: u32, rows: u32) -> PtySize {
     PtySize {
         rows: rows.clamp(1, u16::MAX as u32) as u16,
@@ -36,18 +44,17 @@ fn size(cols: u32, rows: u32) -> PtySize {
     }
 }
 
-/// A local PTY behind the non-blocking contract `run_loop` expects.
+/// A spawned shell, taken apart into what the event loop waits on.
 ///
-/// portable-pty's reader blocks and has no non-blocking mode, so a thread
-/// reads it into a channel and `read` drains that channel, answering
-/// `WouldBlock` when it is empty.
+/// portable-pty's reader blocks and has no async mode, so a thread reads it
+/// into `output`. The child is owned by a waiter thread that reports its exit
+/// on `exited`; `killer` ends it from here.
 pub struct LocalPty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send + Sync>,
-    rx: std_mpsc::Receiver<Vec<u8>>,
-    pending: Vec<u8>,
-    exited: bool,
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    output: mpsc::UnboundedReceiver<Vec<u8>>,
+    exited: oneshot::Receiver<()>,
 }
 
 impl LocalPty {
@@ -71,7 +78,7 @@ impl LocalPty {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "TermDrop");
 
-        let child = pair
+        let mut child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("Failed to start {}: {}", program, e))?;
@@ -87,8 +94,9 @@ impl LocalPty {
             .master
             .take_writer()
             .map_err(|e| format!("Failed to write the PTY: {}", e))?;
+        let killer = child.clone_killer();
 
-        let (tx, rx) = std_mpsc::channel();
+        let (out_tx, output) = mpsc::unbounded_channel();
         std::thread::spawn(move || {
             let mut buf = vec![0u8; 16384];
             loop {
@@ -96,7 +104,7 @@ impl LocalPty {
                     // Linux reports the slave closing as EIO, not as 0.
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if tx.send(buf[..n].to_vec()).is_err() {
+                        if out_tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
                     }
@@ -104,74 +112,111 @@ impl LocalPty {
             }
         });
 
+        let (exit_tx, exited) = oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            let _ = exit_tx.send(());
+        });
+
         Ok(LocalPty {
             master: pair.master,
             writer,
-            child,
-            rx,
-            pending: Vec::new(),
-            exited: false,
+            killer,
+            output,
+            exited,
         })
     }
-
-    fn child_exited(&mut self) -> bool {
-        if !self.exited {
-            self.exited = matches!(self.child.try_wait(), Ok(Some(_)));
-        }
-        self.exited
-    }
-
-    fn deliver(&mut self, chunk: Vec<u8>, buf: &mut [u8]) -> usize {
-        self.pending = chunk;
-        let n = self.pending.len().min(buf.len());
-        buf[..n].copy_from_slice(&self.pending[..n]);
-        self.pending.drain(..n);
-        n
-    }
 }
 
-impl Read for LocalPty {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if !self.pending.is_empty() {
-            let chunk = std::mem::take(&mut self.pending);
-            return Ok(self.deliver(chunk, buf));
+/// Drive a local shell until it exits or the tab disconnects.
+///
+/// Nothing here sleeps on a timer except to send gathered output. Output that
+/// arrives after a quiet spell is sent at once, so an echo is never delayed;
+/// output arriving within `COALESCE_MAX_AGE` of the last send is gathered and
+/// sent when that window closes, which keeps a fast producer's messages large
+/// enough to cross as binary (see `OutputSink`).
+pub fn run_local_loop(
+    mut pty: LocalPty,
+    mut write_rx: mpsc::UnboundedReceiver<String>,
+    mut disconnect_rx: mpsc::UnboundedReceiver<()>,
+    mut resize_rx: mpsc::UnboundedReceiver<(u32, u32)>,
+    data_channel: io_loop::TerminalChannel,
+    on_data_fallback: impl FnMut(&str),
+    mut on_disconnect: impl FnMut(),
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("local terminal runtime failed to start: {}", e);
+            on_disconnect();
+            return;
         }
-        match self.rx.try_recv() {
-            Ok(chunk) => Ok(self.deliver(chunk, buf)),
-            Err(TryRecvError::Disconnected) => Ok(0),
-            // ConPTY keeps its output pipe open after the child exits, so on
-            // Windows the reader never ends by itself; the exit is the signal.
-            Err(TryRecvError::Empty) if self.child_exited() => {
-                match self.rx.recv_timeout(EXIT_DRAIN) {
-                    Ok(chunk) => Ok(self.deliver(chunk, buf)),
-                    Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Ok(0),
+    };
+    let mut sink = OutputSink::new(io_loop::channel_sender(data_channel), on_data_fallback);
+
+    let intentional = runtime.block_on(async {
+        let mut last_send = Instant::now() - COALESCE_MAX_AGE;
+        let mut deadline: Option<tokio::time::Instant> = None;
+
+        loop {
+            tokio::select! {
+                chunk = pty.output.recv() => match chunk {
+                    Some(bytes) => {
+                        sink.append(&bytes);
+                        // Take everything already queued in one go.
+                        while let Ok(more) = pty.output.try_recv() {
+                            sink.append(&more);
+                        }
+                        let quiet = last_send.elapsed() >= COALESCE_MAX_AGE;
+                        if quiet || sink.pending_len() >= COALESCE_MAX_BYTES {
+                            sink.flush();
+                            last_send = Instant::now();
+                            deadline = (!sink.is_empty()).then(|| tokio::time::Instant::now() + FALLBACK_INTERVAL);
+                        } else if deadline.is_none() {
+                            deadline = Some((last_send + COALESCE_MAX_AGE).into());
+                        }
+                    }
+                    // The reader ended: the slave side closed.
+                    None => break false,
+                },
+                _ = async { sleep_until(deadline.unwrap()).await }, if deadline.is_some() => {
+                    sink.idle();
+                    last_send = Instant::now();
+                    deadline = (!sink.is_empty()).then(|| tokio::time::Instant::now() + FALLBACK_INTERVAL);
+                }
+                Some(data) = write_rx.recv() => {
+                    // The reader thread drains output independently, so a
+                    // blocking write here cannot deadlock against a shell
+                    // that is busy echoing.
+                    let _ = pty.writer.write_all(data.as_bytes());
+                    let _ = pty.writer.flush();
+                }
+                Some((cols, rows)) = resize_rx.recv() => {
+                    let _ = pty.master.resize(size(cols, rows));
+                }
+                _ = disconnect_rx.recv() => break true,
+                // ConPTY keeps its output pipe open after the child exits, so
+                // on Windows the reader never ends by itself; the exit is the
+                // signal. Drain what is still in flight, then stop.
+                _ = &mut pty.exited => {
+                    while let Ok(Some(bytes)) = tokio::time::timeout(EXIT_DRAIN, pty.output.recv()).await {
+                        sink.append(&bytes);
+                    }
+                    break false;
                 }
             }
-            Err(TryRecvError::Empty) => Err(std::io::ErrorKind::WouldBlock.into()),
         }
-    }
-}
+    });
 
-impl Write for LocalPty {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.writer.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
-    }
-}
-
-impl PtyIo for LocalPty {
-    fn resize(&mut self, cols: u32, rows: u32) {
-        let _ = self.master.resize(size(cols, rows));
-    }
-
-    fn shutdown(&mut self) {
-        if !self.child_exited() {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
+    if intentional {
+        let _ = pty.killer.kill();
+    } else {
+        sink.finish();
+        let _ = pty.killer.kill();
+        on_disconnect();
     }
 }
 
@@ -205,11 +250,11 @@ pub fn connect(
 
         let events = &SHELL_EVENTS;
         let _ = window.emit(events.connected, session_id.clone());
-        io_loop::run_loop(
+        run_local_loop(
             pty,
             write_rx,
             disconnect_rx,
-            Some(resize_rx),
+            resize_rx,
             loop_channel,
             |data| {
                 let payload = serde_json::json!({ events.id_key: &session_id, "data": data });
@@ -234,6 +279,8 @@ pub fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use tauri::ipc::{Channel, InvokeResponseBody};
 
     #[test]
     fn sizes_are_clamped_into_range() {
@@ -241,48 +288,140 @@ mod tests {
         assert_eq!((s.cols, s.rows), (1, u16::MAX));
     }
 
-    /// Spawns a real process through the same trait `run_loop` drives, and
-    /// checks the output arrives whole and the exit reads as EOF.
-    #[test]
-    #[cfg(unix)]
-    fn local_pty_reads_output_then_eof() {
-        let args = vec!["-c".to_string(), "printf hi".to_string()];
-        let mut pty = LocalPty::spawn("/bin/sh", &args, None, 80, 24).expect("spawn");
-        let mut out = Vec::new();
-        let mut buf = [0u8; 64];
+    /// What reached the data channel, with when it arrived.
+    type Sent = Arc<Mutex<Vec<(Instant, Vec<u8>)>>>;
+
+    fn channel() -> (io_loop::TerminalChannel, Sent) {
+        let sent: Sent = Arc::new(Mutex::new(Vec::new()));
+        let sink = sent.clone();
+        let ch = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(bytes) = body {
+                sink.lock().unwrap().push((Instant::now(), bytes));
+            }
+            Ok(())
+        });
+        (Arc::new(Mutex::new(Some(ch))), sent)
+    }
+
+    struct Session {
+        write_tx: mpsc::UnboundedSender<String>,
+        disconnect_tx: mpsc::UnboundedSender<()>,
+        sent: Sent,
+        disconnected: Arc<Mutex<bool>>,
+        done: std::thread::JoinHandle<()>,
+    }
+
+    fn start(program: &str, args: &[&str]) -> Session {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        let pty = LocalPty::spawn(program, &args, None, 80, 24).expect("spawn");
+        let (data_channel, sent) = channel();
+        let (write_tx, write_rx) = mpsc::unbounded_channel();
+        let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel();
+        let (_resize_tx, resize_rx) = mpsc::unbounded_channel();
+        let disconnected = Arc::new(Mutex::new(false));
+        let flag = disconnected.clone();
+        let done = std::thread::spawn(move || {
+            run_local_loop(
+                pty,
+                write_rx,
+                disconnect_rx,
+                resize_rx,
+                data_channel,
+                |_| {},
+                move || *flag.lock().unwrap() = true,
+            )
+        });
+        Session {
+            write_tx,
+            disconnect_tx,
+            sent,
+            disconnected,
+            done,
+        }
+    }
+
+    fn output(sent: &Sent) -> String {
+        String::from_utf8_lossy(
+            &sent
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|(_, b)| b.clone())
+                .collect::<Vec<_>>(),
+        )
+        .into_owned()
+    }
+
+    fn wait_for(sent: &Sent, needle: &str) -> Instant {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            assert!(Instant::now() < deadline, "no EOF; got {:?}", out);
-            match pty.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => out.extend_from_slice(&buf[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(e) => panic!("read failed: {}", e),
+            if let Some((t, _)) = {
+                let s = sent.lock().unwrap();
+                let mut seen = Vec::new();
+                s.iter()
+                    .find(|(_, b)| {
+                        seen.extend_from_slice(b);
+                        String::from_utf8_lossy(&seen).contains(needle)
+                    })
+                    .cloned()
+            } {
+                return t;
             }
+            assert!(
+                Instant::now() < deadline,
+                "never saw {:?}; got {:?}",
+                needle,
+                output(sent)
+            );
+            std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(String::from_utf8_lossy(&out), "hi");
-        pty.shutdown();
     }
 
     #[test]
     #[cfg(unix)]
-    fn local_pty_takes_input_and_shutdown_kills_the_child() {
-        let mut pty = LocalPty::spawn("/bin/cat", &[], None, 80, 24).expect("spawn");
-        pty.write_all(b"ping\n").unwrap();
-        let mut out = Vec::new();
-        let mut buf = [0u8; 64];
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !String::from_utf8_lossy(&out).contains("ping") {
-            assert!(Instant::now() < deadline, "echo never came back: {:?}", out);
-            match pty.read(&mut buf) {
-                Ok(n) => out.extend_from_slice(&buf[..n]),
-                Err(_) => std::thread::sleep(Duration::from_millis(5)),
-            }
+    fn a_shell_that_exits_delivers_its_output_and_reports_the_disconnect() {
+        let s = start("/bin/sh", &["-c", "printf hi"]);
+        s.done.join().unwrap();
+        assert_eq!(output(&s.sent), "hi");
+        assert!(*s.disconnected.lock().unwrap());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_echo_arrives_without_waiting_on_a_poll_interval() {
+        // The point of the event loop: a keystroke wakes it at once. The old
+        // polling loop could add up to 10 ms each way.
+        let s = start("/bin/cat", &[]);
+        std::thread::sleep(Duration::from_millis(200));
+        let mut worst = Duration::ZERO;
+        for i in 0..20 {
+            let word = format!("w{}\n", i);
+            let sent_at = Instant::now();
+            s.write_tx.send(word.clone()).unwrap();
+            let arrived = wait_for(&s.sent, &format!("w{}", i));
+            worst = worst.max(arrived.saturating_duration_since(sent_at));
         }
-        // cat never exits by itself; shutdown must not hang.
-        pty.shutdown();
-        assert!(pty.child_exited());
+        assert!(
+            worst < Duration::from_millis(20),
+            "slowest echo took {:?}",
+            worst
+        );
+        s.disconnect_tx.send(()).unwrap();
+        s.done.join().unwrap();
+        assert!(
+            !*s.disconnected.lock().unwrap(),
+            "an intentional disconnect is not reported"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_fast_producer_is_coalesced_and_nothing_is_lost() {
+        let s = start("/bin/sh", &["-c", "seq 1 100000"]);
+        s.done.join().unwrap();
+        let expected: String = (1..=100000).map(|i| format!("{}\r\n", i)).collect();
+        assert_eq!(output(&s.sent), expected);
+        let messages = s.sent.lock().unwrap().len();
+        assert!(messages < 400, "{} messages for 590 KB", messages);
     }
 }

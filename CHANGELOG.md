@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Fast terminal output no longer freezes the window.** A command that prints many short lines quickly — a build, `seq`, a busy log — used to arrive as hundreds of thousands of tiny messages, and the window could stop responding for ten seconds while it caught up. Output is now gathered and sent as binary: in our benchmark the same 17 MB printed in 16 s instead of 46 s, with the longest freeze down from 10 s to under half a second. Applies to SSH, local and Docker terminals.
+- **Idle local terminals no longer use CPU.** They now wait for activity instead of checking for it every 10 ms.
+
 ### Fixed
 - **The first terminal you open is sized correctly.** It used to measure its rows before the terminal font had loaded, so it kept slightly-too-short rows until something resized it — and opening the system panel then left the terminal drawn over the panel's top half.
 
