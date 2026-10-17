@@ -573,6 +573,8 @@ async function openDockerPane({ type, containerName, command }) {
 
   const fontSize = await loadTerminalFontSize()
   dockerTerminal = createTerminalInstance(dockerPaneContainer.value, { fontSize })
+  // The pane only opens from the visible tab, so it can take a context now.
+  if (props.isActive && !document.hidden) dockerTerminal.attachGpuRenderer()
   dockerTerm = dockerTerminal.term
   dockerFitAddon = dockerTerminal.fitAddon
 
@@ -721,11 +723,24 @@ function hideTooltip() {
   tooltip.value.show = false
 }
 
+/** WebGL contexts are held by the visible terminal only; see useXtermInstance. */
+function attachGpuRenderers() {
+  if (terminal) terminal.attachGpuRenderer()
+  if (dockerTerminal) dockerTerminal.attachGpuRenderer()
+}
+
+function detachGpuRenderers() {
+  if (terminal) terminal.detachGpuRenderer()
+  if (dockerTerminal) dockerTerminal.detachGpuRenderer()
+}
+
 function onVisibilityChange() {
   if (document.hidden) {
     stopStatusPolling()
     stopSysPolling()
+    detachGpuRenderers()
   } else if (props.isActive) {
+    attachGpuRenderers()
     startStatusPolling()
     if (statusExpanded.value) {
       startSysPolling()
@@ -926,6 +941,7 @@ onMounted(async () => {
   // Fix race condition: if tab is already active when terminal finishes init,
   // the isActive watcher already fired early (term was null). Start polling now.
   if (props.isActive) {
+    if (!document.hidden) attachGpuRenderers()
     startStatusPolling()
   }
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -951,6 +967,7 @@ watch(() => props.sessionId, (newId, oldId) => {
 watch(() => props.isActive, (active) => {
   if (active) {
     if (!term) return
+    if (!document.hidden) attachGpuRenderers()
     term.focus()
     nextTick(() => {
       requestAnimationFrame(() => {
@@ -965,6 +982,7 @@ watch(() => props.isActive, (active) => {
     startStatusPolling()
   } else {
     if (term) term.blur()
+    detachGpuRenderers()
     stopStatusPolling()
     if (terminal) terminal.unobserveResize()
   }
