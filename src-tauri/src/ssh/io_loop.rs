@@ -2,7 +2,7 @@ use ssh2::Channel as SshChannel;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::ipc::Channel as DataChannel;
+use tauri::ipc::{Channel as DataChannel, InvokeResponseBody};
 use tokio::sync::mpsc;
 
 /// Decode as much of `bytes` as forms whole characters.
@@ -54,6 +54,163 @@ const OUTPUT_BATCH_SIZE: usize = 4096;
 /// Flush output buffer at this interval during heavy output (ms).
 const OUTPUT_FLUSH_INTERVAL_MS: u64 = 16;
 
+/// The most output gathered into one data-channel message.
+pub const COALESCE_MAX_BYTES: usize = 64 * 1024;
+/// The longest output waits to be sent while more keeps arriving.
+pub const COALESCE_MAX_AGE: Duration = Duration::from_millis(4);
+
+/// The frontend's data channel. Raw rather than `Vec<u8>`: Tauri serialises a
+/// `Vec<u8>` as a JSON array of decimal numbers, while a Raw payload of 1 KB
+/// or more crosses as a real `ArrayBuffer` (smaller ones are inlined either
+/// way, which is why output is coalesced before it is sent).
+pub type TerminalChannel = Arc<Mutex<Option<DataChannel<InvokeResponseBody>>>>;
+
+/// Where terminal output goes: gathered into as few messages as the stream
+/// allows, then sent on the data channel, or -- before the frontend has
+/// opened one -- decoded and batched for the JSON event fallback.
+///
+/// Coalescing is what keeps a fast short-line producer usable. `seq` writes
+/// one line per syscall, every read used to become its own IPC message
+/// (~175k messages of under 100 bytes for 17 MB), and the webview froze for
+/// up to 10 s draining them. A lone keystroke echo is not delayed: the read
+/// after it would block, which flushes at once.
+pub struct OutputSink<B, F>
+where
+    B: FnMut(Vec<u8>) -> Result<(), Vec<u8>>,
+    F: FnMut(&str),
+{
+    /// Hands bytes to the binary channel, or gives them back when there is none.
+    send_binary: B,
+    on_data_fallback: F,
+    pending: Vec<u8>,
+    pending_since: Option<Instant>,
+    /// Bytes of a character whose remainder has not arrived yet. Bounded by the
+    /// longest UTF-8 sequence, so this never grows past three bytes.
+    partial: Vec<u8>,
+    output_buf: String,
+    last_flush: Instant,
+}
+
+impl<B, F> OutputSink<B, F>
+where
+    B: FnMut(Vec<u8>) -> Result<(), Vec<u8>>,
+    F: FnMut(&str),
+{
+    pub fn new(send_binary: B, on_data_fallback: F) -> Self {
+        OutputSink {
+            send_binary,
+            on_data_fallback,
+            pending: Vec::with_capacity(COALESCE_MAX_BYTES),
+            pending_since: None,
+            partial: Vec::new(),
+            output_buf: String::with_capacity(8192),
+            last_flush: Instant::now(),
+        }
+    }
+
+    /// Take freshly read output. Sends only once a size or age cap is hit;
+    /// otherwise the caller flushes when the stream pauses.
+    pub fn push(&mut self, bytes: &[u8]) {
+        if self.pending.is_empty() {
+            self.pending_since = Some(Instant::now());
+        }
+        self.pending.extend_from_slice(bytes);
+        let aged = self
+            .pending_since
+            .is_some_and(|t| t.elapsed() >= COALESCE_MAX_AGE);
+        if self.pending.len() >= COALESCE_MAX_BYTES || aged {
+            self.flush();
+        }
+    }
+
+    /// Gather output without the size and age caps; for a loop that times its
+    /// own flushes rather than polling.
+    pub fn append(&mut self, bytes: &[u8]) {
+        if self.pending.is_empty() {
+            self.pending_since = Some(Instant::now());
+        }
+        self.pending.extend_from_slice(bytes);
+    }
+
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Nothing is waiting to be sent on either path.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.output_buf.is_empty()
+    }
+
+    /// Send whatever is gathered.
+    pub fn flush(&mut self) {
+        self.pending_since = None;
+        if self.pending.is_empty() {
+            return;
+        }
+        let bytes = std::mem::replace(&mut self.pending, Vec::with_capacity(COALESCE_MAX_BYTES));
+        // Fallback text queued before the channel opened goes first, so the
+        // order on screen is the order it was read.
+        if !self.output_buf.is_empty() {
+            self.flush_fallback();
+        }
+        if let Err(bytes) = (self.send_binary)(bytes) {
+            self.push_fallback(&bytes);
+        }
+    }
+
+    fn push_fallback(&mut self, bytes: &[u8]) {
+        self.partial.extend_from_slice(bytes);
+        let (text, consumed) = decode_complete(&self.partial);
+        self.partial.drain(..consumed);
+        self.output_buf.push_str(&text);
+        if self.output_buf.len() >= OUTPUT_BATCH_SIZE
+            || self.last_flush.elapsed().as_millis() as u64 >= OUTPUT_FLUSH_INTERVAL_MS
+        {
+            self.flush_fallback();
+        }
+    }
+
+    fn flush_fallback(&mut self) {
+        if !self.output_buf.is_empty() {
+            (self.on_data_fallback)(&self.output_buf);
+            self.output_buf.clear();
+        }
+        self.last_flush = Instant::now();
+    }
+
+    /// The stream has gone quiet: send gathered output, and let fallback text
+    /// that has waited its batch interval go too.
+    pub fn idle(&mut self) {
+        self.flush();
+        if !self.output_buf.is_empty()
+            && self.last_flush.elapsed().as_millis() as u64 >= OUTPUT_FLUSH_INTERVAL_MS
+        {
+            self.flush_fallback();
+        }
+    }
+
+    /// The stream has ended: send everything.
+    pub fn finish(&mut self) {
+        self.flush();
+        self.flush_fallback();
+    }
+}
+
+/// An `OutputSink` sender for the frontend's data channel.
+pub fn channel_sender(data_channel: TerminalChannel) -> impl FnMut(Vec<u8>) -> Result<(), Vec<u8>> {
+    move |bytes| match data_channel.lock() {
+        Ok(lock) => match lock.as_ref() {
+            Some(ch) => {
+                let _ = ch.send(InvokeResponseBody::Raw(bytes));
+                crate::dev_perf::mark("sent");
+                Ok(())
+            }
+            None => Err(bytes),
+        },
+        Err(_) => Err(bytes),
+    }
+}
+
 /// The byte stream behind a terminal: a remote SSH channel or a local PTY.
 ///
 /// `read` must be **non-blocking** -- return `WouldBlock` when nothing is
@@ -98,16 +255,12 @@ pub fn run_loop(
     mut write_rx: mpsc::UnboundedReceiver<String>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
     mut resize_rx: Option<mpsc::UnboundedReceiver<(u32, u32)>>,
-    data_channel: Arc<Mutex<Option<DataChannel<Vec<u8>>>>>,
-    mut on_data_fallback: impl FnMut(&str),
+    data_channel: TerminalChannel,
+    on_data_fallback: impl FnMut(&str),
     mut on_disconnect: impl FnMut(),
 ) {
     let mut buf = vec![0u8; 16384];
-    let mut output_buf = String::with_capacity(8192);
-    // Bytes of a character whose remainder has not arrived yet. Bounded by the
-    // longest UTF-8 sequence, so this never grows past three bytes.
-    let mut partial: Vec<u8> = Vec::new();
-    let mut last_flush = Instant::now();
+    let mut sink = OutputSink::new(channel_sender(data_channel), on_data_fallback);
     let mut intentional_disconnect = false;
 
     loop {
@@ -137,47 +290,21 @@ pub fn run_loop(
             }
         }
 
-        // Read incoming data
+        // Read incoming data. A successful read loops straight back for more
+        // without sleeping, so a burst is gathered into one message; the
+        // stream pausing (WouldBlock) is what sends it.
         match channel.read(&mut buf) {
             Ok(0) => {
-                flush_output(&mut output_buf, &mut on_data_fallback);
+                sink.finish();
                 break;
             }
-            Ok(n) => {
-                // Try to send through binary channel first
-                if let Ok(lock) = data_channel.lock() {
-                    if let Some(ref ch) = *lock {
-                        let _ = ch.send(buf[..n].to_vec());
-                    } else {
-                        partial.extend_from_slice(&buf[..n]);
-                        let (text, consumed) = decode_complete(&partial);
-                        partial.drain(..consumed);
-                        output_buf.push_str(&text);
-                        let now = Instant::now();
-                        let elapsed = now.duration_since(last_flush).as_millis() as u64;
-                        if output_buf.len() >= OUTPUT_BATCH_SIZE
-                            || elapsed >= OUTPUT_FLUSH_INTERVAL_MS
-                        {
-                            on_data_fallback(&output_buf);
-                            output_buf.clear();
-                            last_flush = now;
-                        }
-                    }
-                }
-            }
+            Ok(n) => sink.push(&buf[..n]),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                if !output_buf.is_empty() {
-                    let elapsed = Instant::now().duration_since(last_flush).as_millis() as u64;
-                    if elapsed >= OUTPUT_FLUSH_INTERVAL_MS {
-                        on_data_fallback(&output_buf);
-                        output_buf.clear();
-                        last_flush = Instant::now();
-                    }
-                }
+                sink.idle();
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(_) => {
-                flush_output(&mut output_buf, &mut on_data_fallback);
+                sink.finish();
                 break;
             }
         }
@@ -187,13 +314,6 @@ pub fn run_loop(
 
     if !intentional_disconnect {
         on_disconnect();
-    }
-}
-
-fn flush_output(output_buf: &mut String, on_data_fallback: &mut impl FnMut(&str)) {
-    if !output_buf.is_empty() {
-        on_data_fallback(output_buf);
-        output_buf.clear();
     }
 }
 
@@ -274,5 +394,142 @@ mod tests {
                 bytes.len() - consumed
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    /// A PTY whose reads are scripted: `Some(bytes)` is data, `None` is
+    /// `WouldBlock`, and running out is EOF.
+    struct FakePty {
+        reads: VecDeque<Option<Vec<u8>>>,
+    }
+
+    impl Read for FakePty {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.reads.pop_front() {
+                Some(Some(bytes)) => {
+                    buf[..bytes.len()].copy_from_slice(&bytes);
+                    Ok(bytes.len())
+                }
+                Some(None) => Err(std::io::ErrorKind::WouldBlock.into()),
+                None => Ok(0),
+            }
+        }
+    }
+
+    impl Write for FakePty {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl PtyIo for FakePty {
+        fn resize(&mut self, _: u32, _: u32) {}
+        fn shutdown(&mut self) {}
+    }
+
+    struct Outcome {
+        messages: Vec<Vec<u8>>,
+        fallback: String,
+        disconnected: bool,
+    }
+
+    fn run(reads: Vec<Option<Vec<u8>>>, with_channel: bool, disconnect_first: bool) -> Outcome {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let channel: TerminalChannel = Arc::new(Mutex::new(None));
+        if with_channel {
+            let sent = sent.clone();
+            *channel.lock().unwrap() = Some(DataChannel::new(move |body| {
+                if let InvokeResponseBody::Raw(bytes) = body {
+                    sent.lock().unwrap().push(bytes);
+                }
+                Ok(())
+            }));
+        }
+        let (_write_tx, write_rx) = mpsc::unbounded_channel();
+        let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel();
+        if disconnect_first {
+            disconnect_tx.send(()).unwrap();
+        }
+        let mut fallback = String::new();
+        let mut disconnected = false;
+        run_loop(
+            FakePty {
+                reads: reads.into(),
+            },
+            write_rx,
+            disconnect_rx,
+            None,
+            channel,
+            |text| fallback.push_str(text),
+            || disconnected = true,
+        );
+        let messages = sent.lock().unwrap().clone();
+        Outcome {
+            messages,
+            fallback,
+            disconnected,
+        }
+    }
+
+    #[test]
+    fn a_burst_of_short_lines_becomes_one_message_with_every_byte() {
+        // The bug this fixes: one message per read, ~175k of them for `seq`.
+        let reads: Vec<_> = (0..500)
+            .map(|i| Some(format!("{}\n", i).into_bytes()))
+            .collect();
+        let expected: Vec<u8> = (0..500)
+            .flat_map(|i| format!("{}\n", i).into_bytes())
+            .collect();
+        let out = run(reads, true, false);
+        assert!(out.messages.len() <= 2, "{} messages", out.messages.len());
+        assert_eq!(out.messages.concat(), expected);
+        assert!(out.disconnected, "EOF reports the disconnect");
+    }
+
+    #[test]
+    fn a_keystroke_echo_is_sent_when_the_stream_pauses_not_held() {
+        let out = run(
+            vec![Some(b"x".to_vec()), None, Some(b"y".to_vec())],
+            true,
+            false,
+        );
+        assert_eq!(out.messages, vec![b"x".to_vec(), b"y".to_vec()]);
+    }
+
+    #[test]
+    fn messages_are_capped_and_nothing_is_lost() {
+        let chunk = vec![b'a'; 16384];
+        let reads: Vec<_> = (0..10).map(|_| Some(chunk.clone())).collect();
+        let out = run(reads, true, false);
+        assert!(out.messages.len() >= 3, "a 160 KB burst is split");
+        assert!(out
+            .messages
+            .iter()
+            .all(|m| m.len() <= COALESCE_MAX_BYTES + 16384));
+        assert_eq!(out.messages.concat().len(), 10 * 16384);
+    }
+
+    #[test]
+    fn without_a_channel_output_falls_back_to_text_and_keeps_split_characters() {
+        let bytes = "café ─┤".as_bytes();
+        let reads = vec![Some(bytes[..4].to_vec()), None, Some(bytes[4..].to_vec())];
+        let out = run(reads, false, false);
+        assert!(out.messages.is_empty());
+        assert_eq!(out.fallback, "café ─┤");
+    }
+
+    #[test]
+    fn an_intentional_disconnect_sends_nothing_and_reports_nothing() {
+        let out = run(vec![Some(b"late output".to_vec())], true, true);
+        assert!(out.messages.is_empty());
+        assert!(!out.disconnected);
     }
 }

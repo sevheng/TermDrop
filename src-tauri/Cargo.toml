@@ -26,7 +26,7 @@ dirs = "7"
 aes-gcm = "0.10"
 rand = "0.10"
 ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 # known_hosts parsing. All three are already in Cargo.lock as transitive

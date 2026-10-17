@@ -19,6 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod crypto;
 mod db;
+mod dev_perf;
 mod docker;
 mod local_pty;
 mod local_shells;
@@ -884,8 +885,37 @@ async fn local_connect(
     Ok(session_id)
 }
 
+/// Debug builds only: the terminal benchmark (`src/dev/termPerf.js`) hands its
+/// results here, since a webview has no other way to write a file. Not
+/// registered in release builds at all.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_perf_report(name: String, report: String) -> Result<String, String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("report name must be [A-Za-z0-9-]".into());
+    }
+    let dir = dirs::data_dir()
+        .ok_or("no data dir")?
+        .join("termdrop")
+        .join("perf");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", name));
+    std::fs::write(&path, report).map_err(|e| e.to_string())?;
+    info!(path = %path.display(), "terminal perf report written");
+    Ok(path.display().to_string())
+}
+
+/// Dev builds only: start or stop recording backend stage timestamps and
+/// return those gathered since the last call (see `dev_perf`).
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_perf_marks(record: bool) -> Vec<(&'static str, f64)> {
+    dev_perf::take(record)
+}
+
 #[tauri::command]
 fn ssh_write(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
+    dev_perf::mark("cmd");
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or("Session not found")?;
     session.write_tx.send(data).map_err(|e| e.to_string())?;
@@ -912,7 +942,7 @@ fn ssh_resize(
 fn open_data_channel(
     state: State<'_, AppState>,
     session_id: String,
-    channel: tauri::ipc::Channel<Vec<u8>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions.get_mut(&session_id).ok_or("Session not found")?;
@@ -924,7 +954,7 @@ fn open_data_channel(
 fn open_exec_pty_data_channel(
     state: State<'_, AppState>,
     pty_session_id: String,
-    channel: tauri::ipc::Channel<Vec<u8>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<(), String> {
     let mut sessions = state.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions
@@ -2991,6 +3021,10 @@ fn main() {
             store_password,
             ssh_connect,
             ssh_write,
+            #[cfg(debug_assertions)]
+            dev_perf_report,
+            #[cfg(debug_assertions)]
+            dev_perf_marks,
             ssh_resize,
             open_data_channel,
             open_exec_pty_data_channel,

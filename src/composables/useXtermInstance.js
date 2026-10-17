@@ -157,14 +157,30 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
    */
   function openDataChannel(command, args) {
     const channel = new Channel()
+    // Dev builds only: the terminal benchmark (src/dev/termPerf.js) watches
+    // every message and when xterm has processed it. Vite strips this branch
+    // from release builds.
+    const perf = import.meta.env.DEV ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term) : null
     channel.onmessage = (message) => {
-      // Handle various possible data formats from Tauri Channel
-      if (message instanceof Uint8Array) {
-        term.write(message)
+      // The backend sends raw bytes, which Tauri delivers as an ArrayBuffer
+      // (inlined below 1 KB, fetched above it). The other shapes are what a
+      // JSON-serialised channel produced, kept for the fallback event path.
+      let data = null
+      if (message instanceof ArrayBuffer) {
+        data = new Uint8Array(message)
+      } else if (message instanceof Uint8Array) {
+        data = message
       } else if (Array.isArray(message)) {
-        term.write(new Uint8Array(message))
+        data = new Uint8Array(message)
       } else if (typeof message === 'string') {
-        term.write(message)
+        data = message
+      }
+      if (data === null) return
+      if (perf) {
+        perf.received()
+        term.write(data, () => perf.processed(data))
+      } else {
+        term.write(data)
       }
     }
     invoke(command, { ...args, channel }).catch(() => {})
