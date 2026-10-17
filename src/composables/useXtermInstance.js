@@ -177,6 +177,7 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
       }
       if (data === null) return
       if (perf) {
+        perf.received()
         term.write(data, () => perf.processed(data))
       } else {
         term.write(data)

@@ -104,6 +104,7 @@ impl LocalPty {
                     // Linux reports the slave closing as EIO, not as 0.
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
+                        crate::dev_perf::mark("read");
                         if out_tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
@@ -165,6 +166,7 @@ pub fn run_local_loop(
             tokio::select! {
                 chunk = pty.output.recv() => match chunk {
                     Some(bytes) => {
+                        crate::dev_perf::mark("loop_read");
                         sink.append(&bytes);
                         // Take everything already queued in one go.
                         while let Ok(more) = pty.output.try_recv() {
@@ -193,6 +195,7 @@ pub fn run_local_loop(
                     // that is busy echoing.
                     let _ = pty.writer.write_all(data.as_bytes());
                     let _ = pty.writer.flush();
+                    crate::dev_perf::mark("pty_write");
                 }
                 Some((cols, rows)) = resize_rx.recv() => {
                     let _ = pty.master.resize(size(cols, rows));

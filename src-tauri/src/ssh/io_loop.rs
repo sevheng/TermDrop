@@ -202,6 +202,7 @@ pub fn channel_sender(data_channel: TerminalChannel) -> impl FnMut(Vec<u8>) -> R
         Ok(lock) => match lock.as_ref() {
             Some(ch) => {
                 let _ = ch.send(InvokeResponseBody::Raw(bytes));
+                crate::dev_perf::mark("sent");
                 Ok(())
             }
             None => Err(bytes),

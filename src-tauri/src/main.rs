@@ -19,6 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod crypto;
 mod db;
+mod dev_perf;
 mod docker;
 mod local_pty;
 mod local_shells;
@@ -904,8 +905,17 @@ fn dev_perf_report(name: String, report: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+/// Dev builds only: start or stop recording backend stage timestamps and
+/// return those gathered since the last call (see `dev_perf`).
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_perf_marks(record: bool) -> Vec<(&'static str, f64)> {
+    dev_perf::take(record)
+}
+
 #[tauri::command]
 fn ssh_write(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
+    dev_perf::mark("cmd");
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or("Session not found")?;
     session.write_tx.send(data).map_err(|e| e.to_string())?;
@@ -3013,6 +3023,8 @@ fn main() {
             ssh_write,
             #[cfg(debug_assertions)]
             dev_perf_report,
+            #[cfg(debug_assertions)]
+            dev_perf_marks,
             ssh_resize,
             open_data_channel,
             open_exec_pty_data_channel,

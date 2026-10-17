@@ -4,7 +4,9 @@
 //
 // It drives real local terminal tabs through the real backend and webview:
 // throughput of two output workloads, keystroke-to-echo latency, and a window
-// of idle tabs. CPU is not visible from here; run `pidstat` alongside and cut
+// of idle tabs. Each echo is also broken into stages, using backend
+// timestamps from `dev_perf_marks` (src-tauri/src/dev_perf.rs) lined up with
+// the webview's own on the shared wall clock. CPU is not visible from here; run `pidstat` alongside and cut
 // its samples by the phase timestamps in the report. The report is written by
 // the debug-only `dev_perf_report` command to <data dir>/termdrop/perf/.
 
@@ -13,6 +15,9 @@ import { toast } from '../utils/toast.js'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const epoch = () => Date.now() / 1000
+// Wall-clock milliseconds at sub-millisecond resolution, comparable with the
+// backend's SystemTime marks.
+const wallMs = () => performance.timeOrigin + performance.now()
 
 const WORKLOADS = {
   // ~14 MB of short lines: the common shape of build and log output.
@@ -33,10 +38,16 @@ window.__termPerf = {
     const probe = {
       term, messages: 0, bytes: 0, lastProcessed: 0, echoStart: null, latencies: [],
       decoder: new TextDecoder(), tail: '', waiting: null,
+      // The echo being timed: wall-clock stamps filled in as it travels.
+      echo: null,
     }
     probes.set(sessionId, probe)
     return {
+      received() {
+        if (probe.echo && probe.echo.received === undefined) probe.echo.received = wallMs()
+      },
       processed(data) {
+        if (probe.echo && probe.echo.processed === undefined) probe.echo.processed = wallMs()
         const now = performance.now()
         probe.messages++
         probe.bytes += data.length
@@ -149,23 +160,83 @@ async function throughput(sessionId, probe, command) {
   }
 }
 
+// One keystroke's trip, in order. Backend stages come from dev_perf::mark.
+const STAGES = [
+  'input', // term.input(): TerminalTab sends single keys to ssh_write at once
+  'cmd', // ssh_write starts running in the backend
+  'pty_write', // the local loop has written the key to the PTY
+  'read', // the reader thread has the shell's echo
+  'loop_read', // the local loop has taken it from the reader thread
+  'sent', // the loop has handed it to the data channel
+  'received', // channel.onmessage in the webview
+  'processed', // xterm's write callback: parsed into the buffer
+]
+// There is deliberately no "next frame" stage. Requesting an animation frame
+// after each echo, or making an IPC call between samples, changes what is
+// measured: while the page is busy, both IPC hops get faster and the median
+// echo fell from 38 ms to 3 ms. Marks are therefore collected once, at the end.
+
+/** Median, p95 and max of each stage-to-stage gap, plus the totals. */
+function stageBreakdown(samples) {
+  const stats = (values) => ({
+    median_ms: round(percentile(values, 50), 2),
+    p95_ms: round(percentile(values, 95), 2),
+    max_ms: values.length ? round(Math.max(...values), 2) : null,
+  })
+  const complete = samples.filter(s => STAGES.every(k => typeof s[k] === 'number'))
+  const gaps = {}
+  for (let i = 1; i < STAGES.length; i++) {
+    const values = complete.map(s => s[STAGES[i]] - s[STAGES[i - 1]])
+    // Backend and webview stamps come from different processes; a negative
+    // gap means they disagree, and the numbers around it should be doubted.
+    gaps[`${STAGES[i - 1]}->${STAGES[i]}`] = { ...stats(values), negative: values.filter(v => v < 0).length }
+  }
+  return {
+    n: complete.length,
+    incomplete: samples.length - complete.length,
+    gaps,
+    total: stats(complete.map(s => s.processed - s.input)),
+  }
+}
+
 async function echoLatency(probe) {
   probe.latencies = []
+  const samples = []
+  await invoke('dev_perf_marks', { record: true })
   for (let i = 0; i < ECHO_SAMPLES; i++) {
     if (i && i % 50 === 0) {
       probe.term.input('\x15', true) // ^U clears the line between batches
       await sleep(200)
     }
+    const echo = { input: wallMs() }
+    probe.echo = echo
     probe.echoStart = performance.now()
     probe.term.input('x', true)
     const deadline = performance.now() + 1000
-    while (probe.echoStart !== null && performance.now() < deadline) await sleep(1)
+    while (echo.processed === undefined && performance.now() < deadline) await sleep(1)
     probe.echoStart = null
+    probe.echo = null
+    samples.push(echo)
     await sleep(30)
   }
+  // Each sample owns the marks from its keystroke up to the next one. Its
+  // echo comes first in that window; a ^U between batches comes after it.
+  const marks = await invoke('dev_perf_marks', { record: false })
+  samples.forEach((echo, i) => {
+    const end = samples[i + 1]?.input ?? Infinity
+    for (const [stage, ms] of marks) {
+      if (ms >= echo.input && ms < end && echo[stage] === undefined) echo[stage] = ms
+    }
+  })
   probe.term.input('\x15', true)
   const l = probe.latencies
-  return { n: l.length, median_ms: round(percentile(l, 50), 2), p95_ms: round(percentile(l, 95), 2), max_ms: round(Math.max(...l), 2) }
+  return {
+    n: l.length,
+    median_ms: round(percentile(l, 50), 2),
+    p95_ms: round(percentile(l, 95), 2),
+    max_ms: round(Math.max(...l), 2),
+    stages: stageBreakdown(samples),
+  }
 }
 
 export async function runTermPerf(store) {
