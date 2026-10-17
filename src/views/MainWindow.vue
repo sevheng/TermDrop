@@ -61,6 +61,44 @@
           </button>
         </div>
         <div class="flex items-center shrink-0">
+          <div class="relative flex items-center" ref="shellMenuRef">
+            <IconButton
+              :icon="SquareTerminal"
+              label="New local terminal (Ctrl+Shift+T)"
+              :active="showShellMenu"
+              :pending="shellsLoading && !store.localShells"
+              @click="onTerminalButton"
+            />
+            <div
+              v-if="showShellMenu"
+              class="absolute right-0 top-full mt-1 bg-surface border border-line rounded-sm shadow-xl z-50 min-w-[200px] max-h-80 overflow-y-auto py-1"
+            >
+              <div
+                v-if="shellsLoading && !store.localShells?.length"
+                class="px-3 py-1.5 text-xs text-ink-2 flex items-center gap-2"
+              >
+                <Loader2 :size="12" class="animate-spin" />
+                Detecting shells…
+              </div>
+              <div
+                v-else-if="!store.localShells?.length"
+                class="px-3 py-1.5 text-xs text-ink-2"
+              >
+                No shells found
+              </div>
+              <button
+                v-for="shell in store.localShells"
+                :key="shell.id"
+                @click="openLocalTerminal(shell)"
+                class="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-raised flex items-center gap-2"
+                :title="[shell.program, ...shell.args].join(' ')"
+              >
+                <SquareTerminal :size="12" class="shrink-0 text-ink-2" />
+                <span class="truncate">{{ shell.label }}</span>
+                <span v-if="shell.default" class="ml-auto pl-3 text-2xs text-ink-3">default</span>
+              </button>
+            </div>
+          </div>
           <button @click="showShortcuts = true" class="px-2 py-1.5 text-ink-2 hover:text-ink" title="Keyboard shortcuts">
             <Keyboard :size="14" />
           </button>
@@ -74,7 +112,7 @@
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 relative min-w-0">
           <TerminalTab
-            v-for="tab in sshTabs"
+            v-for="tab in terminalTabs"
             :key="tab.id"
             v-show="tab.id === store.activeTabId"
             :sessionId="tab.id"
@@ -116,7 +154,7 @@
               :title="store.hosts.length === 0 ? 'No hosts yet' : 'No connection open'"
               :hint="store.hosts.length === 0
                 ? 'Add a server, a MongoDB connection or a Redis connection to begin'
-                : 'Pick a host on the left, or add another'"
+                : 'Pick a host on the left, or add another. Ctrl+Shift+T opens a local shell'"
               :action-label="store.hosts.length === 0 ? 'Add your first host' : 'Add a host'"
               :action-icon="Plus"
               @action="openHostModal"
@@ -260,6 +298,7 @@ import HostSidebar from '../components/HostSidebar.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PromptDialog from '../components/PromptDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
+import IconButton from '../components/IconButton.vue'
 import { useConnectionStore } from '../stores/connection.js'
 import {
   Terminal as TerminalIcon,
@@ -271,11 +310,13 @@ import {
   Layers,
   Monitor,
   Plus,
+  SquareTerminal,
 } from 'lucide-vue-next'
 import {
   TAB_KIND,
   tabKind,
   tabsOfKind,
+  isTerminalTab,
   hasRightPanel,
   closeActionFor,
 } from '../utils/tabKinds.js'
@@ -305,7 +346,8 @@ const RedisPanel = defineAsyncComponent(() => import('../components/RedisPanel.v
 const VncPanel = defineAsyncComponent(() => import('../components/VncPanel.vue'))
 
 const store = useConnectionStore()
-const sshTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.SSH))
+// SSH and local shells share TerminalTab; only the SSH ones get a right panel.
+const terminalTabs = computed(() => store.tabs.filter(isTerminalTab))
 const mongoTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.MONGODB))
 const redisTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.REDIS))
 const vncTabs = computed(() => tabsOfKind(store.tabs, TAB_KIND.VNC))
@@ -361,6 +403,52 @@ const promptDialog = ref({
 /** The sidebar owns HostModal, so ask it to open one. */
 function openHostModal() {
   window.dispatchEvent(new CustomEvent('open-host-modal'))
+}
+
+const showShellMenu = ref(false)
+const shellMenuRef = ref(null)
+const shellsLoading = ref(false)
+
+/** `shell` is a detected entry, or null for the default shell. */
+function openLocalTerminal(shell = null) {
+  showShellMenu.value = false
+  // The store has already toasted the reason.
+  store.openLocalTerminal(shell).catch(() => {})
+}
+
+async function refreshShells() {
+  shellsLoading.value = true
+  try {
+    return await store.loadLocalShells()
+  } finally {
+    shellsLoading.value = false
+  }
+}
+
+/**
+ * One button: with a single shell it opens that shell, with several it shows
+ * the menu. The first click detects (the button spins meanwhile); later clicks
+ * decide from the cached list and re-detect in the background, so a newly
+ * installed WSL distro shows up without a restart.
+ */
+async function onTerminalButton() {
+  if (showShellMenu.value) {
+    showShellMenu.value = false
+    return
+  }
+  const shells = store.localShells ?? await refreshShells()
+  if (shells.length > 1) {
+    showShellMenu.value = true
+    refreshShells()
+  } else {
+    openLocalTerminal(shells[0] ?? null)
+  }
+}
+
+function onWindowClick(e) {
+  if (showShellMenu.value && shellMenuRef.value && !shellMenuRef.value.contains(e.target)) {
+    showShellMenu.value = false
+  }
 }
 
 function confirmDisconnect(sessionId, name) {
@@ -508,6 +596,13 @@ function onKeyDown(e) {
     return
   }
 
+  // Ctrl+Shift+T → new local terminal
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
+    e.preventDefault()
+    openLocalTerminal()
+    return
+  }
+
   // Ctrl+W → close active tab
   if (e.ctrlKey && e.key.toLowerCase() === 'w') {
     e.preventDefault()
@@ -591,6 +686,7 @@ onMounted(() => {
   })
 
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('click', onWindowClick)
   window.addEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.addEventListener('edit-port-forward', onEditPortForward)
   window.addEventListener('prompt-dialog-open', onPromptDialogOpen)
@@ -600,6 +696,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('click', onWindowClick)
   window.removeEventListener('open-port-forward-modal', onOpenPortForwardModal)
   window.removeEventListener('edit-port-forward', onEditPortForward)
   window.removeEventListener('prompt-dialog-open', onPromptDialogOpen)

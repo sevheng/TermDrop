@@ -14,6 +14,9 @@ export const TAB_KIND = {
   MONGODB: 'mongodb',
   REDIS: 'redis',
   VNC: 'vnc',
+  // A shell on this machine. It renders in the same TerminalTab as SSH and
+  // takes commands, but has no host behind it, so no SFTP/Docker/Security.
+  LOCAL: 'local',
 }
 
 const KINDS = {
@@ -23,6 +26,7 @@ const KINDS = {
   // A VNC tab takes every keystroke for the remote desktop, so it must never
   // be offered as somewhere to type a command either.
   [TAB_KIND.VNC]: { hasRightPanel: false, canReceiveCommand: false },
+  [TAB_KIND.LOCAL]: { hasRightPanel: false, canReceiveCommand: true },
 }
 
 /** A tab's kind, defaulting to `ssh` for tabs that carry no type. */
@@ -33,6 +37,24 @@ export function tabKind(tab) {
 
 export function isSshTab(tab) {
   return tabKind(tab) === TAB_KIND.SSH
+}
+
+/** A tab rendered by TerminalTab: an SSH shell or a local one. */
+export function isTerminalTab(tab) {
+  const kind = tabKind(tab)
+  return kind === TAB_KIND.SSH || kind === TAB_KIND.LOCAL
+}
+
+/**
+ * The name for a new local tab: the shell's label (`Local` for the default),
+ * then `zsh 2`, `zsh 3`, taking the lowest number no open local tab is using.
+ */
+export function nextLocalTabName(tabs, base = 'Local') {
+  const used = new Set((tabs || []).filter(t => tabKind(t) === TAB_KIND.LOCAL).map(t => t.name))
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base} ${n}`)) n++
+  return `${base} ${n}`
 }
 
 export function tabsOfKind(tabs, kind) {
@@ -56,5 +78,5 @@ export function acceptsCommands(tab) {
 
 /** Which store action closes this tab. */
 export function closeActionFor(tab) {
-  return isSshTab(tab) ? 'disconnect' : 'closeServiceTab'
+  return isTerminalTab(tab) ? 'disconnect' : 'closeServiceTab'
 }

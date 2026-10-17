@@ -14,7 +14,10 @@ use tauri::{ipc::Channel, Emitter, Window};
 use tokio::sync::mpsc;
 
 pub struct SshSessionHandle {
-    pub host_id: i64,
+    /// `None` for a local shell, which belongs to no saved host.
+    pub host_id: Option<i64>,
+    /// What a local tab is running, so a reconnect starts the same shell.
+    pub local_shell: Option<crate::local_shells::LocalShell>,
     pub write_tx: mpsc::UnboundedSender<String>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub resize_tx: mpsc::UnboundedSender<(u32, u32)>,
@@ -30,15 +33,15 @@ pub struct ExecPtyHandle {
 
 /// Event names and payload id key that distinguish the interactive shell
 /// from the exec-PTY (docker exec/logs) channel on the frontend.
-struct PtyEvents {
-    id_key: &'static str,
-    error: &'static str,
-    connected: &'static str,
-    data: &'static str,
-    disconnected: &'static str,
+pub(crate) struct PtyEvents {
+    pub id_key: &'static str,
+    pub error: &'static str,
+    pub connected: &'static str,
+    pub data: &'static str,
+    pub disconnected: &'static str,
 }
 
-const SHELL_EVENTS: PtyEvents = PtyEvents {
+pub(crate) const SHELL_EVENTS: PtyEvents = PtyEvents {
     id_key: "session_id",
     error: "ssh-error",
     connected: "ssh-connected",
@@ -139,7 +142,8 @@ pub fn connect(
     );
 
     Ok(SshSessionHandle {
-        host_id,
+        host_id: Some(host_id),
+        local_shell: None,
         write_tx,
         disconnect_tx,
         resize_tx,

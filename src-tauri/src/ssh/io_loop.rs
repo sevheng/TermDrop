@@ -54,11 +54,47 @@ const OUTPUT_BATCH_SIZE: usize = 4096;
 /// Flush output buffer at this interval during heavy output (ms).
 const OUTPUT_FLUSH_INTERVAL_MS: u64 = 16;
 
+/// The byte stream behind a terminal: a remote SSH channel or a local PTY.
+///
+/// `read` must be **non-blocking** -- return `WouldBlock` when nothing is
+/// waiting -- because `run_loop` polls the write, resize and disconnect queues
+/// between reads on a single thread. `Ok(0)` means the other end is gone.
+pub trait PtyIo: Read + Write {
+    fn resize(&mut self, cols: u32, rows: u32);
+    /// Tear the stream down once the loop has finished with it.
+    fn shutdown(&mut self);
+}
+
+impl PtyIo for SshChannel {
+    fn resize(&mut self, cols: u32, rows: u32) {
+        loop {
+            match self.request_pty_size(cols, rows, None, None) {
+                Ok(()) => break,
+                Err(e) => {
+                    let io_err: std::io::Error = e.into();
+                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.send_eof();
+        let _ = self.wait_eof();
+        let _ = self.close();
+        let _ = self.wait_close();
+    }
+}
+
 /// Run the main I/O loop for a PTY channel.
 /// Reads from `channel`, writes from `write_rx`, handles disconnect and,
 /// when `resize_rx` is given, terminal resize requests.
 pub fn run_loop(
-    mut channel: SshChannel,
+    mut channel: impl PtyIo,
     mut write_rx: mpsc::UnboundedReceiver<String>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
     mut resize_rx: Option<mpsc::UnboundedReceiver<(u32, u32)>>,
@@ -83,19 +119,7 @@ pub fn run_loop(
         // Handle resize requests
         if let Some(resize_rx) = resize_rx.as_mut() {
             while let Ok((cols, rows)) = resize_rx.try_recv() {
-                loop {
-                    match channel.request_pty_size(cols, rows, None, None) {
-                        Ok(()) => break,
-                        Err(e) => {
-                            let io_err: std::io::Error = e.into();
-                            if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                                std::thread::sleep(Duration::from_millis(5));
-                                continue;
-                            }
-                            break;
-                        }
-                    }
-                }
+                channel.resize(cols, rows);
             }
         }
 
@@ -159,10 +183,7 @@ pub fn run_loop(
         }
     }
 
-    let _ = channel.send_eof();
-    let _ = channel.wait_eof();
-    let _ = channel.close();
-    let _ = channel.wait_close();
+    channel.shutdown();
 
     if !intentional_disconnect {
         on_disconnect();

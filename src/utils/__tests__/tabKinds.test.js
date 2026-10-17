@@ -7,6 +7,8 @@ import {
   hasRightPanel,
   acceptsCommands,
   closeActionFor,
+  isTerminalTab,
+  nextLocalTabName,
 } from '../tabKinds.js'
 
 describe('tabKind', () => {
@@ -81,5 +83,42 @@ describe('closeActionFor', () => {
     expect(closeActionFor({ type: 'mongodb' })).toBe('closeServiceTab')
     expect(closeActionFor({ type: 'redis' })).toBe('closeServiceTab')
     expect(closeActionFor({ type: 'vnc' })).toBe('closeServiceTab')
+  })
+})
+
+describe('local tabs', () => {
+  const local = { type: 'local' }
+
+  it('render in TerminalTab and close like a shell', () => {
+    expect(tabKind(local)).toBe(TAB_KIND.LOCAL)
+    expect(isTerminalTab(local)).toBe(true)
+    expect(isTerminalTab({ id: '1' })).toBe(true)
+    expect(isTerminalTab({ type: 'redis' })).toBe(false)
+    expect(closeActionFor(local)).toBe('disconnect')
+  })
+
+  it('take commands but get no SFTP/Docker/Security panel', () => {
+    // There is no host behind a local shell for those panels to talk to.
+    expect(hasRightPanel(local)).toBe(false)
+    expect(acceptsCommands(local)).toBe(true)
+    expect(isSshTab(local)).toBe(false)
+  })
+
+  it('are named Local, Local 2, ... reusing the lowest free number', () => {
+    expect(nextLocalTabName([])).toBe('Local')
+    expect(nextLocalTabName(undefined)).toBe('Local')
+    expect(nextLocalTabName([{ type: 'local', name: 'Local' }])).toBe('Local 2')
+    expect(nextLocalTabName([
+      { type: 'local', name: 'Local' },
+      { type: 'local', name: 'Local 3' },
+    ])).toBe('Local 2')
+    // An SSH host that happens to be called Local does not count.
+    expect(nextLocalTabName([{ name: 'Local' }])).toBe('Local')
+  })
+
+  it('are named after the chosen shell', () => {
+    const tabs = [{ type: 'local', name: 'Ubuntu (WSL)' }, { type: 'local', name: 'Local' }]
+    expect(nextLocalTabName(tabs, 'Ubuntu (WSL)')).toBe('Ubuntu (WSL) 2')
+    expect(nextLocalTabName(tabs, 'PowerShell')).toBe('PowerShell')
   })
 })

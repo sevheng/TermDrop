@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Local terminal.** Press **Ctrl+Shift+T**, or click the terminal button in the tab bar, to open a shell on your own machine in a tab beside your SSH sessions — handy for `git`, `scp`, or the `ssh-keygen -R` the host-key dialog asks you to run. It starts your default shell (your login shell on macOS and Linux, PowerShell on Windows) in your home folder. Typing `exit` leaves the tab in place so you can reconnect it.
+  - **Pick a different shell.** When more than one is installed, the button shows a menu of them; with only one, it opens it straight away. TermDrop finds what's installed: on Windows that's PowerShell, Command Prompt, Git Bash and each of your WSL distros; on macOS and Linux it's the shells listed in `/etc/shells`. Tabs are named after the shell, such as `Ubuntu (WSL)`.
+
 ### Changed
 - **Dependencies refreshed.**
   - Tauri 2.12 and its plugins.

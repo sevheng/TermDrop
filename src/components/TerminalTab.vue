@@ -773,6 +773,11 @@ async function initTerminal() {
       selectAll()
       return false
     }
+    // Opens a local terminal; the window's shortcut handler does that, and
+    // the shell must not also receive it as Ctrl+T.
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
+      return false
+    }
     if (e.ctrlKey && e.key.toLowerCase() === 'f') {
       openSearch()
       return false
