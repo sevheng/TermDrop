@@ -160,7 +160,13 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
     // Dev builds only: the terminal benchmark (src/dev/termPerf.js) watches
     // every message and when xterm has processed it. Vite strips this branch
     // from release builds.
-    const perf = import.meta.env.DEV ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term) : null
+    const perf = import.meta.env.DEV
+      ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term, {
+        gpu: () => webgl !== null,
+        attachGpuRenderer,
+        detachGpuRenderer,
+      })
+      : null
     channel.onmessage = (message) => {
       // The backend sends raw bytes, which Tauri delivers as an ArrayBuffer
       // (inlined below 1 KB, fetched above it). The other shapes are what a
