@@ -132,6 +132,24 @@ impl Conn {
         }
     }
 
+    /// [`Conn::poll_byte`], blocking for at most `timeout` instead of the
+    /// usual read timeout.
+    ///
+    /// Only the read timeout is changed, never non-blocking mode: the writer
+    /// thread holds a clone of this socket, and non-blocking mode is shared
+    /// with it, so its writes would start failing with `WouldBlock`. The read
+    /// timeout is shared too, but only this side ever reads.
+    pub fn poll_byte_within(&mut self, timeout: Duration) -> Result<Option<u8>, String> {
+        self.stream
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| format!("could not configure the socket: {}", e))?;
+        let result = self.poll_byte();
+        self.stream
+            .set_read_timeout(Some(READ_TIMEOUT))
+            .map_err(|e| format!("could not configure the socket: {}", e))?;
+        result
+    }
+
     /// A second handle on the same socket, for the writer thread.
     ///
     /// Reads and writes are split across two threads so that an outgoing
