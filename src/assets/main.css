@@ -10,6 +10,7 @@
 @import '@fontsource/ibm-plex-sans/latin-ext-400.css' layer(base);
 @import '@fontsource/jetbrains-mono/latin-400.css' layer(base);
 @import '@fontsource/jetbrains-mono/latin-500.css' layer(base);
+@import './fonts/nerd-symbols.css' layer(base);
 
 @import '../themes/tokens.css' layer(base);
 @import '../themes/base.css' layer(base);

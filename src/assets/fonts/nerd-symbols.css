@@ -1,0 +1,15 @@
+/* Nerd Fonts icons (Symbols Nerd Font Mono v3.5.1, MIT, see
+   SymbolsNerdFont-LICENSE), converted to WOFF2. The terminal lists it right
+   after JetBrains Mono, so TUIs that draw Nerd Font icons (file trees, prompts,
+   status lines) show them without the user installing a patched font.
+   `unicode-range` is the font's own coverage: the Private Use Areas plus the
+   handful of icons it places outside them. JetBrains Mono comes first in the
+   stack, so the overlap with ordinary symbols (♥, ⚡) still draws from it. */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./SymbolsNerdFontMono-Regular.woff2') format('woff2');
+  unicode-range: U+23FB-23FE, U+2630, U+2665, U+26A1, U+276C-2771, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
