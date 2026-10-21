@@ -227,6 +227,7 @@ pub fn start(
         write_error,
         writer: Some(writer_thread),
         last_frame_bytes: 0,
+        rect_counts: [0; 5],
         shadow: None,
     };
     std::thread::Builder::new()
@@ -283,12 +284,22 @@ struct FrameTimes {
     server: Duration,
     read: Duration,
     bytes: u64,
+    /// `Conn::bytes_read` at the start of the window.
+    wire_start: Option<u64>,
     since: Option<Instant>,
 }
 
 impl FrameTimes {
-    fn record(&mut self, server: Duration, read: Duration, bytes: u64) {
+    fn record(
+        &mut self,
+        server: Duration,
+        read: Duration,
+        bytes: u64,
+        wire: u64,
+        rects: &mut [u32; 5],
+    ) {
         let since = *self.since.get_or_insert_with(Instant::now);
+        let wire_start = *self.wire_start.get_or_insert(wire);
         self.frames += 1;
         self.server += server;
         self.read += read;
@@ -302,9 +313,19 @@ impl FrameTimes {
                 server_ms = self.server.as_millis() as u64 / n,
                 read_ms = self.read.as_millis() as u64 / n,
                 kb_per_frame = self.bytes / n / 1024,
+                wire_kb_per_frame = wire.saturating_sub(wire_start) / n / 1024,
+                rects_raw = rects[0],
+                rects_copyrect = rects[1],
+                rects_zrle = rects[2],
+                rects_tight = rects[3],
+                rects_other = rects[4],
                 "VNC frame timing"
             );
-            *self = Self::default();
+            *rects = [0; 5];
+            *self = Self {
+                wire_start: Some(wire),
+                ..Self::default()
+            };
         }
     }
 }
@@ -385,6 +406,10 @@ struct LoopState {
     /// Size of the frame most recently handed to the renderer, for the timing
     /// log. Not shared state: only the reader thread touches it.
     last_frame_bytes: usize,
+    /// Rectangles read since the last timing log, by wire encoding: Raw,
+    /// CopyRect, ZRLE, Tight, anything else. Tells whether a slow desktop is
+    /// slow because the server chose an expensive encoding.
+    rect_counts: [u32; 5],
     /// What the canvas shows, so unchanged pixels are not sent again. Taken
     /// by each frame while it is built and put back afterwards.
     shadow: Option<Shadow>,
@@ -577,6 +602,8 @@ fn run_loop(mut state: LoopState, ack_rx: std::sync::mpsc::Receiver<u32>) {
                                 server,
                                 now.saturating_duration_since(first_byte),
                                 state.last_frame_bytes as u64,
+                                state.conn.bytes_read,
+                                &mut state.rect_counts,
                             );
                             pacing.update_arrived(update, now);
                         }
@@ -668,6 +695,13 @@ fn read_update(
         let mut raw = [0u8; RectHeader::WIRE_LEN];
         state.conn.read_exact(&mut raw)?;
         let header = RectHeader::parse(&raw)?;
+        state.rect_counts[match header.encoding {
+            proto::encoding::RAW => 0,
+            proto::encoding::COPY_RECT => 1,
+            proto::encoding::ZRLE => 2,
+            proto::encoding::TIGHT => 3,
+            _ => 4,
+        }] += 1;
 
         match decode_rect(&mut state.conn, &header, format, &mut frame, decoders)? {
             RectOutcome::Painted => {}

@@ -400,7 +400,10 @@ export async function runTermPerf(store) {
   toast('Terminal benchmark running — leave the window alone', 'info')
   try {
     await sleep(2000)
-    if (ONLY === 'app') {
+    if (ONLY === 'vnc') {
+      const { runVncPerf } = await import('./vncPerf.js')
+      await runVncPerf(store, report, phase)
+    } else if (ONLY === 'app') {
       opened.push(await appBenchmark(store, report, phase))
     } else {
       if (!ONLY) await phase('idle-no-tabs', async () => { await sleep(10000); return {} })
