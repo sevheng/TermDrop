@@ -39,9 +39,17 @@ use tokio::sync::mpsc;
 
 use super::conn::{handshake, Conn, Writer, CANCELLED};
 use super::encoding::{decode_rect, Decoders, RectOutcome};
-use super::frame::FrameBuilder;
+use super::frame::{FrameBuilder, Shadow};
 use super::pixel::PixelFormat;
 use super::proto::{self, server_message, RectHeader};
+
+/// How long the loop waits on the acknowledgement channel before glancing at
+/// the socket for a bell or clipboard update. Only while it is waiting on the
+/// renderer, which is when nothing else can arrive.
+const ACK_POLL: Duration = Duration::from_millis(20);
+
+/// How long that glance blocks.
+const SOCKET_GLANCE: Duration = Duration::from_millis(1);
 
 /// How long to wait for the renderer before assuming the acknowledgement is
 /// lost and asking for another frame anyway.
@@ -61,8 +69,9 @@ pub struct VncSessionHandle {
     pub host_id: i64,
     /// Encoded client messages, written by the thread in arrival order.
     input_tx: mpsc::UnboundedSender<Outgoing>,
-    /// One entry per painted frame.
-    ack_tx: mpsc::UnboundedSender<u32>,
+    /// One entry per painted frame. A std channel because the session thread
+    /// waits on it with a timeout, which tokio's unbounded receiver cannot do.
+    ack_tx: std::sync::mpsc::Sender<u32>,
     shutdown: Arc<AtomicBool>,
     /// Enforced here rather than in the UI: a view-only switch that only hides
     /// buttons is not a safety feature.
@@ -113,6 +122,9 @@ impl VncSessionHandle {
         if let Ok(mut slot) = self.channel.lock() {
             *slot = Some(channel);
         }
+        // A new channel means a new canvas, which starts black: nothing the
+        // shadow remembers is on it.
+        self.needs_full.store(true, Ordering::Relaxed);
     }
 
     pub fn disconnect(&self) {
@@ -166,7 +178,7 @@ pub fn start(
     let (input_tx, outgoing_rx) = mpsc::unbounded_channel();
     let writer = conn.split_writer()?;
     let write_error = Arc::new(Mutex::new(None));
-    let (ack_tx, ack_rx) = mpsc::unbounded_channel();
+    let (ack_tx, ack_rx) = std::sync::mpsc::channel();
     let channel = Arc::new(Mutex::new(None));
     let needs_full = Arc::new(AtomicBool::new(true));
     let paused = Arc::new(AtomicBool::new(false));
@@ -215,6 +227,8 @@ pub fn start(
         write_error,
         writer: Some(writer_thread),
         last_frame_bytes: 0,
+        rect_counts: [0; 5],
+        shadow: None,
     };
     std::thread::Builder::new()
         .name("vnc-session".into())
@@ -270,12 +284,22 @@ struct FrameTimes {
     server: Duration,
     read: Duration,
     bytes: u64,
+    /// `Conn::bytes_read` at the start of the window.
+    wire_start: Option<u64>,
     since: Option<Instant>,
 }
 
 impl FrameTimes {
-    fn record(&mut self, server: Duration, read: Duration, bytes: u64) {
+    fn record(
+        &mut self,
+        server: Duration,
+        read: Duration,
+        bytes: u64,
+        wire: u64,
+        rects: &mut [u32; 5],
+    ) {
         let since = *self.since.get_or_insert_with(Instant::now);
+        let wire_start = *self.wire_start.get_or_insert(wire);
         self.frames += 1;
         self.server += server;
         self.read += read;
@@ -289,9 +313,19 @@ impl FrameTimes {
                 server_ms = self.server.as_millis() as u64 / n,
                 read_ms = self.read.as_millis() as u64 / n,
                 kb_per_frame = self.bytes / n / 1024,
+                wire_kb_per_frame = wire.saturating_sub(wire_start) / n / 1024,
+                rects_raw = rects[0],
+                rects_copyrect = rects[1],
+                rects_zrle = rects[2],
+                rects_tight = rects[3],
+                rects_other = rects[4],
                 "VNC frame timing"
             );
-            *self = Self::default();
+            *rects = [0; 5];
+            *self = Self {
+                wire_start: Some(wire),
+                ..Self::default()
+            };
         }
     }
 }
@@ -372,6 +406,13 @@ struct LoopState {
     /// Size of the frame most recently handed to the renderer, for the timing
     /// log. Not shared state: only the reader thread touches it.
     last_frame_bytes: usize,
+    /// Rectangles read since the last timing log, by wire encoding: Raw,
+    /// CopyRect, ZRLE, Tight, anything else. Tells whether a slow desktop is
+    /// slow because the server chose an expensive encoding.
+    rect_counts: [u32; 5],
+    /// What the canvas shows, so unchanged pixels are not sent again. Taken
+    /// by each frame while it is built and put back afterwards.
+    shadow: Option<Shadow>,
 }
 
 /// Whether an update actually produced a frame for the renderer.
@@ -423,6 +464,17 @@ impl Pacing {
         self.request_in_flight = true;
     }
 
+    /// Nothing is being asked of the server and only an acknowledgement can
+    /// unblock the next request.
+    ///
+    /// The socket is quiet then -- RFB sends no update unasked -- so the loop
+    /// should be waiting on the acknowledgement, not on a socket read. Waiting
+    /// on the read put up to `READ_TIMEOUT` (20ms) between the renderer
+    /// finishing a frame and the next request going out.
+    fn waiting_only_for_ack(&self) -> bool {
+        !self.paused && !self.request_in_flight && self.unacked >= MAX_UNACKED
+    }
+
     /// Fold in the outcome of an update that has just been read.
     fn update_arrived(&mut self, update: Update, now: Instant) {
         self.request_in_flight = false;
@@ -460,7 +512,7 @@ impl Pacing {
     }
 }
 
-fn run_loop(mut state: LoopState, mut ack_rx: mpsc::UnboundedReceiver<u32>) {
+fn run_loop(mut state: LoopState, ack_rx: std::sync::mpsc::Receiver<u32>) {
     let format = PixelFormat::PREFERRED;
     let seq = AtomicU32::new(0);
     // Lives as long as the connection: see the note on `Decoders`. It also
@@ -495,6 +547,14 @@ fn run_loop(mut state: LoopState, mut ack_rx: mpsc::UnboundedReceiver<u32>) {
         if pacing.may_request(channel_ready(&state.channel)) {
             let (width, height) = *state.size.lock().unwrap_or_else(|e| e.into_inner());
             let full = state.needs_full.swap(false, Ordering::Relaxed);
+            if full {
+                // The answer repaints everything, so it must reach the canvas
+                // whole: a refresh is how a user recovers from a wrong picture.
+                match state.shadow.as_mut() {
+                    Some(shadow) => shadow.invalidate(),
+                    None => state.shadow = Some(Shadow::new(width, height)),
+                }
+            }
             let request = proto::encode_framebuffer_update_request(!full, 0, 0, width, height);
             // Queued rather than written here, so there stays exactly one
             // writer. The queue is FIFO, so a request posted behind a burst of
@@ -515,7 +575,16 @@ fn run_loop(mut state: LoopState, mut ack_rx: mpsc::UnboundedReceiver<u32>) {
             pacing.requested();
         }
 
-        match state.conn.poll_byte() {
+        let polled = if pacing.waiting_only_for_ack() {
+            if ack_rx.recv_timeout(ACK_POLL).is_ok() {
+                pacing.acked(Instant::now());
+                continue;
+            }
+            state.conn.poll_byte_within(SOCKET_GLANCE)
+        } else {
+            state.conn.poll_byte()
+        };
+        match polled {
             Ok(None) => continue,
             Err(e) => break Err(e),
             Ok(Some(message_type)) => match message_type {
@@ -533,6 +602,8 @@ fn run_loop(mut state: LoopState, mut ack_rx: mpsc::UnboundedReceiver<u32>) {
                                 server,
                                 now.saturating_duration_since(first_byte),
                                 state.last_frame_bytes as u64,
+                                state.conn.bytes_read,
+                                &mut state.rect_counts,
                             );
                             pacing.update_arrived(update, now);
                         }
@@ -617,13 +688,20 @@ fn read_update(
     state.conn.read_exact(&mut head)?;
     let count = u16::from_be_bytes([head[1], head[2]]);
 
-    let mut frame = FrameBuilder::new(seq);
+    let mut frame = FrameBuilder::new(seq).with_shadow(state.shadow.take());
     let mut resized: Option<(u16, u16)> = None;
 
     for _ in 0..count {
         let mut raw = [0u8; RectHeader::WIRE_LEN];
         state.conn.read_exact(&mut raw)?;
         let header = RectHeader::parse(&raw)?;
+        state.rect_counts[match header.encoding {
+            proto::encoding::RAW => 0,
+            proto::encoding::COPY_RECT => 1,
+            proto::encoding::ZRLE => 2,
+            proto::encoding::TIGHT => 3,
+            _ => 4,
+        }] += 1;
 
         match decode_rect(&mut state.conn, &header, format, &mut frame, decoders)? {
             RectOutcome::Painted => {}
@@ -647,6 +725,8 @@ fn read_update(
             serde_json::json!({ "sessionId": state.session_id, "width": width, "height": height }),
         );
     }
+
+    state.shadow = frame.take_shadow();
 
     if frame.is_empty() {
         // The server had nothing to draw. Saying so is what lets the caller
@@ -738,6 +818,31 @@ mod tests {
 
         pacing.acked(now);
         assert!(pacing.may_request(true));
+    }
+
+    #[test]
+    fn at_the_cap_the_loop_waits_on_the_acknowledgement_not_the_socket() {
+        // With both frames unacknowledged and nothing requested, the server
+        // has nothing to send; a socket read there only delayed the next
+        // request by up to 20ms after the renderer had finished.
+        let now = Instant::now();
+        let mut pacing = Pacing::default();
+        for _ in 0..MAX_UNACKED {
+            pacing.requested();
+            assert!(!pacing.waiting_only_for_ack(), "a request is in flight");
+            pacing.update_arrived(Update::Sent, now);
+        }
+        assert!(pacing.waiting_only_for_ack());
+
+        pacing.acked(now);
+        assert!(!pacing.waiting_only_for_ack(), "free to request again");
+
+        pacing.update_arrived(Update::Sent, now);
+        pacing.paused = true;
+        assert!(
+            !pacing.waiting_only_for_ack(),
+            "a paused renderer withholds acknowledgements on purpose"
+        );
     }
 
     #[test]

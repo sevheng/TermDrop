@@ -837,20 +837,12 @@ async function initTerminal() {
   // Binary data channel for raw SSH output (bypasses JSON events)
   terminal.openDataChannel('open_data_channel', { sessionId: props.sessionId })
 
-  // Smart input buffer: immediate for typing, chunked for paste
-  let inputBuffer = ''
-  let inputFlushTimer = null
-  const INPUT_FLUSH_DELAY = 2
+  // Keys go out immediately, pastes in chunks. xterm fires onData once per
+  // key, so there is nothing to batch: buffering multi-character keys (arrows,
+  // Alt/Ctrl combos, function keys, emoji) behind a 2 ms timer only delayed
+  // them, by ~5 ms on WebView2 where the timer fires late.
   const PASTE_CHUNK_SIZE = 512
   const PASTE_CHUNK_DELAY = 1
-
-  function flushInputBuffer() {
-    inputFlushTimer = null
-    if (!inputBuffer) return
-    const data = inputBuffer
-    inputBuffer = ''
-    invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
-  }
 
   function sendPasteChunks(data) {
     let offset = 0
@@ -867,19 +859,10 @@ async function initTerminal() {
   }
 
   term.onData((data) => {
-    if (data.length === 1) {
-      // Single char: send immediately (typing)
-      if (inputBuffer) flushInputBuffer()
-      invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
-    } else if (data.length > 50) {
-      // Large paste: chunk into pieces
-      if (inputBuffer) flushInputBuffer()
+    if (data.length > 50) {
       sendPasteChunks(data)
     } else {
-      // Rapid typing: accumulate and flush on idle
-      inputBuffer += data
-      if (inputFlushTimer) clearTimeout(inputFlushTimer)
-      inputFlushTimer = setTimeout(flushInputBuffer, INPUT_FLUSH_DELAY)
+      invoke('ssh_write', { sessionId: props.sessionId, data }).catch(() => {})
     }
   })
 

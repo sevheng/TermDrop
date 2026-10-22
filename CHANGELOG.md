@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Icons in terminal apps.** File trees, prompts and status lines that draw Nerd Font icons used to show empty boxes. TermDrop now ships the icon-only Symbols Nerd Font, so those icons appear in every terminal without installing anything. Ordinary text still uses JetBrains Mono.
+
+### Changed
+- **Arrow keys and shortcuts reach the server sooner.** Arrow keys, Alt and Ctrl combinations, function keys and emoji were held back a few milliseconds before being sent; they now go out immediately. On Windows, the time from an arrow key to the screen updating roughly halved (10.9 ms to 5.8 ms in our test).
+- **Remote desktop (VNC) is smoother, especially with a Mac.** macOS resends large parts of the screen that haven't changed; TermDrop now skips those before drawing, cutting the data per update from 1–6 MB to about 50–230 KB. While you move the mouse, the screen updates about a third more often (15 to 21 times a second).
+
 ## [0.5.0] — 2026-10-17
 
 ### Added

@@ -34,9 +34,12 @@ const IDLE_TABS = 5
 /** Per-session counters, fed by useXtermInstance for every processed write. */
 const probes = new Map()
 window.__termPerf = {
-  attach(sessionId, term) {
+  attach(sessionId, term, renderer = null) {
     const probe = {
-      term, messages: 0, bytes: 0, lastProcessed: 0, echoStart: null, latencies: [],
+      term, renderer, messages: 0, bytes: 0, lastProcessed: 0, echoStart: null, latencies: [],
+      // Receive times of writes xterm has not processed yet, and how long each
+      // waited: the backlog a heavy redraw builds up in the parser/renderer.
+      inflight: [], writeDelays: [],
       decoder: new TextDecoder(), tail: '', waiting: null,
       // The echo being timed: wall-clock stamps filled in as it travels.
       echo: null,
@@ -44,11 +47,14 @@ window.__termPerf = {
     probes.set(sessionId, probe)
     return {
       received() {
+        probe.inflight.push(performance.now())
         if (probe.echo && probe.echo.received === undefined) probe.echo.received = wallMs()
       },
       processed(data) {
         if (probe.echo && probe.echo.processed === undefined) probe.echo.processed = wallMs()
         const now = performance.now()
+        const got = probe.inflight.shift()
+        if (got !== undefined) probe.writeDelays.push(now - got)
         probe.messages++
         probe.bytes += data.length
         probe.lastProcessed = now
@@ -245,6 +251,143 @@ async function echoLatency(probe) {
   }
 }
 
+// A real full-screen app instead of a synthetic workload: copane (`ce`) on a
+// large file in a WSL tab. Only editor keys are sent -- arrows, PageUp/Down,
+// Ctrl+Home, Ctrl+E (focus editor) and Ctrl+Q -- never text, so nothing can
+// reach the AI pane beside it.
+const APP_DISTRO = import.meta.env.VITE_TERM_PERF_DISTRO || 'Ubuntu-20.04'
+const APP_COMMAND = import.meta.env.VITE_TERM_PERF_APP
+  || 'cd ~/Development-Personal/TermDrop/ssh-client && ce src-tauri/src/main.rs'
+const KEY = { down: '\x1b[B', pageDown: '\x1b[6~', ctrlHome: '\x1b[1;5H', ctrlE: '\x05', ctrlQ: '\x11' }
+
+const stats = (values) => ({
+  n: values.length,
+  median_ms: round(percentile(values, 50), 2),
+  p95_ms: round(percentile(values, 95), 2),
+  max_ms: values.length ? round(Math.max(...values), 2) : null,
+})
+
+/** Watch the main thread for stalls while `fn` runs, as `throughput` does. */
+async function withStallTicker(fn) {
+  let lastTick = performance.now()
+  let maxStall = 0
+  const ticker = setInterval(() => {
+    const now = performance.now()
+    maxStall = Math.max(maxStall, now - lastTick)
+    lastTick = now
+  }, 50)
+  try {
+    const result = await fn()
+    return { ...result, max_stall_ms: round(maxStall) }
+  } finally {
+    clearInterval(ticker)
+  }
+}
+
+/** Key → first processed output, like echoLatency but for an app's redraw. */
+async function keyLatency(probe, key, samples) {
+  probe.latencies = []
+  const echoes = []
+  await invoke('dev_perf_marks', { record: true })
+  for (let i = 0; i < samples; i++) {
+    const echo = { input: wallMs() }
+    probe.echo = echo
+    probe.echoStart = performance.now()
+    probe.term.input(key, true)
+    const deadline = performance.now() + 1000
+    while (probe.echoStart !== null && performance.now() < deadline) await sleep(1)
+    probe.echoStart = null
+    probe.echo = null
+    echoes.push(echo)
+    await sleep(60)
+  }
+  const marks = await invoke('dev_perf_marks', { record: false })
+  echoes.forEach((echo, i) => {
+    const end = echoes[i + 1]?.input ?? Infinity
+    for (const [stage, ms] of marks) {
+      if (ms >= echo.input && ms < end && echo[stage] === undefined) echo[stage] = ms
+    }
+  })
+  return { ...stats(probe.latencies), stages: stageBreakdown(echoes) }
+}
+
+/**
+ * Hold-the-key scrolling: `count` PageDowns at key-repeat speed, then how long
+ * the screen keeps catching up after the last one.
+ */
+async function scrollBurst(probe, count, intervalMs) {
+  await sleep(300)
+  probe.writeDelays = []
+  const before = { messages: probe.messages, bytes: probe.bytes }
+  return withStallTicker(async () => {
+    const start = performance.now()
+    for (let i = 0; i < count; i++) {
+      probe.term.input(KEY.pageDown, true)
+      await sleep(intervalMs)
+    }
+    const lastKey = performance.now()
+    await settle(probe, 250, 30000).catch(() => {})
+    const caughtUp = probe.lastProcessed
+    probe.term.input(KEY.ctrlHome, true)
+    await settle(probe, 250, 30000).catch(() => {})
+    return {
+      keys: count,
+      typing_ms: round(lastKey - start),
+      lag_after_last_key_ms: round(Math.max(0, caughtUp - lastKey)),
+      bytes: probe.bytes - before.bytes,
+      messages: probe.messages - before.messages,
+      write_backlog: stats(probe.writeDelays),
+    }
+  })
+}
+
+async function appBenchmark(store, report, phase) {
+  const shells = await store.loadLocalShells()
+  const shell = shells.find(s => s.id === `wsl:${APP_DISTRO}`) ?? null
+  if (!shell) throw new Error(`no WSL shell wsl:${APP_DISTRO}; have ${shells.map(s => s.id).join(', ')}`)
+  const sessionId = await store.openLocalTerminal(shell)
+  const deadline = performance.now() + 15000
+  while (!probes.has(sessionId)) {
+    if (performance.now() > deadline) throw new Error('terminal never attached')
+    await sleep(50)
+  }
+  const probe = probes.get(sessionId)
+  await settle(probe, 1500, 30000)
+  report.terminal = { cols: probe.term.cols, rows: probe.term.rows, gpu_at_start: probe.renderer?.gpu() ?? null }
+
+  await send(sessionId, `${APP_COMMAND}\r`)
+  // The AI pane keeps starting for a while; give it time rather than waiting
+  // for a quiet screen that a spinner may never allow.
+  await sleep(15000)
+  probe.term.input(KEY.ctrlE, true)
+  await sleep(1000)
+
+  await phase('app-idle', async () => {
+    const before = { messages: probe.messages, bytes: probe.bytes }
+    await sleep(10000)
+    return { seconds: 10, bytes: probe.bytes - before.bytes, messages: probe.messages - before.messages }
+  })
+
+  for (const mode of ['as-is', 'dom']) {
+    if (mode === 'dom') {
+      if (!probe.renderer?.gpu()) break // already DOM: nothing to compare
+      probe.renderer.detachGpuRenderer()
+      await sleep(500)
+    }
+    const gpu = probe.renderer?.gpu() ?? null
+    await phase(`app-arrow-latency-${mode}`, async () => ({ gpu, ...(await keyLatency(probe, KEY.down, 100)) }))
+    probe.term.input(KEY.ctrlHome, true)
+    for (let run = 0; run < 3; run++) {
+      await phase(`app-scroll-${mode}-${run}`, async () => ({ gpu, ...(await scrollBurst(probe, 40, 33)) }))
+    }
+  }
+  probe.renderer?.attachGpuRenderer()
+
+  probe.term.input(KEY.ctrlQ, true)
+  await sleep(3000)
+  return sessionId
+}
+
 export async function runTermPerf(store) {
   const name = import.meta.env.VITE_TERM_PERF_NAME || `run-${new Date().toISOString().replace(/[:.]/g, '-')}`
   const report = { name, user_agent: navigator.userAgent, started: new Date().toISOString(), phases: [] }
@@ -257,22 +400,29 @@ export async function runTermPerf(store) {
   toast('Terminal benchmark running — leave the window alone', 'info')
   try {
     await sleep(2000)
-    if (!ONLY) await phase('idle-no-tabs', async () => { await sleep(10000); return {} })
+    if (ONLY === 'vnc') {
+      const { runVncPerf } = await import('./vncPerf.js')
+      await runVncPerf(store, report, phase)
+    } else if (ONLY === 'app') {
+      opened.push(await appBenchmark(store, report, phase))
+    } else {
+      if (!ONLY) await phase('idle-no-tabs', async () => { await sleep(10000); return {} })
 
-    const main = await openShell(store)
-    opened.push(main.sessionId)
-    if (!ONLY) {
-      for (const [label, command] of Object.entries(WORKLOADS)) {
-        await phase(`throughput-${label}`, () => throughput(main.sessionId, main.probe, command))
+      const main = await openShell(store)
+      opened.push(main.sessionId)
+      if (!ONLY) {
+        for (const [label, command] of Object.entries(WORKLOADS)) {
+          await phase(`throughput-${label}`, () => throughput(main.sessionId, main.probe, command))
+        }
       }
-    }
-    await phase('echo-latency', () => echoLatency(main.probe))
+      await phase('echo-latency', () => echoLatency(main.probe))
 
-    if (!ONLY) {
-      for (let i = 1; i < IDLE_TABS; i++) opened.push((await openShell(store)).sessionId)
-      store.setActiveTab(main.sessionId)
-      await sleep(2000)
-      await phase(`idle-${IDLE_TABS}-tabs`, async () => { await sleep(IDLE_SECONDS * 1000); return { tabs: opened.length } })
+      if (!ONLY) {
+        for (let i = 1; i < IDLE_TABS; i++) opened.push((await openShell(store)).sessionId)
+        store.setActiveTab(main.sessionId)
+        await sleep(2000)
+        await phase(`idle-${IDLE_TABS}-tabs`, async () => { await sleep(IDLE_SECONDS * 1000); return { tabs: opened.length } })
+      }
     }
 
     report.finished = new Date().toISOString()

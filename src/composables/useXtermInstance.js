@@ -12,8 +12,11 @@ import { toast } from '../utils/toast.js'
 // Menlo and Monaco are macOS-only, so the old stack fell through to Courier
 // New on Linux and Windows — the two platforms most of these sessions run on.
 // JetBrains Mono ships with the app, so this resolves the same everywhere.
+// The bundled Nerd Font symbols come straight after it and cover only icon
+// code points, for TUIs that draw file-type and prompt icons.
+const NERD_SYMBOLS_FAMILY = 'Symbols Nerd Font Mono'
 export const TERMINAL_FONT_FAMILY =
-  '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
+  `"JetBrains Mono", "${NERD_SYMBOLS_FAMILY}", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace`
 const DEFAULT_FONT_SIZE = 14
 
 // A terminal whose WebGL context is lost this many times inside the window
@@ -36,7 +39,13 @@ let warnedNoWebgl = false
  */
 export async function loadTerminalFont(fontSize) {
   if (typeof document === 'undefined' || !document.fonts) return
-  await document.fonts.load(`${fontSize}px "JetBrains Mono"`).catch(() => {})
+  // The symbols face has a unicode-range, so the browser would fetch it only
+  // when an icon first appears -- after the WebGL renderer had already cached
+  // a fallback glyph for it. Loading it here, with a sample icon, avoids that.
+  await Promise.all([
+    document.fonts.load(`${fontSize}px "JetBrains Mono"`),
+    document.fonts.load(`${fontSize}px "${NERD_SYMBOLS_FAMILY}"`, '\ue5fa'),
+  ]).catch(() => {})
 }
 
 /** The saved terminal font size, or the default when unset. */
@@ -160,7 +169,13 @@ export function createTerminalInstance(container, { fontSize, search = false }) 
     // Dev builds only: the terminal benchmark (src/dev/termPerf.js) watches
     // every message and when xterm has processed it. Vite strips this branch
     // from release builds.
-    const perf = import.meta.env.DEV ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term) : null
+    const perf = import.meta.env.DEV
+      ? window.__termPerf?.attach(args.sessionId ?? args.ptySessionId, term, {
+        gpu: () => webgl !== null,
+        attachGpuRenderer,
+        detachGpuRenderer,
+      })
+      : null
     channel.onmessage = (message) => {
       // The backend sends raw bytes, which Tauri delivers as an ArrayBuffer
       // (inlined below 1 KB, fetched above it). The other shapes are what a

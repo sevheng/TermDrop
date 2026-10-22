@@ -38,6 +38,9 @@ pub const CANCELLED: &str = "cancelled";
 pub struct Conn {
     stream: TcpStream,
     pub shutdown: Arc<AtomicBool>,
+    /// Bytes taken off the socket, for the per-second timing log: what the
+    /// server actually sent, as against the decoded size handed to the renderer.
+    pub bytes_read: u64,
 }
 
 impl Conn {
@@ -59,7 +62,11 @@ impl Conn {
             .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|e| format!("could not configure the socket: {}", e))?;
 
-        Ok(Self { stream, shutdown })
+        Ok(Self {
+            stream,
+            shutdown,
+            bytes_read: 0,
+        })
     }
 
     fn cancelled(&self) -> bool {
@@ -78,7 +85,10 @@ impl Conn {
             }
             match self.stream.read(&mut buf[filled..]) {
                 Ok(0) => return Err("the server closed the connection".to_string()),
-                Ok(n) => filled += n,
+                Ok(n) => {
+                    filled += n;
+                    self.bytes_read += n as u64;
+                }
                 Err(e)
                     if matches!(
                         e.kind(),
@@ -117,7 +127,10 @@ impl Conn {
         let mut byte = [0u8; 1];
         match self.stream.read(&mut byte) {
             Ok(0) => Err("the server closed the connection".to_string()),
-            Ok(_) => Ok(Some(byte[0])),
+            Ok(_) => {
+                self.bytes_read += 1;
+                Ok(Some(byte[0]))
+            }
             Err(e)
                 if matches!(
                     e.kind(),
@@ -130,6 +143,24 @@ impl Conn {
             }
             Err(e) => Err(format!("read failed: {}", e)),
         }
+    }
+
+    /// [`Conn::poll_byte`], blocking for at most `timeout` instead of the
+    /// usual read timeout.
+    ///
+    /// Only the read timeout is changed, never non-blocking mode: the writer
+    /// thread holds a clone of this socket, and non-blocking mode is shared
+    /// with it, so its writes would start failing with `WouldBlock`. The read
+    /// timeout is shared too, but only this side ever reads.
+    pub fn poll_byte_within(&mut self, timeout: Duration) -> Result<Option<u8>, String> {
+        self.stream
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| format!("could not configure the socket: {}", e))?;
+        let result = self.poll_byte();
+        self.stream
+            .set_read_timeout(Some(READ_TIMEOUT))
+            .map_err(|e| format!("could not configure the socket: {}", e))?;
+        result
     }
 
     /// A second handle on the same socket, for the writer thread.

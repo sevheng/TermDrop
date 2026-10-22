@@ -283,6 +283,7 @@ async function connect() {
     await nextTick()
     prepareCanvas()
     await attachChannel()
+    if (import.meta.env.DEV) window.__vncPerf?.attach({ info: result, sessionId: sessionId.value, refresh, canvas: canvasEl.value })
   } catch (e) {
     error.value = String(e)
     connected.value = false
@@ -365,11 +366,23 @@ async function onFrame(message) {
     )
   }
   if (decoding.length) await Promise.all(decoding)
+  const decodedAt = performance.now()
 
   applyRects(parsed.rects, bitmaps)
 
   if (showStats.value) {
     recordFrame(buffer.byteLength, performance.now() - startedAt, gap)
+  }
+  // Dev builds only: the VNC benchmark (src/dev/vncPerf.js). Vite strips
+  // this branch from release builds.
+  if (import.meta.env.DEV && window.__vncPerf) {
+    window.__vncPerf.frame({
+      bytes: buffer.byteLength,
+      rects: parsed.rects,
+      decodeMs: decodedAt - startedAt,
+      applyMs: performance.now() - decodedAt,
+      gapMs: gap,
+    })
   }
 
   ackFrame(parsed.seq)
