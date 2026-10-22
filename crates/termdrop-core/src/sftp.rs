@@ -1,10 +1,10 @@
+use crate::events::{CoreEvent, Events};
 use base64::Engine;
 use serde::Serialize;
 use ssh2::Session;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Window};
 
 const SFTP_BUF_SIZE: usize = 65536; // 64KB
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -81,13 +81,13 @@ pub fn sftp_list(handle: &SftpSessionHandle, path: &str) -> Result<Vec<SftpFile>
 }
 
 /// Copy `reader` to `writer` in SFTP_BUF_SIZE chunks. With `progress`
-/// set to `(window, session_id, file)`, emits throttled `sftp-progress`
+/// set to `(events, session_id, file)`, emits throttled `SftpProgress`
 /// events plus a final one when the copy completes.
 fn copy_with_progress(
     reader: &mut impl Read,
     writer: &mut impl Write,
     total: u64,
-    progress: Option<(&Window, &str, &str)>,
+    progress: Option<(&Events, &str, &str)>,
 ) -> Result<(), String> {
     let mut buf = vec![0u8; SFTP_BUF_SIZE];
     let mut transferred = 0u64;
@@ -102,7 +102,7 @@ fn copy_with_progress(
         writer.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 
-        let Some((window, session_id, file)) = progress else {
+        let Some((events, session_id, file)) = progress else {
             continue;
         };
         let percent = if total > 0 {
@@ -117,32 +117,31 @@ fn copy_with_progress(
             || percent_delta >= PROGRESS_MIN_PERCENT_DELTA
             || transferred >= total
         {
-            emit_progress(window, session_id, file, transferred, total);
+            emit_progress(events, session_id, file, transferred, total);
             last_emit = Instant::now();
             last_percent = percent;
         }
     }
 
     // Final progress event
-    if let Some((window, session_id, file)) = progress {
-        emit_progress(window, session_id, file, transferred, total);
+    if let Some((events, session_id, file)) = progress {
+        emit_progress(events, session_id, file, transferred, total);
     }
 
     Ok(())
 }
 
-fn emit_progress(window: &Window, session_id: &str, file: &str, transferred: u64, total: u64) {
-    let payload = serde_json::json!({
-        "sftp_session_id": session_id,
-        "file": file,
-        "bytes_transferred": transferred,
-        "total_bytes": total,
+fn emit_progress(events: &Events, session_id: &str, file: &str, transferred: u64, total: u64) {
+    events.emit(CoreEvent::SftpProgress {
+        sftp_session_id: session_id.to_string(),
+        file: file.to_string(),
+        bytes_transferred: transferred,
+        total_bytes: total,
     });
-    let _ = window.emit("sftp-progress", payload);
 }
 
 pub fn sftp_upload(
-    window: Window,
+    events: Events,
     session_id: &str,
     handle: &SftpSessionHandle,
     local_path: &str,
@@ -165,12 +164,12 @@ pub fn sftp_upload(
         &mut reader,
         &mut remote_file,
         total,
-        Some((&window, session_id, remote_path)),
+        Some((&events, session_id, remote_path)),
     )
 }
 
 pub fn sftp_download(
-    window: Window,
+    events: Events,
     session_id: &str,
     handle: &SftpSessionHandle,
     remote_path: &str,
@@ -193,7 +192,7 @@ pub fn sftp_download(
         &mut remote_file,
         &mut local_file,
         total,
-        Some((&window, session_id, remote_path)),
+        Some((&events, session_id, remote_path)),
     )
 }
 

@@ -1,8 +1,8 @@
 //! The per-session thread: one OS thread owning one RFB connection.
 //!
 //! The shape mirrors `ssh/mod.rs`: a handle of channel senders lives in
-//! `AppState`, and the thread does all the blocking work. What differs is the
-//! pacing, which is the load-bearing part of this module.
+//! `Core` (`state.rs`), and the thread does all the blocking work. What
+//! differs is the pacing, which is the load-bearing part of this module.
 //!
 //! **Two threads, and exactly one of them writes.** The reader owns the `Conn`
 //! and never writes; the writer owns the cloned write half and is the only
@@ -33,9 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{Emitter, Window};
 use tokio::sync::mpsc;
+
+use crate::events::{ByteSink, ByteSlot, CoreEvent, Events};
 
 use super::conn::{handshake, Conn, Writer, CANCELLED};
 use super::encoding::{decode_rect, Decoders, RectOutcome};
@@ -84,7 +84,7 @@ pub struct VncSessionHandle {
     /// Registered by the panel once it is ready to paint. The thread requests
     /// no frames at all until this is set, which removes the dropped-first-frame
     /// race rather than papering over it.
-    channel: Arc<Mutex<Option<Channel<InvokeResponseBody>>>>,
+    channel: ByteSlot,
 }
 
 impl VncSessionHandle {
@@ -118,7 +118,7 @@ impl VncSessionHandle {
         self.view_only.load(Ordering::Relaxed)
     }
 
-    pub fn attach_channel(&self, channel: Channel<InvokeResponseBody>) {
+    pub fn attach_channel(&self, channel: Box<dyn ByteSink>) {
         if let Ok(mut slot) = self.channel.lock() {
             *slot = Some(channel);
         }
@@ -159,7 +159,7 @@ pub struct VncSessionInfo {
 /// disconnect event arriving moments later with no context.
 #[allow(clippy::too_many_arguments)]
 pub fn start(
-    window: Window,
+    events: Events,
     session_id: String,
     host_id: i64,
     address: &str,
@@ -215,7 +215,7 @@ pub fn start(
     };
 
     let thread_state = LoopState {
-        window,
+        events,
         session_id,
         conn,
         channel,
@@ -390,10 +390,10 @@ fn run_writer(
 }
 
 struct LoopState {
-    window: Window,
+    events: Events,
     session_id: String,
     conn: Conn,
-    channel: Arc<Mutex<Option<Channel<InvokeResponseBody>>>>,
+    channel: ByteSlot,
     needs_full: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     size: Arc<Mutex<(u16, u16)>>,
@@ -537,6 +537,7 @@ fn run_loop(mut state: LoopState, ack_rx: std::sync::mpsc::Receiver<u32>) {
         pacing.paused = state.paused.load(Ordering::Relaxed);
         if pacing.expire_ack(Instant::now(), ACK_TIMEOUT) {
             tracing::debug!(
+                target: "termdrop::vnc",
                 session = %state.session_id,
                 "no frame acknowledgement within {}ms; continuing anyway",
                 ACK_TIMEOUT.as_millis()
@@ -614,7 +615,9 @@ fn run_loop(mut state: LoopState, ack_rx: std::sync::mpsc::Receiver<u32>) {
                 // outstanding: the server sent them *alongside* an update we
                 // are still waiting for, so the request really is in flight.
                 server_message::BELL => {
-                    let _ = state.window.emit("vnc-bell", &state.session_id);
+                    state.events.emit(CoreEvent::VncBell {
+                        session_id: state.session_id.clone(),
+                    });
                 }
                 server_message::SERVER_CUT_TEXT => {
                     if let Err(e) = read_cut_text(&mut state) {
@@ -656,24 +659,25 @@ fn run_loop(mut state: LoopState, ack_rx: std::sync::mpsc::Receiver<u32>) {
         (outcome, None) => outcome,
     };
 
+    let session_id = state.session_id.clone();
     match outcome {
         Ok(()) => {
-            let _ = state.window.emit("vnc-disconnected", &state.session_id);
+            state.events.emit(CoreEvent::VncDisconnected { session_id });
         }
         Err(e) if e == CANCELLED => {
-            let _ = state.window.emit("vnc-disconnected", &state.session_id);
+            state.events.emit(CoreEvent::VncDisconnected { session_id });
         }
         Err(e) => {
             tracing::warn!(session = %state.session_id, "VNC session ended: {}", e);
-            let _ = state.window.emit(
-                "vnc-error",
-                serde_json::json!({ "sessionId": state.session_id, "error": e }),
-            );
+            state.events.emit(CoreEvent::VncError {
+                session_id,
+                error: e,
+            });
         }
     }
 }
 
-fn channel_ready(slot: &Arc<Mutex<Option<Channel<InvokeResponseBody>>>>) -> bool {
+fn channel_ready(slot: &ByteSlot) -> bool {
     slot.lock().map(|s| s.is_some()).unwrap_or(false)
 }
 
@@ -720,10 +724,11 @@ fn read_update(
         // A cleared canvas has nothing to update incrementally against.
         state.needs_full.store(true, Ordering::Relaxed);
         frame.push_desktop_size(width, height);
-        let _ = state.window.emit(
-            "vnc-resize",
-            serde_json::json!({ "sessionId": state.session_id, "width": width, "height": height }),
-        );
+        state.events.emit(CoreEvent::VncResize {
+            session_id: state.session_id.clone(),
+            width,
+            height,
+        });
     }
 
     state.shadow = frame.take_shadow();
@@ -741,12 +746,13 @@ fn read_update(
 }
 
 fn send_frame(state: &LoopState, bytes: Vec<u8>) {
-    if let Ok(slot) = state.channel.lock() {
-        if let Some(channel) = slot.as_ref() {
-            // Raw, not Vec<u8>: Tauri's blanket Serialize impl would turn a
-            // Vec<u8> into a JSON array of decimal numbers, which for an 8MB
+    if let Ok(mut slot) = state.channel.lock() {
+        if let Some(channel) = slot.as_mut() {
+            // In the Tauri app this is a Raw `InvokeResponseBody`, not a
+            // Vec<u8>: Tauri's blanket Serialize impl would turn a Vec<u8>
+            // into a JSON array of decimal numbers, which for an 8MB
             // framebuffer is both enormous and slow to parse.
-            let _ = channel.send(InvokeResponseBody::Raw(bytes));
+            let _ = channel.send(bytes);
         }
     }
 }
@@ -757,10 +763,10 @@ fn read_cut_text(state: &mut LoopState) -> Result<(), String> {
     let len = u32::from_be_bytes([head[3], head[4], head[5], head[6]]) as usize;
     let bytes = state.conn.read_vec(len, MAX_CUT_TEXT, "clipboard")?;
     let text = proto::decode_server_cut_text(&bytes);
-    let _ = state.window.emit(
-        "vnc-clipboard",
-        serde_json::json!({ "sessionId": state.session_id, "text": text }),
-    );
+    state.events.emit(CoreEvent::VncClipboard {
+        session_id: state.session_id.clone(),
+        text,
+    });
     Ok(())
 }
 

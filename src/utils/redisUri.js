@@ -1,7 +1,7 @@
 /**
  * Reading and writing `redis://` URIs.
  *
- * Mirrors `src-tauri/src/uri.rs`: the last `@` in the authority separates
+ * Mirrors `crates/termdrop-core/src/uri.rs`: the last `@` in the authority separates
  * userinfo from host, and the first `:` inside the userinfo separates user from
  * password. The password stays percent-encoded exactly as it appeared, so
  * putting it back is a pure splice.

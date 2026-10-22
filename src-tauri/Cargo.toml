@@ -7,71 +7,37 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# The backend lives in crates/termdrop-core, with no Tauri dependency, so the
+# native app can share it. Listing it here (and in default-members) is what
+# makes `cargo test`, clippy and fmt from this directory cover it as well.
+[workspace]
+members = [".", "../crates/termdrop-core"]
+default-members = [".", "../crates/termdrop-core"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Everything below the commands: SSH, SFTP, VNC, the datastores, storage. Its
+# own Cargo.toml carries the dependencies (and the version pins) those need.
+termdrop-core = { path = "../crates/termdrop-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
-serde = { version = "1", features = ["derive"] }
+tauri-plugin-clipboard-manager = "2"
 serde_json = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.35"
 dirs = "7"
-aes-gcm = "0.10"
-rand = "0.10"
-ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
-base64 = "0.22"
-# known_hosts parsing. All three are already in Cargo.lock as transitive
-# dependencies, so declaring them adds nothing to the build graph. Held at
-# these versions (with the VNC crypto crates below) until tauri-codegen,
-# dbus-secret-service and friends move to the 0.11/0.13 RustCrypto line;
-# bumping only ours would compile a second copy of each.
-hmac = "0.12"   # hashed host names are HMAC-SHA1 over the salt
-sha2 = "0.10"   # SHA256 fingerprints, the form ssh-keygen -lf prints
-sha1 = "0.10"
-hex = "0.4"
-whoami = "2.1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-mongodb = "3"
-bson = "2"   # must match the bson mongodb uses (mongodb 3.x is on bson 2)
-futures-util = "0.3"
-tauri-plugin-clipboard-manager = "2"
-redis = { version = "1.7.0", features = ["tokio-comp", "tokio-native-tls-comp"] }
-
-# VNC (RFB). Every one of these but `des` is already in Cargo.lock as a
-# transitive dependency, so declaring them adds nothing to the build graph.
-des = "0.8"          # VNC auth challenge-response
-cipher = "0.4"       # BlockEncrypt, shared by des and aes
-aes = "0.8"          # Apple ARD credential block (AES-128-ECB)
-md-5 = "0.10"        # Apple ARD: MD5 of the Diffie-Hellman shared secret
-num-bigint = "0.4"   # Apple ARD: modpow
-flate2 = "1"         # zlib streams inside ZRLE and Tight rects
-portable-pty = "0.9"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
-
-# keyring held at 3: v4 splits into keyring-core plus a separate store crate
-# per platform, and the macOS/Windows stores are compiled only there, which
-# CI does not build. Moving needs a release build on each OS and a check that
-# passwords saved by v3 are still found.
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3", features = ["windows-native"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
-

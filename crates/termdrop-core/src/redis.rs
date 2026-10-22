@@ -17,7 +17,7 @@
 //!
 //! The module is `mod redis`, which shadows the `redis` crate inside this
 //! crate. `mongodb.rs` has the same collision and solves it the same way: the
-//! crate is always `::redis::`, as in `main.rs`'s `::mongodb::Client`.
+//! crate is always `::redis::`, as in `state.rs`'s `::mongodb::Client`.
 
 use ::redis::aio::MultiplexedConnection;
 use ::redis::{ConnectionInfo, IntoConnectionInfo};
@@ -1223,10 +1223,10 @@ mod tests {
 // Backup and restore
 // ---------------------------------------------------------------------------
 
+use crate::events::{CoreEvent, Events, RedisProgress};
 use crate::redis_backup::{BackupHeader, BackupReader, BackupRecord, BackupWriter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Window};
 
 /// Keys per pipeline. Large enough that the round trip is amortised, small
 /// enough that a cancel is noticed promptly and one batch fits in memory.
@@ -1267,12 +1267,13 @@ pub struct RedisOpSummary {
     pub elapsed_ms: u64,
 }
 
-/// Emits `redis-op-progress` and `redis-op-cancelled`.
+/// Emits the progress events (`redis-op-progress` and `redis-op-cancelled`
+/// in the Tauri app).
 ///
 /// Distinct event names from the MongoDB path's, so a Redis backup cannot
 /// drive a MongoDB panel's progress bar.
 struct Progress<'a> {
-    window: &'a Window,
+    events: &'a Events,
     op_id: &'a str,
     db: i64,
     last: std::time::Instant,
@@ -1280,9 +1281,9 @@ struct Progress<'a> {
 }
 
 impl<'a> Progress<'a> {
-    fn new(window: &'a Window, op_id: &'a str, db: i64) -> Self {
+    fn new(events: &'a Events, op_id: &'a str, db: i64) -> Self {
         Self {
-            window,
+            events,
             op_id,
             db,
             // Zero-time start so the first update always goes out.
@@ -1312,25 +1313,22 @@ impl<'a> Progress<'a> {
     }
 
     fn emit(&self, stage: &str, processed: u64, total: u64, percent: f64, detail: &str) {
-        let _ = self.window.emit(
-            "redis-op-progress",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "stage": stage,
-                "processed": processed,
-                "total": total,
-                "percent": percent.round() as u64,
-                "detail": detail,
-            }),
-        );
+        self.events.emit(CoreEvent::RedisProgress(RedisProgress {
+            op_id: self.op_id.to_string(),
+            db: self.db,
+            stage: stage.to_string(),
+            processed,
+            total,
+            percent: percent.round() as u64,
+            detail: detail.to_string(),
+        }));
     }
 
     fn cancelled(&self) {
-        let _ = self.window.emit(
-            "redis-op-cancelled",
-            serde_json::json!({ "opId": self.op_id, "db": self.db }),
-        );
+        self.events.emit(CoreEvent::RedisCancelled {
+            op_id: self.op_id.to_string(),
+            db: self.db,
+        });
     }
 }
 
@@ -1364,7 +1362,7 @@ fn refuse_cluster(mode: &str) -> Result<(), String> {
 /// `SCAN` + `DUMP` a database into a `.tdredis` file.
 #[allow(clippy::too_many_arguments)]
 pub async fn export_keys(
-    window: &Window,
+    events: &Events,
     cancelled: Arc<AtomicBool>,
     op_id: &str,
     conn: &mut MultiplexedConnection,
@@ -1379,7 +1377,7 @@ pub async fn export_keys(
     refuse_cluster(server_mode)?;
 
     let started = std::time::Instant::now();
-    let mut progress = Progress::new(window, op_id, db);
+    let mut progress = Progress::new(events, op_id, db);
     let mut summary = RedisOpSummary::default();
 
     // The whole keyspace is scanned even with a MATCH, so DBSIZE is the honest
@@ -1534,7 +1532,7 @@ pub fn read_backup_header(path: &str) -> Result<BackupHeader, String> {
 /// `RESTORE` every record of a `.tdredis` file into one database.
 #[allow(clippy::too_many_arguments)]
 pub async fn import_keys(
-    window: &Window,
+    events: &Events,
     cancelled: Arc<AtomicBool>,
     op_id: &str,
     conn: &mut MultiplexedConnection,
@@ -1545,7 +1543,7 @@ pub async fn import_keys(
     server_version: &str,
 ) -> Result<RedisOpSummary, String> {
     let started = std::time::Instant::now();
-    let mut progress = Progress::new(window, op_id, db);
+    let mut progress = Progress::new(events, op_id, db);
     let mut summary = RedisOpSummary::default();
 
     let file =
@@ -2026,8 +2024,8 @@ mod live_backup {
             .to_string()
     }
 
-    /// `export_keys` needs a Window to emit progress on, which a unit test has
-    /// no way to build, so these drive the pieces directly instead.
+    /// These drive the pieces directly rather than through `export_keys`,
+    /// which they predate: it once needed a Tauri `Window` to emit progress on.
     async fn dump_all(c: &mut MultiplexedConnection, path: &str) -> u64 {
         let header = BackupHeader {
             app: "test".into(),

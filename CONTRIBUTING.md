@@ -150,9 +150,11 @@ ssh-client/
 │   ├── themes/       # Design tokens and base styles
 │   ├── utils/        # Pure, unit-tested helpers
 │   └── views/        # MainWindow
-├── src-tauri/        # Rust backend and Tauri commands
+├── crates/
+│   └── termdrop-core/ # Rust backend: SSH, SFTP, VNC, datastores, storage
+├── src-tauri/        # Tauri app: commands over termdrop-core
 │   ├── src/          # Rust source code
-│   └── Cargo.toml    # Rust dependencies
+│   └── Cargo.toml    # Rust dependencies; the cargo workspace root
 ├── public/           # Static assets
 ├── index.html
 ├── package.json
@@ -160,7 +162,9 @@ ssh-client/
 ```
 
 - Frontend code lives in `src/` and uses Vue 3 with plain JavaScript (`<script setup>`).
-- Backend code and native commands live in `src-tauri/src/` and are written in Rust.
+- Backend code is Rust: the backend itself is the `crates/termdrop-core` library
+  (no Tauri dependency), and the Tauri commands that expose it live in
+  `src-tauri/src/`.
 
 A few conventions worth knowing before you start:
 

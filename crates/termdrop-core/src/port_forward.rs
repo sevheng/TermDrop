@@ -18,6 +18,12 @@ pub struct ForwardManager {
     pub active: Mutex<std::collections::HashMap<i64, ActiveForward>>,
 }
 
+impl Default for ForwardManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ForwardManager {
     pub fn new() -> Self {
         Self {
