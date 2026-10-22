@@ -220,6 +220,7 @@ pub fn prompt(
         }
         let cancel = answer.clone();
         let ok = answer.clone();
+        let enter = answer.clone();
         let close = answer.clone();
         dialog
             .title(options.title.clone())
@@ -247,6 +248,14 @@ pub fn prompt(
                             .on_click(move |_, w, cx| ok(true, w, cx)),
                     ),
             )
+            // Enter in the field reaches the dialog as its Confirm action,
+            // whose default closes the dialog, and a close reads as cancel.
+            // Answering here submits instead; `answer` closes the dialog
+            // itself, so the default must not close it again.
+            .on_ok(move |_, w, cx| {
+                enter(true, w, cx);
+                false
+            })
             .on_close(move |_, w, cx| close(false, w, cx))
     });
 }
