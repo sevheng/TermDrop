@@ -11,6 +11,15 @@ path = "src/main.rs"
 [dependencies]
 gpui-kit.workspace = true
 termdrop-terminal = { path = "../terminal" }
+# The backend the Tauri app also runs on. A member of the src-tauri workspace
+# there; cargo ignores that when it is a path dependency from this one.
+termdrop-core = { path = "../../crates/termdrop-core" }
+# The core's async calls need a runtime the app owns (see core_backend.rs).
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# Carries core events from backend threads to the UI thread.
+async-channel = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

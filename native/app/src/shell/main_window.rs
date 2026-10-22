@@ -5,13 +5,15 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     Icon, Sizable as _, TitleBar, h_flex, resizable::HandleEdge, resize_handle, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
+    Anchor, AnyElement, AnyView, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
     FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement, KeyBinding, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
@@ -19,7 +21,7 @@ use gpui_kit::{
 use super::host_sidebar::{HostSidebar, SidebarEvent};
 use super::settings::open_settings;
 use crate::app::tab_kind::{TabKind, has_right_panel};
-use crate::app::{AppEvent, AppModel};
+use crate::app::{AppEvent, AppModel, LocalShellChoice};
 use crate::backend::TabContentFactory;
 use crate::ui::dialogs::{ConfirmOptions, confirm};
 use crate::ui::empty_state::EmptyState;
@@ -145,6 +147,7 @@ impl MainWindow {
                 }
             }
             AppEvent::TabClosed { tab, .. } => {
+                self.factory.tab_closed(tab, cx);
                 self.contents.remove(&tab.id);
             }
             AppEvent::ThemeChanged(choice) => theme::install(*choice, cx),
@@ -290,6 +293,7 @@ impl MainWindow {
         }
 
         let m_local = self.model.clone();
+        let shells = model.local_shells().to_vec();
         let m_panel = self.model.clone();
         let model_settings = self.model.clone();
         h_flex()
@@ -304,18 +308,7 @@ impl MainWindow {
                     .flex_none()
                     .px_1()
                     .gap_0p5()
-                    .child(
-                        IconButton::new(
-                            "new-local-terminal",
-                            IconName::SquareTerminal,
-                            "New local terminal (Ctrl+Shift+T)",
-                        )
-                        .on_click(move |_, _, cx| {
-                            m_local.update(cx, |m, cx| {
-                                m.open_local(None, cx);
-                            });
-                        }),
-                    )
+                    .child(new_local_button(m_local, shells))
                     .when(show_panel_toggle, |d| {
                         d.child(
                             IconButton::new(
@@ -414,6 +407,43 @@ impl MainWindow {
                     .child("The SSH tab's panels arrive with Phase 5."),
             )
     }
+}
+
+/// The new-terminal button. With one shell (or detection not finished) it
+/// opens the default directly; with several it is a menu of them, as the Vue
+/// tab bar's button is. Ctrl+Shift+T always opens the default.
+fn new_local_button(model: Entity<AppModel>, shells: Vec<LocalShellChoice>) -> AnyElement {
+    const LABEL: &str = "New local terminal (Ctrl+Shift+T)";
+    if shells.len() < 2 {
+        return IconButton::new("new-local-terminal", IconName::SquareTerminal, LABEL)
+            .on_click(move |_, _, cx| {
+                model.update(cx, |m, cx| {
+                    m.open_local(None, cx);
+                });
+            })
+            .into_any_element();
+    }
+    Button::new("new-local-terminal")
+        .ghost()
+        .small()
+        .icon(Icon::new(IconName::SquareTerminal))
+        .tooltip(LABEL)
+        .accessibility_label(LABEL)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+            for shell in &shells {
+                let model = model.clone();
+                let shell = shell.clone();
+                menu = menu.item(PopupMenuItem::new(shell.label.clone()).on_click(
+                    move |_, _, cx| {
+                        model.update(cx, |m, cx| {
+                            m.open_local_shell(&shell, cx);
+                        });
+                    },
+                ));
+            }
+            menu
+        })
+        .into_any_element()
 }
 
 impl Render for MainWindow {

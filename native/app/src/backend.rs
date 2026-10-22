@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use anyhow::{Result, anyhow};
-use gpui_kit::{AnyView, App, Window};
+use gpui_kit::{AnyView, App, Entity, Window};
+
+use crate::app::AppModel;
 
 use crate::app::display::{mongo_display_uri, redis_display_uri, vnc_display_target};
 use crate::app::host_kind::{HostKind, KindFields, has_vnc};
@@ -121,7 +123,17 @@ pub trait HostStore: Send + Sync {
 /// survives switching tabs. The integration step supplies one that returns a
 /// `TerminalView` for terminal tabs.
 pub trait TabContentFactory: 'static {
+    /// Called once, after the model exists and before the window opens, so
+    /// a factory with sessions can keep the model and start background work
+    /// (detecting local shells, routing backend events).
+    fn start(&self, _model: &Entity<AppModel>, _cx: &mut App) {}
+
     fn build(&self, tab: &Tab, window: &mut Window, cx: &mut App) -> AnyView;
+
+    /// The tab left the strip, after the user confirmed. Where a session is
+    /// torn down: the view is dropped right after, and a dropped view cannot
+    /// be relied on to say goodbye.
+    fn tab_closed(&self, _tab: &Tab, _cx: &mut App) {}
 }
 
 /// The default factory: a labelled placeholder per tab kind.

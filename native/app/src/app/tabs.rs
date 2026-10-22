@@ -19,6 +19,9 @@ pub struct Tab {
     /// a shell starts false and is flipped by its session's events.
     pub connected: bool,
     pub connecting: bool,
+    /// For a local tab, the detected shell it was opened with (an id from
+    /// `local_shells`, never a program path); `None` is the default shell.
+    pub shell_id: Option<String>,
 }
 
 impl Tab {
@@ -35,6 +38,7 @@ impl Tab {
             title: title.into(),
             connected: !kind.is_terminal(),
             connecting: false,
+            shell_id: None,
         }
     }
 }

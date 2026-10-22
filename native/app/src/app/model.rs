@@ -47,6 +47,16 @@ pub struct AppModel {
     prefs: Prefs,
     right_panel_open: bool,
     tab_seq: u64,
+    local_shells: Vec<LocalShellChoice>,
+}
+
+/// A shell this machine has, as the new-terminal menu lists it. Only the id
+/// goes back to the backend, which resolves it against its own detection, so
+/// the UI can never name a program to run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalShellChoice {
+    pub id: String,
+    pub label: String,
 }
 
 impl EventEmitter<AppEvent> for AppModel {}
@@ -66,6 +76,7 @@ impl AppModel {
             prefs,
             right_panel_open: true,
             tab_seq: 0,
+            local_shells: Vec::new(),
         };
         // A failed load leaves the list empty and `hosts_loaded` false; the
         // sidebar then shows its loading state rather than "no hosts yet".
@@ -230,6 +241,33 @@ impl AppModel {
         tab.connecting = true;
         self.push_tab(tab, cx);
         Some(id)
+    }
+
+    /// A local tab for one detected shell, titled after it (`zsh`,
+    /// `Ubuntu (WSL)`).
+    pub fn open_local_shell(
+        &mut self,
+        shell: &LocalShellChoice,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let title = next_local_tab_name(self.tabs.all(), &shell.label);
+        let id = self.next_id("local");
+        let mut tab = Tab::new(id.clone(), None, TabKind::Local, title);
+        tab.connecting = true;
+        tab.shell_id = Some(shell.id.clone());
+        self.push_tab(tab, cx);
+        Some(id)
+    }
+
+    /// The shells the new-terminal button offers. With more than one it
+    /// becomes a menu; with one or none it opens the default directly.
+    pub fn local_shells(&self) -> &[LocalShellChoice] {
+        &self.local_shells
+    }
+
+    pub fn set_local_shells(&mut self, shells: Vec<LocalShellChoice>, cx: &mut Context<Self>) {
+        self.local_shells = shells;
+        cx.notify();
     }
 
     fn push_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {

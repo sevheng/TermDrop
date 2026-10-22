@@ -5,6 +5,8 @@
 //! - [`ui`]: the theme and the building blocks every panel uses.
 //! - [`shell`]: the window, sidebar, tab strip and settings.
 //! - [`backend`]: the seams the core and terminal tracks plug into.
+//! - [`core_backend`] and [`tabs`]: those seams filled from `termdrop-core`
+//!   and `termdrop-terminal`.
 
 // The theme config is one `serde_json::json!` object with a key per GPUI Kit
 // colour slot, which is deeper than the macro's default recursion budget.
@@ -12,7 +14,9 @@
 
 pub mod app;
 pub mod backend;
+pub mod core_backend;
 pub mod shell;
+pub mod tabs;
 pub mod ui;
 
 use std::rc::Rc;
@@ -25,16 +29,20 @@ use app::AppModel;
 use backend::{HostStore, TabContentFactory};
 use shell::main_window::{MainWindow, bind_keys};
 
-/// Open the app over `store`, with `factory` filling each tab. `main` passes
-/// the fake backend and placeholders; the integration step passes the core
-/// adapter and the terminal factory.
+/// Open the app over `store`, with `factory` filling each tab: the core
+/// adapter and terminals normally, the fake backend and placeholders with
+/// `--demo`.
 pub fn run(store: Arc<dyn HostStore>, factory: Rc<dyn TabContentFactory>) {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // After the kit: its root binds Tab and Ctrl+C, and the terminal
+            // rebinds them in its own context so they reach the program.
+            termdrop_terminal::init(cx);
             bind_keys(cx);
             let model = cx.new(|cx| AppModel::new(store, cx));
+            factory.start(&model, cx);
             // Before the window opens, so the first frame is in the saved theme.
             ui::theme::install(model.read(cx).theme(), cx);
 

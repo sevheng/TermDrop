@@ -13,4 +13,4 @@ pub mod prefs;
 pub mod tab_kind;
 pub mod tabs;
 
-pub use model::{AppEvent, AppModel};
+pub use model::{AppEvent, AppModel, LocalShellChoice};
