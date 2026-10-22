@@ -29,9 +29,9 @@ use gpui_kit::{
 
 use crate::app::AppModel;
 use crate::app::host_form::{
-    AuthType, Common, EditorKind, Errors, Field, GroupChoice, MongoForm, RedisForm, SavePlan,
-    SshForm, VncForm, group_choices, jump_host_candidates, jump_missing, masked_uri,
-    ssh_host_choices, tunnel_hosts, vnc_tunnel_choices, vnc_tunnel_hint,
+    AuthType, Common, EditorKind, Errors, Field, GroupChoice, MongoForm, RedisForm, SaveOutcome,
+    SavePlan, SshForm, VncForm, group_choices, jump_host_candidates, jump_missing, masked_uri,
+    run_save, ssh_host_choices, tunnel_hosts, vnc_tunnel_choices, vnc_tunnel_hint,
 };
 use crate::backend::{HostRecord, HostSummary, SecretKind};
 use crate::ui::choice::{Choice, index_of};
@@ -582,7 +582,9 @@ impl HostEditor {
     /// validation error or a failed row write it stays open, as the Vue
     /// dialogs did. A secret that fails after the row was written is
     /// reported, and the dialog closes, because the row now exists and
-    /// saving again would add it twice.
+    /// saving again would add it twice. A row whose stored URI still holds
+    /// its password stores that password first and is left untouched, with
+    /// the dialog open, when that fails (see [`run_save`]).
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.done {
             return false;
@@ -596,23 +598,31 @@ impl HostEditor {
             }
         };
         let id = self.existing.as_ref().map(|r| r.id);
-        let saved = self
-            .model
-            .update(cx, |m, cx| m.save_host(id, &plan.record, cx));
-        let host_id = match saved {
-            Ok(id) => id,
-            Err(e) => {
-                toast(window, cx, self.kind.save_failed(&e), ToastKind::Error);
-                return false;
+        let model = self.model.clone();
+        let outcome = run_save(
+            &plan,
+            id,
+            cx,
+            |cx, record| model.update(cx, |m, cx| m.save_host(id, record, cx)),
+            |cx, kind, host_id, secret| model.read(cx).store_secret(kind, host_id, secret),
+        );
+        match outcome {
+            SaveOutcome::Saved { failed, .. } => {
+                for (kind, e) in failed {
+                    toast(window, cx, secret_failed(kind, &e), ToastKind::Error);
+                }
+                self.done = true;
+                true
             }
-        };
-        for (kind, secret) in &plan.secrets {
-            if let Err(e) = self.model.read(cx).store_secret(*kind, host_id, secret) {
-                toast(window, cx, secret_failed(*kind, &e), ToastKind::Error);
+            SaveOutcome::RowFailed(e) => {
+                toast(window, cx, self.kind.save_failed(&e), ToastKind::Error);
+                false
+            }
+            SaveOutcome::SecretFailed(kind, e) => {
+                toast(window, cx, secret_failed(kind, &e), ToastKind::Error);
+                false
             }
         }
-        self.done = true;
-        true
     }
 
     // ---- layout ----------------------------------------------------------

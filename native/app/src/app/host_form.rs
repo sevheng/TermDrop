@@ -243,7 +243,102 @@ fn blank_record() -> HostRecord {
 pub struct SavePlan {
     pub record: HostRecord,
     pub secrets: Vec<(SecretKind, String)>,
+    /// The existing row still holds a password inside its stored URI, and
+    /// this save writes the URI without it. The secrets must then be stored
+    /// *before* the row is rewritten: the other order loses the only copy of
+    /// that password when the keyring write fails.
+    pub secrets_first: bool,
 }
+
+/// How [`run_save`] ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// The row is written. `failed` lists secrets that could not be stored
+    /// after it; the dialog closes anyway, because saving again would add
+    /// the row twice.
+    Saved {
+        host_id: i64,
+        failed: Vec<(SecretKind, String)>,
+    },
+    /// The row could not be written. Nothing was changed; the dialog stays.
+    RowFailed(String),
+    /// A secret that had to go first could not be stored, so the row was
+    /// left as it was (password still in its URI). The dialog stays.
+    SecretFailed(SecretKind, String),
+}
+
+/// Write a plan: the row through `save_row` (which returns its id), the
+/// secrets through `store`. Normally the row goes first, because a new row
+/// has no id to store secrets under until it exists. A plan that moves a
+/// password out of an existing row's URI stores first and rewrites the row
+/// only once every secret is safe.
+///
+/// `ctx` is handed to both callbacks, so they can share one `&mut` context.
+pub fn run_save<C: ?Sized>(
+    plan: &SavePlan,
+    existing_id: Option<i64>,
+    ctx: &mut C,
+    save_row: impl FnOnce(&mut C, &HostRecord) -> Result<i64, String>,
+    mut store: impl FnMut(&mut C, SecretKind, i64, &str) -> Result<(), String>,
+) -> SaveOutcome {
+    if plan.secrets_first
+        && let Some(id) = existing_id
+    {
+        for (kind, secret) in &plan.secrets {
+            if let Err(e) = store(ctx, *kind, id, secret) {
+                return SaveOutcome::SecretFailed(*kind, e);
+            }
+        }
+        return match save_row(ctx, &plan.record) {
+            Ok(host_id) => SaveOutcome::Saved {
+                host_id,
+                failed: Vec::new(),
+            },
+            Err(e) => SaveOutcome::RowFailed(e),
+        };
+    }
+    let host_id = match save_row(ctx, &plan.record) {
+        Ok(id) => id,
+        Err(e) => return SaveOutcome::RowFailed(e),
+    };
+    let failed = plan
+        .secrets
+        .iter()
+        .filter_map(|(kind, secret)| store(ctx, *kind, host_id, secret).err().map(|e| (*kind, e)))
+        .collect();
+    SaveOutcome::Saved { host_id, failed }
+}
+
+/// Whether a URI still carries what looks like a password after
+/// [`split_password`] found none: a `:` in the authority with an `@` only
+/// further on. That is `redis://:ab/cd@cache` — a password with `/`, `?` or
+/// `#` typed unencoded ends the authority early, so the split cannot see
+/// it, and saving would write it to the database in plaintext.
+///
+/// An `@` in the query after an ordinary `host:port`
+/// (`mongodb://h:27017/?appName=a@b`) is let through.
+pub fn unencoded_password_in(uri: &str) -> bool {
+    let Some(scheme_end) = uri.find("://") else {
+        return false;
+    };
+    let rest = &uri[scheme_end + 3..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    if authority.contains('@') || !authority.contains(':') || !rest[end..].contains('@') {
+        return false;
+    }
+    let tail = &rest[end..];
+    let at_in_query = tail
+        .find('?')
+        .is_some_and(|q| tail.find('@').is_some_and(|a| a > q));
+    let host_port = authority.rsplit_once(':').is_some_and(|(h, p)| {
+        !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
+    });
+    !(at_in_query && host_port)
+}
+
+/// The message for [`unencoded_password_in`].
+const UNENCODED_PASSWORD: &str = "The password contains / ? or # — percent-encode it in the URI (%2F, %3F, %23) or type it in the Password field";
 
 // ---- SSH -----------------------------------------------------------------
 
@@ -431,6 +526,7 @@ impl SshForm {
         Ok(SavePlan {
             record: rec,
             secrets,
+            secrets_first: false,
         })
     }
 }
@@ -517,6 +613,9 @@ impl MongoForm {
             return Err(errors);
         }
         let (uri, typed) = split_password(self.uri.trim());
+        if unencoded_password_in(&uri) {
+            return Err(Errors::from([(Field::Uri, UNENCODED_PASSWORD.into())]));
+        }
         let legacy = existing
             .and_then(|r| r.mongo_uri.as_deref())
             .and_then(|u| split_password(u).1);
@@ -531,6 +630,7 @@ impl MongoForm {
         rec.mongo_local_uri = None;
         Ok(SavePlan {
             record: rec,
+            secrets_first: legacy.is_some(),
             secrets: keep_or_store(SecretKind::Mongo, typed, legacy),
         })
     }
@@ -585,7 +685,7 @@ impl RedisForm {
         self.uri = typed.to_string();
         self.fields = super::uri_form::parse_redis_uri(typed);
         if self.fields.password.is_empty() && !kept.is_empty() && expects_password(typed) {
-            self.uri = with_password(typed, &kept);
+            self.uri = with_password(typed, &encode_uri_component(&kept));
             self.fields.password = kept;
         }
     }
@@ -616,6 +716,9 @@ impl RedisForm {
             return Err(errors);
         }
         let (uri, typed) = split_password(self.uri.trim());
+        if unencoded_password_in(&uri) {
+            return Err(Errors::from([(Field::Uri, UNENCODED_PASSWORD.into())]));
+        }
         let legacy = existing
             .and_then(|r| r.redis_uri.as_deref())
             .and_then(|u| split_password(u).1);
@@ -632,6 +735,7 @@ impl RedisForm {
         rec.redis_tunnel_host_id = self.tunnel_host_id;
         Ok(SavePlan {
             record: rec,
+            secrets_first: legacy.is_some(),
             secrets: keep_or_store(SecretKind::Redis, typed, legacy),
         })
     }
@@ -687,6 +791,7 @@ impl VncForm {
             secrets: secret
                 .map(|s| vec![(SecretKind::Vnc, s)])
                 .unwrap_or_default(),
+            secrets_first: false,
         })
     }
 }
@@ -1068,6 +1173,172 @@ mod tests {
             RedisForm::default().validate()[&Field::Name],
             "A name is required"
         );
+    }
+
+    #[test]
+    fn a_redis_password_with_uri_delimiters_never_reaches_the_row() {
+        let mut form = RedisForm::default();
+        form.common.name = "cache".into();
+        form.fields.host = "cache".into();
+        form.fields.password = "ab/cd".into();
+        form.fields_changed();
+        let plan = form.plan(None).unwrap();
+        assert_eq!(plan.record.redis_uri.as_deref(), Some("redis://@cache"));
+        assert_eq!(plan.secrets, [(SecretKind::Redis, "ab%2Fcd".into())]);
+
+        // A kept password is spliced back encoded, too.
+        form.uri_typed(&format!("{}/2", masked_uri(&form.uri)));
+        assert_eq!(form.uri, "redis://:ab%2Fcd@cache/2");
+        assert_eq!(form.fields.password, "ab/cd");
+
+        // Typed raw into the URI box, the split cannot see it: refuse.
+        form.uri_typed("redis://:ab/cd@cache");
+        let errors = form.plan(None).unwrap_err();
+        assert_eq!(errors[&Field::Uri], UNENCODED_PASSWORD);
+        let mut mongo = MongoForm::default();
+        mongo.common.name = "m".into();
+        mongo.uri_typed("mongodb://u:ab?cd@h");
+        // Fill the fields so only the URI is wrong.
+        mongo.fields.host = "h".into();
+        mongo.fields.port = "27017".into();
+        assert_eq!(
+            mongo.plan(None).unwrap_err()[&Field::Uri],
+            UNENCODED_PASSWORD
+        );
+    }
+
+    #[test]
+    fn the_unencoded_password_gate() {
+        for leak in [
+            "redis://:ab/cd@cache",
+            "redis://u:a#b@h",
+            "mongodb://u:p?w@h/db",
+            "redis://:x/y?z@h",
+        ] {
+            assert!(unencoded_password_in(leak), "{leak}");
+        }
+        for fine in [
+            "redis://@cache",
+            "redis://h:6380/2",
+            "mongodb://u@h:27017/db",
+            "mongodb://h:27017/?appName=a@b",
+            "mongodb://[::1]:27017/?appName=a@b",
+            "mongodb://h/?appName=a@b",
+            "redis://h",
+        ] {
+            assert!(!unencoded_password_in(fine), "{fine}");
+        }
+    }
+
+    #[test]
+    fn a_legacy_password_is_stored_before_the_row_drops_it() {
+        let legacy = HostRecord {
+            id: 4,
+            name: "cache".into(),
+            redis_uri: Some("redis://:old@cache".into()),
+            ..Default::default()
+        };
+        let plan = RedisForm::from_record(&legacy).plan(Some(&legacy)).unwrap();
+        assert!(plan.secrets_first);
+        assert_eq!(plan.secrets, [(SecretKind::Redis, "old".into())]);
+
+        // The keyring refuses: the row must not be rewritten.
+        let mut row_written = false;
+        let out = run_save(
+            &plan,
+            Some(4),
+            &mut (),
+            |_, _| {
+                row_written = true;
+                Ok(4)
+            },
+            |_, _, _, _| Err("keyring locked".into()),
+        );
+        assert_eq!(
+            out,
+            SaveOutcome::SecretFailed(SecretKind::Redis, "keyring locked".into())
+        );
+        assert!(!row_written, "the only copy of the password was dropped");
+
+        // The keyring takes it: then the row.
+        let mut order: Vec<&str> = Vec::new();
+        let out = run_save(
+            &plan,
+            Some(4),
+            &mut order,
+            |order, _| {
+                order.push("row");
+                Ok(4)
+            },
+            |order, _, id, _| {
+                assert_eq!(id, 4);
+                order.push("secret");
+                Ok(())
+            },
+        );
+        assert_eq!(
+            out,
+            SaveOutcome::Saved {
+                host_id: 4,
+                failed: vec![]
+            }
+        );
+        assert_eq!(order, ["secret", "row"]);
+
+        // Same for Mongo.
+        let legacy = HostRecord {
+            mongo_uri: Some("mongodb://admin:old@db/orders".into()),
+            redis_uri: None,
+            ..legacy
+        };
+        assert!(
+            MongoForm::from_record(&legacy)
+                .plan(Some(&legacy))
+                .unwrap()
+                .secrets_first
+        );
+    }
+
+    #[test]
+    fn an_ordinary_save_writes_the_row_first() {
+        let mut form = RedisForm::default();
+        form.common.name = "cache".into();
+        form.fields.host = "cache".into();
+        form.fields.password = "pw".into();
+        form.fields_changed();
+        let plan = form.plan(None).unwrap();
+        assert!(!plan.secrets_first);
+        let mut order: Vec<&str> = Vec::new();
+        let out = run_save(
+            &plan,
+            None,
+            &mut order,
+            |order, _| {
+                order.push("row");
+                Ok(9)
+            },
+            |order, _, id, _| {
+                assert_eq!(id, 9, "secrets go under the new row's id");
+                order.push("secret");
+                Err("nope".into())
+            },
+        );
+        assert_eq!(
+            out,
+            SaveOutcome::Saved {
+                host_id: 9,
+                failed: vec![(SecretKind::Redis, "nope".into())]
+            }
+        );
+        assert_eq!(order, ["row", "secret"]);
+        let out = run_save(
+            &plan,
+            None,
+            &mut (),
+            |_, _| Err("disk full".into()),
+            |_, _, _, _| panic!("no secret without a row"),
+        );
+        assert_eq!(out, SaveOutcome::RowFailed("disk full".into()));
     }
 
     #[test]

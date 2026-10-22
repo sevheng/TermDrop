@@ -172,7 +172,9 @@ pub struct ImportSummary {
 pub struct SshConfigEntry {
     pub name: String,
     pub host: String,
-    pub port: u16,
+    /// As the parser read it, unclamped: a `Port 70000` must reach the
+    /// backend's check and be refused by name, not saved on another port.
+    pub port: i64,
     pub username: String,
     pub auth_type: String,
     pub key_path: Option<String>,
@@ -193,7 +195,8 @@ pub trait HostStore: Send + Sync {
     fn host_record(&self, host_id: i64) -> Result<Option<HostRecord>>;
     /// Insert a row; `host.id` is ignored. Returns the new id.
     fn add_host(&self, host: &HostRecord) -> Result<i64>;
-    /// Rewrite every column of row `host_id`.
+    /// Rewrite every column of row `host_id`. A row that is gone (deleted by
+    /// the other app meanwhile) is an error, never a silent success.
     fn update_host(&self, host_id: i64, host: &HostRecord) -> Result<()>;
     /// Delete a row and every secret stored under its id.
     fn delete_host(&self, host_id: i64) -> Result<()>;
@@ -325,11 +328,14 @@ impl HostStore for FakeBackend {
     }
 
     fn update_host(&self, host_id: i64, host: &HostRecord) -> Result<()> {
-        // As `db::update_host`: a row that is gone updates nothing, silently.
+        // As `Core::update_existing_host`: a row that is gone is an error,
+        // so an editor does not go on to store secrets under a dead id.
         let mut hosts = self.rows()?;
-        if let Some(row) = hosts.iter_mut().find(|h| h.id == host_id) {
-            overwrite(row, host);
-        }
+        let row = hosts
+            .iter_mut()
+            .find(|h| h.id == host_id)
+            .ok_or_else(|| anyhow!("host {host_id} not found"))?;
+        overwrite(row, host);
         Ok(())
     }
 
@@ -670,6 +676,10 @@ mod tests {
 
         b.delete_host(id).unwrap();
         assert_eq!(b.hosts().unwrap().len(), before);
+        assert!(
+            b.update_host(id, &rec).is_err(),
+            "saving over a deleted row must fail, not store secrets under it"
+        );
         assert!(
             !b.has_secret(SecretKind::Redis, id),
             "a delete drops its secrets"

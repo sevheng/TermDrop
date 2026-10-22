@@ -136,7 +136,7 @@ impl HostStore for CoreStore {
 
     fn update_host(&self, host_id: i64, host: &HostRecord) -> Result<()> {
         self.rt
-            .block_on(self.core.update_host(host_id, &new_host(host)))
+            .block_on(self.core.update_existing_host(host_id, &new_host(host)))
             .map_err(|e| anyhow!(e))
     }
 
@@ -220,7 +220,7 @@ impl HostStore for CoreStore {
             .map(|h| SshConfigEntry {
                 name: h.name,
                 host: h.host,
-                port: u16::try_from(h.port).unwrap_or(22),
+                port: h.port,
                 username: h.username,
                 auth_type: h.auth_type,
                 key_path: h.key_path,

@@ -159,13 +159,24 @@ pub fn import_json(window: &mut Window, cx: &mut App, model: Entity<AppModel>) {
                     return;
                 }
             };
-            let entries = raw
+            // One bad port fails the file, as the Tauri command's
+            // deserialization does: nothing is written.
+            let entries = match raw
                 .iter()
-                .map(|h| ImportEntry {
-                    host: normalize_import_host(h),
-                    replace_id: None,
+                .map(|h| {
+                    normalize_import_host(h).map(|host| ImportEntry {
+                        host,
+                        replace_id: None,
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(entries) => entries,
+                Err(e) => {
+                    toast(window, cx, format!("Import failed: {e}"), ToastKind::Error);
+                    return;
+                }
+            };
             match model.update(cx, |m, cx| m.import_hosts(entries, cx)) {
                 Ok(summary) => {
                     let (message, tone) = summarize_import(&summary, 0);

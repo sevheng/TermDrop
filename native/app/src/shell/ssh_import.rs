@@ -88,6 +88,8 @@ impl SshImportDialog {
                 replace_id: None,
             })
             .collect();
+        // The ids before the import: only rows it creates get a jump host.
+        let before: Vec<i64> = self.model.read(cx).hosts().iter().map(|h| h.id).collect();
         let summary = match self.model.update(cx, |m, cx| m.import_hosts(entries, cx)) {
             Ok(summary) => summary,
             Err(e) => {
@@ -98,7 +100,7 @@ impl SshImportDialog {
         self.done = true;
         let (message, tone) = summarize_import(&summary, skipped);
         toast(window, cx, message, summary_toast(tone));
-        self.link_jump_hosts(&picked, window, cx);
+        self.link_jump_hosts(&picked, &before, window, cx);
         true
     }
 
@@ -108,13 +110,15 @@ impl SshImportDialog {
     fn link_jump_hosts(
         &mut self,
         imported: &[SshConfigEntry],
+        before: &[i64],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !imported.iter().any(|e| e.proxy_jump.is_some()) {
             return;
         }
-        let (links, mut unresolved) = link_proxy_jumps(imported, self.model.read(cx).hosts());
+        let (links, mut unresolved) =
+            link_proxy_jumps(imported, self.model.read(cx).hosts(), before);
         if !links.is_empty() {
             self.model.update(cx, |m, cx| {
                 for link in &links {

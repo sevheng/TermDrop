@@ -25,15 +25,34 @@ impl Core {
 
     /// Rewrite every column of a host, then drop whatever was connected to
     /// its old address.
+    ///
+    /// A row that is gone updates nothing and still returns `Ok`: that is what
+    /// the Tauri command has always done. Use [`Self::update_existing_host`]
+    /// where a vanished row must be an error.
     pub async fn update_host(&self, id: i64, host: &db::NewHost) -> Result<(), String> {
-        with_db(self, |conn| db::update_host(conn, id, host))?;
+        self.update_host_rows(id, host).await.map(|_| ())
+    }
+
+    /// As [`Self::update_host`], but a row deleted in the meantime (by the
+    /// other app on the same database) is reported as `host N not found`
+    /// rather than a silent success, so a caller does not go on to store
+    /// secrets under an id no row owns.
+    pub async fn update_existing_host(&self, id: i64, host: &db::NewHost) -> Result<(), String> {
+        match self.update_host_rows(id, host).await? {
+            0 => Err(format!("host {id} not found")),
+            _ => Ok(()),
+        }
+    }
+
+    async fn update_host_rows(&self, id: i64, host: &db::NewHost) -> Result<usize, String> {
+        let rows = with_db(self, |conn| db::update_host(conn, id, host))?;
         // The address may have changed, and every one of these caches the old one.
         // Redis was missing here: an edited URI stayed invisible until the app was
         // restarted, and the stale tunnel stayed open behind it.
         forget_mongo_clients(self, id).await;
         forget_redis(self, id).await;
         self.vnc_disconnect_host(id).await?;
-        Ok(())
+        Ok(rows)
     }
 
     /// Delete a host and every secret stored under its id.
@@ -243,6 +262,27 @@ mod tests {
 
         core.update_host_favorite(b, 1).unwrap();
         assert_eq!(core.get_host(b).unwrap().unwrap().favorite, 1);
+    }
+
+    #[test]
+    fn updating_a_vanished_host_is_an_error_only_where_asked() {
+        let core = core();
+        let a = core.add_host(&ssh_host("a", None)).unwrap();
+        // Straight to the table: `Core::delete_host` would also clear the
+        // keyring entries for this id, which on a test database belong to
+        // whichever real host has the same id.
+        with_db(&core, |conn| db::delete_host(conn, a)).unwrap();
+        // The Tauri command's contract: silently nothing.
+        rt().block_on(core.update_host(a, &ssh_host("a2", None)))
+            .unwrap();
+        assert_eq!(
+            rt().block_on(core.update_existing_host(a, &ssh_host("a2", None))),
+            Err(format!("host {a} not found"))
+        );
+        let b = core.add_host(&ssh_host("b", None)).unwrap();
+        rt().block_on(core.update_existing_host(b, &ssh_host("b2", None)))
+            .unwrap();
+        assert_eq!(core.get_host(b).unwrap().unwrap().name, "b2");
     }
 
     #[test]

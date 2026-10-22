@@ -320,8 +320,13 @@ pub fn is_tls_redis_uri(uri: &str) -> bool {
     redis_scheme_len(uri.trim()) == Some(9)
 }
 
-/// `parseRedisUri`. Nothing is decoded: the password stays exactly as it
-/// appears, so splitting it back out is a splice.
+/// `parseRedisUri`, except that the username and password are decoded for
+/// the fields, as the Mongo form's are, and [`build_redis_uri`] encodes them
+/// again. `parseRedisUri` keeps them as written and `buildRedisUri` splices
+/// them back unencoded, so a password with `/`, `?` or `#` ended the
+/// authority early and `split_password` could not find it: the whole URI,
+/// password included, was saved to the database. Decoding then encoding is
+/// lossless for the driver, which percent-decodes both.
 pub fn parse_redis_uri(uri: &str) -> RedisFields {
     let value = uri.trim();
     let Some(start) = redis_scheme_len(value) else {
@@ -353,14 +358,15 @@ pub fn parse_redis_uri(uri: &str) -> RedisFields {
         tls: start == 9,
         host: host.to_string(),
         port: port.to_string(),
-        username: username.to_string(),
-        password: password.to_string(),
+        username: decode_uri_component(username),
+        password: decode_uri_component(password),
         database: database.to_string(),
     }
 }
 
 /// `buildRedisUri`. Defaults are left out rather than spelled, and an empty
-/// host builds nothing.
+/// host builds nothing. The username and password are percent-encoded (see
+/// [`parse_redis_uri`]).
 pub fn build_redis_uri(f: &RedisFields) -> String {
     let host = f.host.trim();
     if host.is_empty() {
@@ -368,10 +374,11 @@ pub fn build_redis_uri(f: &RedisFields) -> String {
     }
     let scheme = if f.tls { "rediss" } else { "redis" };
     let userinfo = if !f.username.is_empty() || !f.password.is_empty() {
+        let user = encode_uri_component(&f.username);
         if f.password.is_empty() {
-            format!("{}@", f.username)
+            format!("{user}@")
         } else {
-            format!("{}:{}@", f.username, f.password)
+            format!("{user}:{}@", encode_uri_component(&f.password))
         }
     } else {
         String::new()
@@ -536,16 +543,18 @@ mod tests {
     }
 
     #[test]
-    fn a_redis_uri_parses_without_decoding() {
+    fn a_redis_uri_parses_with_its_credentials_decoded() {
         let f = parse_redis_uri("rediss://user:p%40ss@cache.internal:6380/2");
         assert!(f.tls);
         assert_eq!(
             (f.host.as_str(), f.port.as_str(), f.database.as_str()),
             ("cache.internal", "6380", "2")
         );
+        assert_eq!((f.username.as_str(), f.password.as_str()), ("user", "p@ss"));
+        // And back: the same URI, not a double-encoded one.
         assert_eq!(
-            (f.username.as_str(), f.password.as_str()),
-            ("user", "p%40ss")
+            build_redis_uri(&f),
+            "rediss://user:p%40ss@cache.internal:6380/2"
         );
         let f = parse_redis_uri("redis://:pw@[::1]:6379");
         assert_eq!((f.host.as_str(), f.port.as_str()), ("[::1]", "6379"));
@@ -570,6 +579,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(build_redis_uri(&f), "rediss://:pw@h:6380/3");
+        // A password that would otherwise end the authority early.
+        let f = RedisFields {
+            host: "cache".into(),
+            password: "ab/cd?e#f".into(),
+            ..Default::default()
+        };
+        let uri = build_redis_uri(&f);
+        assert_eq!(uri, "redis://:ab%2Fcd%3Fe%23f@cache");
+        assert_eq!(
+            termdrop_core::uri::split_password(&uri),
+            ("redis://@cache".into(), Some("ab%2Fcd%3Fe%23f".into()))
+        );
         assert_eq!(build_redis_uri(&RedisFields::default()), "");
         assert!(is_redis_uri(" REDIS://h"));
         assert!(is_tls_redis_uri("rediss://h"));

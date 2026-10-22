@@ -85,8 +85,24 @@ fn trimmed_str(v: Option<&Value>) -> String {
 /// stray `password` key in a hand-edited file never reaches the database,
 /// and a MongoDB URI from before credentials moved to the keyring has its
 /// password stripped rather than written back in plaintext.
-pub fn normalize_import_host(raw: &Map<String, Value>) -> ImportHost {
+///
+/// A port that is a number but not a whole one (`22.5`) is an error, and
+/// the caller fails the whole file: in Tauri the Vue code keeps `22.5`, the
+/// `import_hosts` command cannot deserialize it into `NewHost.port: i64`,
+/// and nothing is written. Truncating it to 22 would store a host the file
+/// never named. The wording is native's own; Tauri's is serde's.
+pub fn normalize_import_host(raw: &Map<String, Value>) -> Result<ImportHost, String> {
     let port = js_number(raw.get("port"));
+    // Not finite falls back to 22, as `Number.isFinite` did.
+    let port = if !port.is_finite() {
+        22
+    } else if port.fract() == 0.0 && port.abs() < 9.0e18 {
+        port as i64
+    } else {
+        let name = trimmed_str(raw.get("name"));
+        let name = if name.is_empty() { "unnamed" } else { &name };
+        return Err(format!("{name}: port must be a whole number, got {port}"));
+    };
     let strip = |field: &str| {
         js_opt_string(raw.get(field)).map(|u| {
             if !u.is_empty() && is_mongo_uri(&u) {
@@ -96,12 +112,12 @@ pub fn normalize_import_host(raw: &Map<String, Value>) -> ImportHost {
             }
         })
     };
-    ImportHost {
+    Ok(ImportHost {
         name: trimmed_str(raw.get("name")),
         host: trimmed_str(raw.get("host")),
-        // Not finite falls back to 22; a fraction goes to the backend's range
-        // check as its whole part.
-        port: if port.is_finite() { port as i64 } else { 22 },
+        // A whole number out of range goes to the backend's check, which
+        // names the host.
+        port,
         username: trimmed_str(raw.get("username")),
         auth_type: if raw.get("auth_type").and_then(Value::as_str) == Some("key") {
             "key".into()
@@ -113,23 +129,29 @@ pub fn normalize_import_host(raw: &Map<String, Value>) -> ImportHost {
         favorite: i64::from(js_truthy(raw.get("favorite"))),
         mongo_uri: strip("mongo_uri"),
         mongo_local_uri: strip("mongo_local_uri"),
-    }
+    })
 }
 
 /// A `~/.ssh/config` entry as the same raw record `normalize_import_host`
-/// takes, as the Vue dialog passed it.
+/// takes, as the Vue dialog passed it. The port goes through as the parser
+/// read it, out of range or not, so the backend's check rejects a
+/// `Port 70000` by name instead of the host landing on some other port.
 pub fn ssh_config_import_host(e: &SshConfigEntry) -> ImportHost {
     let mut raw = Map::new();
     raw.insert("name".into(), e.name.clone().into());
     raw.insert("host".into(), e.host.clone().into());
-    raw.insert("port".into(), e.port.into());
     raw.insert("username".into(), e.username.clone().into());
     raw.insert("auth_type".into(), e.auth_type.clone().into());
     raw.insert(
         "key_path".into(),
         e.key_path.clone().map_or(Value::Null, Value::from),
     );
-    normalize_import_host(&raw)
+    // Without a port in `raw` there is nothing for the normalizer to reject.
+    let host = normalize_import_host(&raw).unwrap_or_default();
+    ImportHost {
+        port: e.port,
+        ..host
+    }
 }
 
 /// How a summary toast reads.
@@ -250,9 +272,17 @@ pub struct JumpLink {
 /// and user when the hop gives them. Anything ambiguous or unsupported is
 /// reported as `(name, reason)` rather than guessed: connecting through the
 /// wrong bastion is worse than not linking.
+///
+/// `before` is the ids that existed before the import. A row among them was
+/// not created by it, so it is never re-pointed: when re-importing an entry
+/// that is already saved fails, the existing host with the same name,
+/// address and port must keep its own jump host. (The Vue `linkProxyJumps`
+/// has no such guard; its dialog does not offer already-saved entries
+/// unticked, but the same mismatch is possible there.)
 pub fn link_proxy_jumps(
     imported: &[SshConfigEntry],
     hosts: &[HostSummary],
+    before: &[i64],
 ) -> (Vec<JumpLink>, Vec<(String, String)>) {
     fn newest<'a>(m: &[&'a HostSummary]) -> Option<&'a HostSummary> {
         m.iter().copied().max_by_key(|h| h.id)
@@ -268,7 +298,10 @@ pub fn link_proxy_jumps(
         let rows: Vec<_> = hosts
             .iter()
             .filter(is_ssh)
-            .filter(|h| h.name == entry.name && h.host == entry.host && h.port == entry.port)
+            .filter(|h| !before.contains(&h.id))
+            .filter(|h| {
+                h.name == entry.name && h.host == entry.host && i64::from(h.port) == entry.port
+            })
             .collect();
         let Some(row) = newest(&rows) else { continue };
 
@@ -346,7 +379,10 @@ pub fn unresolved_jumps_message(unresolved: &[(String, String)]) -> Option<Strin
 /// file twice does not double every host.
 pub fn already_saved(entry: &SshConfigEntry, hosts: &[HostSummary]) -> bool {
     hosts.iter().any(|h| {
-        !h.host.is_empty() && h.name == entry.name && h.host == entry.host && h.port == entry.port
+        !h.host.is_empty()
+            && h.name == entry.name
+            && h.host == entry.host
+            && i64::from(h.port) == entry.port
     })
 }
 
@@ -421,33 +457,66 @@ mod tests {
         );
     }
 
+    fn normalize_import_host_ok(raw: &Map<String, Value>) -> ImportHost {
+        normalize_import_host(raw).unwrap()
+    }
+
+    #[test]
+    fn a_fractional_port_fails_the_file_rather_than_truncating() {
+        assert_eq!(
+            normalize_import_host(&obj(json!({"name": "a", "port": 22.5}))),
+            Err("a: port must be a whole number, got 22.5".into())
+        );
+        assert_eq!(
+            normalize_import_host(&obj(json!({"port": "22.5"}))),
+            Err("unnamed: port must be a whole number, got 22.5".into())
+        );
+        // A whole number written as a float is the same number to JavaScript.
+        assert_eq!(
+            normalize_import_host_ok(&obj(json!({"port": 22.0}))).port,
+            22
+        );
+        // Out of range but whole: left for the backend to reject by name.
+        assert_eq!(
+            normalize_import_host_ok(&obj(json!({"port": 70000}))).port,
+            70000
+        );
+        assert!(normalize_import_host(&obj(json!({"port": 1e30}))).is_err());
+    }
+
     #[test]
     fn normalizing_keeps_known_fields_and_coerces_them() {
-        let out = normalize_import_host(&obj(
+        let out = normalize_import_host_ok(&obj(
             json!({"name": "  a  ", "host": " h ", "port": "2222", "favorite": true, "password": "x"}),
         ));
         assert_eq!((out.name.as_str(), out.host.as_str()), ("a", "h"));
         assert_eq!(out.port, 2222);
         assert_eq!(out.favorite, 1);
         assert_eq!(out.auth_type, "password");
-        assert_eq!(normalize_import_host(&obj(json!({}))).port, 22);
-        assert_eq!(normalize_import_host(&obj(json!({"port": "abc"}))).port, 22);
-        assert_eq!(normalize_import_host(&obj(json!({"port": null}))).port, 0);
+        assert_eq!(normalize_import_host_ok(&obj(json!({}))).port, 22);
         assert_eq!(
-            normalize_import_host(&obj(json!({"auth_type": "key"}))).auth_type,
+            normalize_import_host_ok(&obj(json!({"port": "abc"}))).port,
+            22
+        );
+        assert_eq!(
+            normalize_import_host_ok(&obj(json!({"port": null}))).port,
+            0
+        );
+        assert_eq!(
+            normalize_import_host_ok(&obj(json!({"auth_type": "key"}))).auth_type,
             "key"
         );
         assert_eq!(
-            normalize_import_host(&obj(json!({"auth_type": "agent"}))).auth_type,
+            normalize_import_host_ok(&obj(json!({"auth_type": "agent"}))).auth_type,
             "password"
         );
-        let empty = normalize_import_host(&obj(json!({"name": "a"})));
+        let empty = normalize_import_host_ok(&obj(json!({"name": "a"})));
         assert_eq!(
             (empty.key_path, empty.group, empty.mongo_uri),
             (None, None, None)
         );
         assert_eq!(
-            normalize_import_host(&obj(json!({"group": 5})))
+            normalize_import_host_ok(&obj(json!({"group": 5})))
                 .group
                 .as_deref(),
             Some("5")
@@ -456,7 +525,7 @@ mod tests {
 
     #[test]
     fn an_old_export_has_its_mongo_password_stripped() {
-        let out = normalize_import_host(&obj(json!({
+        let out = normalize_import_host_ok(&obj(json!({
             "name": "m",
             "mongo_uri": "mongodb://u:hunter2@h:27017",
             "mongo_local_uri": "mongodb://u:pw@localhost",
@@ -570,7 +639,8 @@ mod tests {
             entry("cache", "10.0.0.3", Some("me@b.example:22")),
             entry("lost", "10.0.0.9", Some("nowhere")),
         ];
-        let (links, unresolved) = link_proxy_jumps(&imported, &hosts);
+        // Only the bastion predates the import.
+        let (links, unresolved) = link_proxy_jumps(&imported, &hosts, &[1]);
         assert_eq!(
             links,
             [
@@ -592,7 +662,7 @@ mod tests {
             saved(2, "db", "10.0.0.2", None),
             saved(4, "lost", "10.0.0.9", None),
         ];
-        let (_, unresolved) = link_proxy_jumps(&imported, &hosts);
+        let (_, unresolved) = link_proxy_jumps(&imported, &hosts, &[1]);
         assert_eq!(
             unresolved,
             [(
@@ -607,6 +677,35 @@ mod tests {
     }
 
     #[test]
+    fn a_host_saved_before_the_import_is_never_repointed() {
+        // "web" was saved already; re-importing it failed, so the only row
+        // with its name, address and port is the user's own.
+        let hosts = vec![
+            saved(1, "bastion", "b.example", None),
+            saved(2, "web", "10.0.0.5", None),
+        ];
+        let imported = [entry("web", "10.0.0.5", Some("bastion"))];
+        let (links, unresolved) = link_proxy_jumps(&imported, &hosts, &[1, 2]);
+        assert!(links.is_empty(), "the existing web was re-pointed");
+        assert!(unresolved.is_empty());
+
+        // When the re-import did add a row, that new row is the one linked.
+        let hosts = vec![
+            saved(1, "bastion", "b.example", None),
+            saved(2, "web", "10.0.0.5", None),
+            saved(3, "web", "10.0.0.5", None),
+        ];
+        let (links, _) = link_proxy_jumps(&imported, &hosts, &[1, 2]);
+        assert_eq!(
+            links,
+            [JumpLink {
+                host_id: 3,
+                jump_id: 1
+            }]
+        );
+    }
+
+    #[test]
     fn a_chained_jump_is_refused() {
         let hosts = vec![
             saved(1, "outer", "o.example", None),
@@ -614,7 +713,7 @@ mod tests {
             saved(3, "db", "10.0.0.2", None),
         ];
         let (links, unresolved) =
-            link_proxy_jumps(&[entry("db", "10.0.0.2", Some("inner"))], &hosts);
+            link_proxy_jumps(&[entry("db", "10.0.0.2", Some("inner"))], &hosts, &[1, 2]);
         assert!(links.is_empty());
         assert_eq!(unresolved[0].1, "its jump host has a jump host of its own");
     }
@@ -641,6 +740,23 @@ mod tests {
             ("box", 22, "key")
         );
         assert_eq!(h.key_path.as_deref(), Some("~/.ssh/id"));
+    }
+
+    #[test]
+    fn an_out_of_range_config_port_reaches_the_backend_unclamped() {
+        let e = SshConfigEntry {
+            port: 70_000,
+            ..entry("box", "10.0.0.9", None)
+        };
+        assert_eq!(ssh_config_import_host(&e).port, 70_000);
+        // And it is not mistaken for a host saved on some clamped port.
+        let hosts = [saved(1, "box", "10.0.0.9", None)];
+        assert!(!already_saved(&e, &hosts));
+        let neg = SshConfigEntry {
+            port: -1,
+            ..entry("box", "10.0.0.9", None)
+        };
+        assert_eq!(ssh_config_import_host(&neg).port, -1);
     }
 
     #[test]
