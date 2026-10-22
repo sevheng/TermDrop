@@ -8,9 +8,13 @@
 //! - [`toast::toast`]: a notification whose kind is required.
 //! - [`dialogs`]: confirm and prompt, answering exactly once.
 //! - [`host_key_dialog`]: trust decisions, with no accept path on a mismatch.
+//! - [`choice::Choice`]: a `Select` entry with a hint.
+//! - [`file_dialog`]: native open/save dialogs.
 
+pub mod choice;
 pub mod dialogs;
 pub mod empty_state;
+pub mod file_dialog;
 pub mod host_key_dialog;
 pub mod icon_button;
 pub mod panel_header;

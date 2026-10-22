@@ -22,7 +22,10 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let store = Arc::new(CoreStore::new(services.core.clone()));
+    let store = Arc::new(CoreStore::new(
+        services.core.clone(),
+        services.rt.handle().clone(),
+    ));
     termdrop_gpui::run(store, Rc::new(CoreContent::new(services, events)));
 }
 

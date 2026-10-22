@@ -18,8 +18,10 @@ use gpui_kit::{
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 
-use super::host_sidebar::{HostSidebar, SidebarEvent};
+use super::host_editor::open_host_editor;
+use super::host_sidebar::HostSidebar;
 use super::settings::open_settings;
+use crate::app::host_form::EditorKind;
 use crate::app::tab_kind::{TabKind, has_right_panel};
 use crate::app::{AppEvent, AppModel, LocalShellChoice};
 use crate::backend::TabContentFactory;
@@ -107,16 +109,6 @@ impl MainWindow {
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe_in(&model, window, Self::on_app_event),
-            cx.subscribe_in(&sidebar, window, |_, _, event: &SidebarEvent, window, cx| {
-                match event {
-                    SidebarEvent::AddHost => toast(
-                        window,
-                        cx,
-                        "Adding hosts arrives with the host editor. Hosts saved in the TermDrop app show up here.",
-                        ToastKind::Info,
-                    ),
-                }
-            }),
         ];
         let focus_handle = cx.focus_handle();
         // Shortcuts dispatch from the focused element up; with nothing
@@ -368,18 +360,20 @@ impl MainWindow {
                         } else {
                             "No connection open"
                         },
-                        "Open a local shell",
-                        move |_, _, cx| {
-                            m.update(cx, |m, cx| {
-                                m.open_local(None, cx);
-                            });
+                        if no_hosts {
+                            "Add your first host"
+                        } else {
+                            "Add a host"
+                        },
+                        move |_, window, cx| {
+                            open_host_editor(window, cx, m.clone(), EditorKind::Ssh, None, None)
                         },
                     )
                     .icon(Icon::new(IconName::Terminal))
                     .hint(if no_hosts {
-                        "Hosts saved in the TermDrop app appear on the left. Ctrl+Shift+T opens a local shell."
+                        "Add a server, a MongoDB connection or a Redis connection to begin"
                     } else {
-                        "Double-click a host on the left to connect. Ctrl+Shift+T opens a local shell."
+                        "Pick a host on the left, or add another. Ctrl+Shift+T opens a local shell"
                     }),
                 ),
             )

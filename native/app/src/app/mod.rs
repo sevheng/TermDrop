@@ -4,13 +4,17 @@
 //! utilities it ports, case for case.
 
 pub mod display;
+pub mod host_form;
 pub mod host_grouping;
+pub mod host_import;
 pub mod host_kind;
+pub mod host_menu;
 pub mod host_row_state;
 pub mod list_nav;
 pub mod model;
 pub mod prefs;
 pub mod tab_kind;
 pub mod tabs;
+pub mod uri_form;
 
 pub use model::{AppEvent, AppModel, LocalShellChoice};

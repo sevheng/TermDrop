@@ -3,7 +3,8 @@
 //! settings and trusted keys during the side-by-side period.
 //!
 //! Three pieces live here:
-//! - [`CoreStore`], the shell's [`HostStore`] over [`Core`].
+//! - [`CoreStore`], the shell's [`HostStore`] over [`Core`] and its host
+//!   operations (`termdrop_core::hosts`).
 //! - [`Services`], what every session view shares: the core, the tokio
 //!   runtime its async calls need, and the event bridge.
 //! - [`Bridge`], the core's [`EventSink`]. It carries events to the UI thread
@@ -14,24 +15,34 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Result, anyhow};
 use termdrop_core::events::FnSink;
-use termdrop_core::{Core, CoreEvent, EventSink, Events, PtyKind, db, state};
+use termdrop_core::{
+    Core, CoreEvent, EventSink, Events, PtyKind, crypto, db, hosts, ssh_config_parser, state,
+};
 use termdrop_terminal::TerminalFeed;
 
-use crate::backend::{HostRecord, HostStore, HostSummary};
+use crate::backend::{
+    HostRecord, HostStore, HostSummary, ImportEntry, ImportHost, ImportSummary, SecretKind,
+    SshConfigEntry,
+};
 
-/// The shell's host list and settings, read from the core's database.
+/// The shell's hosts and settings, over the core's database and keyring.
 pub struct CoreStore {
     core: Arc<Core>,
+    /// For the core's async host operations (an update or delete releases
+    /// pooled connections behind tokio locks). They are short, so the UI
+    /// thread waits for them rather than threading a task through every
+    /// caller.
+    rt: tokio::runtime::Handle,
 }
 
 impl CoreStore {
-    pub fn new(core: Arc<Core>) -> Self {
-        Self { core }
+    pub fn new(core: Arc<Core>, rt: tokio::runtime::Handle) -> Self {
+        Self { core, rt }
     }
 }
 
-/// `db::Host` to the shell's raw row. Ports and the favourite flag are
-/// INTEGER columns; anything out of range reads as unset rather than wrapping.
+/// `db::Host` to the shell's row. Ports and the favourite flag are INTEGER
+/// columns; anything out of range reads as unset rather than wrapping.
 pub fn host_record(h: &db::Host) -> HostRecord {
     HostRecord {
         id: h.id,
@@ -39,13 +50,72 @@ pub fn host_record(h: &db::Host) -> HostRecord {
         host: h.host.clone(),
         port: u16::try_from(h.port).unwrap_or(0),
         username: h.username.clone(),
+        auth_type: h.auth_type.clone(),
+        // The column is NOT NULL with '' for "none"; the editors want None.
+        key_path: h.key_path.clone().filter(|k| !k.is_empty()),
         group: h.group.clone(),
         favorite: h.favorite != 0,
         mongo_uri: h.mongo_uri.clone(),
+        mongo_local_uri: h.mongo_local_uri.clone(),
         redis_uri: h.redis_uri.clone(),
+        redis_tunnel_host_id: h.redis_tunnel_host_id,
+        jump_host_id: h.jump_host_id,
         vnc_host: h.vnc_host.clone(),
         vnc_port: h.vnc_port.and_then(|p| u16::try_from(p).ok()),
+        vnc_username: h.vnc_username.clone(),
+        vnc_tunnel_host_id: h.vnc_tunnel_host_id,
+        vnc_view_only: h.vnc_view_only != 0,
         last_connected_at: h.last_connected_at.clone(),
+    }
+}
+
+/// The shell's row to the `db::NewHost` every write takes. `favorite` is
+/// always written as a number, which is what `update_host` stores for `None`
+/// anyway; `vnc_view_only` the same.
+pub fn new_host(h: &HostRecord) -> db::NewHost {
+    db::NewHost {
+        name: h.name.clone(),
+        host: h.host.clone(),
+        port: i64::from(h.port),
+        username: h.username.clone(),
+        auth_type: h.auth_type.clone(),
+        key_path: h.key_path.clone(),
+        group: h.group.clone(),
+        favorite: Some(i64::from(h.favorite)),
+        mongo_uri: h.mongo_uri.clone(),
+        mongo_local_uri: h.mongo_local_uri.clone(),
+        redis_uri: h.redis_uri.clone(),
+        redis_tunnel_host_id: h.redis_tunnel_host_id,
+        jump_host_id: h.jump_host_id,
+        vnc_host: h.vnc_host.clone(),
+        vnc_port: h.vnc_port.map(i64::from),
+        vnc_username: h.vnc_username.clone(),
+        vnc_tunnel_host_id: h.vnc_tunnel_host_id,
+        vnc_view_only: Some(i64::from(h.vnc_view_only)),
+    }
+}
+
+/// An import as the `db::NewHost` the core validates and writes.
+fn import_host(h: ImportHost) -> db::NewHost {
+    db::NewHost {
+        name: h.name,
+        host: h.host,
+        port: h.port,
+        username: h.username,
+        auth_type: h.auth_type,
+        key_path: h.key_path,
+        group: h.group,
+        favorite: Some(h.favorite),
+        mongo_uri: h.mongo_uri,
+        mongo_local_uri: h.mongo_local_uri,
+        redis_uri: None,
+        redis_tunnel_host_id: None,
+        jump_host_id: None,
+        vnc_host: None,
+        vnc_port: None,
+        vnc_username: None,
+        vnc_tunnel_host_id: None,
+        vnc_view_only: None,
     }
 }
 
@@ -55,11 +125,108 @@ impl HostStore for CoreStore {
         Ok(hosts.iter().map(|h| host_record(h).summary()).collect())
     }
 
+    fn host_record(&self, host_id: i64) -> Result<Option<HostRecord>> {
+        let host = self.core.get_host(host_id).map_err(|e| anyhow!(e))?;
+        Ok(host.as_ref().map(host_record))
+    }
+
+    fn add_host(&self, host: &HostRecord) -> Result<i64> {
+        self.core.add_host(&new_host(host)).map_err(|e| anyhow!(e))
+    }
+
+    fn update_host(&self, host_id: i64, host: &HostRecord) -> Result<()> {
+        self.rt
+            .block_on(self.core.update_host(host_id, &new_host(host)))
+            .map_err(|e| anyhow!(e))
+    }
+
+    fn delete_host(&self, host_id: i64) -> Result<()> {
+        self.rt
+            .block_on(self.core.delete_host(host_id))
+            .map_err(|e| anyhow!(e))
+    }
+
     fn set_favorite(&self, host_id: i64, favorite: bool) -> Result<()> {
-        state::with_db(&self.core, |conn| {
-            db::update_host_favorite(conn, host_id, i64::from(favorite))
-        })
+        self.core
+            .update_host_favorite(host_id, i64::from(favorite))
+            .map_err(|e| anyhow!(e))
+    }
+
+    fn set_group(&self, host_id: i64, group: &str) -> Result<()> {
+        self.core
+            .update_host_group(host_id, group)
+            .map_err(|e| anyhow!(e))
+    }
+
+    fn rename_group(&self, old: &str, new: &str) -> Result<usize> {
+        self.core
+            .batch_update_host_group(old, new)
+            .map_err(|e| anyhow!(e))
+    }
+
+    fn clear_group(&self, group: &str) -> Result<usize> {
+        self.core
+            .batch_clear_host_group(group)
+            .map_err(|e| anyhow!(e))
+    }
+
+    fn store_secret(&self, kind: SecretKind, host_id: i64, secret: &str) -> Result<()> {
+        match kind {
+            SecretKind::SshPassword => hosts::store_password(host_id, secret),
+            SecretKind::Mongo => hosts::store_mongo_secret(host_id, secret),
+            SecretKind::Redis => hosts::store_redis_secret(host_id, secret),
+            SecretKind::Vnc => hosts::store_vnc_secret(host_id, secret),
+        }
         .map_err(|e| anyhow!(e))
+    }
+
+    fn has_secret(&self, kind: SecretKind, host_id: i64) -> bool {
+        match kind {
+            SecretKind::SshPassword => crypto::get_password(host_id).is_ok(),
+            SecretKind::Mongo => hosts::has_mongo_secret(host_id),
+            SecretKind::Redis => hosts::has_redis_secret(host_id),
+            SecretKind::Vnc => hosts::has_vnc_secret(host_id),
+        }
+    }
+
+    fn export_hosts(&self) -> Result<String> {
+        self.core.export_hosts().map_err(|e| anyhow!(e))
+    }
+
+    fn import_hosts(&self, entries: Vec<ImportEntry>) -> Result<ImportSummary> {
+        let entries = entries
+            .into_iter()
+            .map(|e| db::ImportEntry {
+                host: import_host(e.host),
+                replace_id: e.replace_id,
+            })
+            .collect();
+        let summary = self.core.import_hosts(entries).map_err(|e| anyhow!(e))?;
+        Ok(ImportSummary {
+            added: summary.added,
+            replaced: summary.replaced,
+            failed: summary
+                .failed
+                .into_iter()
+                .map(|f| (f.name, f.reason))
+                .collect(),
+        })
+    }
+
+    fn parse_ssh_config(&self) -> Result<Vec<SshConfigEntry>> {
+        let hosts = ssh_config_parser::parse_ssh_config().map_err(|e| anyhow!(e))?;
+        Ok(hosts
+            .into_iter()
+            .map(|h| SshConfigEntry {
+                name: h.name,
+                host: h.host,
+                port: u16::try_from(h.port).unwrap_or(22),
+                username: h.username,
+                auth_type: h.auth_type,
+                key_path: h.key_path,
+                proxy_jump: h.proxy_jump,
+            })
+            .collect())
     }
 
     fn get_setting(&self, key: &str) -> Result<Option<String>> {
@@ -263,6 +430,36 @@ mod tests {
         let r = host_record(&host());
         assert_eq!((r.id, r.port, r.favorite), (7, 2222, true));
         assert_eq!(r.group.as_deref(), Some("Lab"));
+    }
+
+    #[test]
+    fn a_record_writes_back_as_the_row_it_came_from() {
+        let row = db::Host {
+            key_path: Some("~/.ssh/id".into()),
+            jump_host_id: Some(3),
+            vnc_host: Some("127.0.0.1".into()),
+            vnc_port: Some(5901),
+            vnc_view_only: 1,
+            ..host()
+        };
+        let n = new_host(&host_record(&row));
+        assert_eq!(
+            (n.name.as_str(), n.port, n.auth_type.as_str()),
+            ("box", 2222, "password")
+        );
+        assert_eq!(n.key_path.as_deref(), Some("~/.ssh/id"));
+        assert_eq!((n.jump_host_id, n.vnc_port), (Some(3), Some(5901)));
+        assert_eq!((n.favorite, n.vnc_view_only), (Some(1), Some(1)));
+        assert_eq!(n.group.as_deref(), Some("Lab"));
+        // An empty key path column reads as none.
+        assert_eq!(
+            host_record(&db::Host {
+                key_path: Some(String::new()),
+                ..host()
+            })
+            .key_path,
+            None
+        );
     }
 
     #[test]

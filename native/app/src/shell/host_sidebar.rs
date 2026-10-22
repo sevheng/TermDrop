@@ -1,28 +1,41 @@
 //! The host list. Port of `HostSidebar.vue` + `HostRow.vue`: search, grouped
-//! or flat view, collapsible groups, favourites, keyboard navigation and the
-//! row context menu.
+//! or flat view, collapsible groups, favourites, keyboard navigation, the
+//! header's add / import / export menus, each row's hover buttons and the
+//! host, group and empty-area context menus.
 //!
 //! The rules live in the pure modules (`host_grouping`, `list_nav`,
-//! `host_row_state`); this file only lays them out. GPUI Kit's `Sidebar` is
+//! `host_row_state`, `host_menu`); this file only lays them out. The dialogs
+//! it opens are `host_editor`, `group_dialog` and `ssh_import`. GPUI Kit's `Sidebar` is
 //! not used for the list itself: its items are a menu model, and this list is
 //! a keyboard-navigable tree with per-row state and context menus.
 
 use std::collections::HashSet;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable,
+    Anchor, AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable,
     FontWeight, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 
+use super::group_dialog::{GroupDialogMode, open_group_dialog};
+use super::host_actions::{
+    confirm_delete_group, confirm_delete_host, export_hosts, import_json, move_to_group,
+};
+use super::host_editor::open_host_editor;
+use super::ssh_import::open_ssh_import;
+use crate::app::host_form::EditorKind;
 use crate::app::host_grouping::{filter_hosts, group_hosts};
 use crate::app::host_kind::{HostKind, IconTone};
+use crate::app::host_menu::{
+    EmptyMenuItem, GroupMenuItem, HostMenuItem, add_menu, empty_menu, group_menu, host_menu,
+};
 use crate::app::host_row_state::{HostRowState, format_age};
 use crate::app::list_nav::{
     HOST_ROW_H, NavIntent, Row, dom_key, first_row, last_row, nav_intent, next_row, page_row,
@@ -31,21 +44,10 @@ use crate::app::list_nav::{
 use crate::app::prefs::ViewMode;
 use crate::app::{AppEvent, AppModel};
 use crate::backend::HostSummary;
-use crate::ui::dialogs::{PromptOptions, prompt};
 use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
 use crate::ui::theme::{Palette, palette};
-
-/// What the sidebar asks of the window, for actions it cannot finish alone.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SidebarEvent {
-    /// The "Add a host" action. The host editor is a later phase, so the
-    /// window decides what that means for now.
-    AddHost,
-}
-
-impl gpui_kit::EventEmitter<SidebarEvent> for HostSidebar {}
 
 pub struct HostSidebar {
     model: Entity<AppModel>,
@@ -179,9 +181,18 @@ impl HostSidebar {
                 }
                 return;
             }
-            // Deleting a host needs the host editor's confirm path; the
-            // other tree intents have nothing to act on while focus is only
-            // ever on a host row.
+            NavIntent::Delete => {
+                if let Some(Row::Item { item, .. }) =
+                    usize::try_from(current).ok().and_then(|i| rows.get(i))
+                {
+                    let id = item.id;
+                    cx.stop_propagation();
+                    confirm_delete_host(window, cx, self.model.clone(), id);
+                }
+                return;
+            }
+            // The other tree intents have nothing to act on while focus is
+            // only ever on a host row.
             _ => return,
         };
         if let Some(Row::Item { item, .. }) = usize::try_from(next).ok().and_then(|i| rows.get(i)) {
@@ -196,20 +207,220 @@ impl HostSidebar {
         }
     }
 
-    fn new_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The header's "Add a host" button: a menu of the four editors.
+    fn add_button(&self) -> impl IntoElement {
         let model = self.model.clone();
-        prompt(
-            window,
-            cx,
-            PromptOptions::new("New group")
-                .placeholder("Group name")
-                .confirm_label("Create"),
-            move |name, _, cx| {
-                if let Some(name) = name {
-                    model.update(cx, |m, cx| m.add_custom_group(&name, cx));
+        const LABEL: &str = "Add a host";
+        Button::new("add-host")
+            .ghost()
+            .small()
+            .icon(Icon::new(IconName::Plus))
+            .tooltip(LABEL)
+            .accessibility_label(LABEL)
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, cx| {
+                let p = *palette(cx);
+                for (kind, label) in add_menu() {
+                    let model = model.clone();
+                    let (icon, tone) = match kind {
+                        EditorKind::Ssh => (IconName::Server, p.ink_2),
+                        EditorKind::Mongo => (IconName::Database, p.mongo),
+                        EditorKind::Redis => (IconName::Layers, p.redis),
+                        EditorKind::Vnc => (IconName::Monitor, p.vnc),
+                    };
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .icon(Icon::new(icon).text_color(tone))
+                            .on_click(move |_, window, cx| {
+                                open_host_editor(window, cx, model.clone(), kind, None, None)
+                            }),
+                    );
                 }
-            },
-        );
+                menu
+            })
+    }
+
+    /// The header's import button: from `~/.ssh/config` or a JSON export.
+    fn import_button(&self) -> impl IntoElement {
+        let model = self.model.clone();
+        const LABEL: &str = "Import hosts";
+        Button::new("import-hosts")
+            .ghost()
+            .small()
+            .icon(Icon::new(IconName::Download))
+            .tooltip(LABEL)
+            .accessibility_label(LABEL)
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                let m1 = model.clone();
+                let m2 = model.clone();
+                menu.item(
+                    PopupMenuItem::new("From ~/.ssh/config")
+                        .icon(IconName::FileTerminal)
+                        .on_click(move |_, window, cx| open_ssh_import(window, cx, m1.clone())),
+                )
+                .item(
+                    PopupMenuItem::new("From JSON file")
+                        .icon(IconName::Download)
+                        .on_click(move |_, window, cx| import_json(window, cx, m2.clone())),
+                )
+            })
+    }
+
+    /// The host row's menu, built from `host_menu` when it opens.
+    fn host_context_menu(
+        model: &Entity<AppModel>,
+        sidebar: &gpui_kit::WeakEntity<Self>,
+        id: i64,
+        menu: PopupMenu,
+        cx: &App,
+    ) -> PopupMenu {
+        let m = model.read(cx);
+        let Some(host) = m.host(id).cloned() else {
+            return menu;
+        };
+        let p = *palette(cx);
+        let items = host_menu(&host, m.view_mode(), &m.group_names());
+        let kind = host.kind;
+        let mut menu = menu;
+        for item in items {
+            let label = item.label();
+            let model = model.clone();
+            menu = match item {
+                HostMenuItem::Separator => menu.separator(),
+                HostMenuItem::MoveToLabel => menu.label(label),
+                HostMenuItem::Activate(_) => {
+                    let sidebar = sidebar.clone();
+                    menu.item(
+                        PopupMenuItem::new(label)
+                            .icon(Icon::new(IconName::Zap).text_color(p.accent))
+                            .on_click(move |_, _, cx| {
+                                if let Some(s) = sidebar.upgrade() {
+                                    s.update(cx, |s, cx| s.activate(id, cx));
+                                }
+                            }),
+                    )
+                }
+                HostMenuItem::OpenVnc => menu.item(
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(IconName::Monitor).text_color(p.vnc))
+                        .on_click(move |_, _, cx| {
+                            model.update(cx, |m, cx| {
+                                m.open_vnc(id, cx);
+                            });
+                        }),
+                ),
+                HostMenuItem::Edit => menu.item(
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(IconName::Pencil).text_color(p.ink_3))
+                        .on_click(move |_, window, cx| {
+                            open_host_editor(
+                                window,
+                                cx,
+                                model.clone(),
+                                EditorKind::for_host(kind),
+                                Some(id),
+                                None,
+                            )
+                        }),
+                ),
+                HostMenuItem::ToggleFavorite { favorite } => menu.item(
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(IconName::Star).text_color(p.warn))
+                        .on_click(move |_, _, cx| {
+                            model.update(cx, |m, cx| m.set_favorite(id, !favorite, cx));
+                        }),
+                ),
+                HostMenuItem::CopyName => {
+                    menu.item(PopupMenuItem::new(label).icon(IconName::Copy).on_click(
+                        move |_, _, cx| {
+                            if let Some(h) = model.read(cx).host(id) {
+                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                    h.name.clone(),
+                                ));
+                            }
+                        },
+                    ))
+                }
+                HostMenuItem::Delete => menu.item(
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(IconName::Trash).text_color(p.bad))
+                        .on_click(move |_, window, cx| {
+                            confirm_delete_host(window, cx, model.clone(), id)
+                        }),
+                ),
+                HostMenuItem::MoveTo(group) => menu.item(
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(IconName::Folder).text_color(p.ink_3))
+                        .checked(group == host.group)
+                        .on_click(move |_, window, cx| {
+                            move_to_group(window, cx, &model, id, &group)
+                        }),
+                ),
+            };
+        }
+        menu
+    }
+
+    /// The empty area's menu: a new group (grouped view) and a new host.
+    fn empty_context_menu(model: &Entity<AppModel>, menu: PopupMenu, cx: &App) -> PopupMenu {
+        let p = *palette(cx);
+        let mut menu = menu;
+        for item in empty_menu(model.read(cx).view_mode()) {
+            let model = model.clone();
+            menu = menu.item(match item {
+                EmptyMenuItem::NewGroup => PopupMenuItem::new(item.label())
+                    .icon(Icon::new(IconName::FolderPlus).text_color(p.accent))
+                    .on_click(move |_, window, cx| {
+                        open_group_dialog(window, cx, model.clone(), GroupDialogMode::Create)
+                    }),
+                EmptyMenuItem::AddHost => PopupMenuItem::new(item.label())
+                    .icon(Icon::new(IconName::Plus).text_color(p.good))
+                    .on_click(move |_, window, cx| {
+                        open_host_editor(window, cx, model.clone(), EditorKind::Ssh, None, None)
+                    }),
+            });
+        }
+        menu
+    }
+
+    /// A group header's menu: add a host into it, rename it, delete it.
+    fn group_context_menu(
+        model: &Entity<AppModel>,
+        name: &str,
+        menu: PopupMenu,
+        cx: &App,
+    ) -> PopupMenu {
+        let p = *palette(cx);
+        let mut menu = menu;
+        for (item, enabled) in group_menu(name) {
+            let model = model.clone();
+            let name = name.to_string();
+            menu = menu.item(match item {
+                GroupMenuItem::AddHost => PopupMenuItem::new(item.label())
+                    .icon(Icon::new(IconName::Plus).text_color(p.good))
+                    .on_click(move |_, window, cx| {
+                        let group = (!name.is_empty()).then(|| name.clone());
+                        open_host_editor(window, cx, model.clone(), EditorKind::Ssh, None, group)
+                    }),
+                GroupMenuItem::Rename => PopupMenuItem::new(item.label())
+                    .icon(Icon::new(IconName::Pencil).text_color(p.ink_3))
+                    .disabled(!enabled)
+                    .on_click(move |_, window, cx| {
+                        open_group_dialog(
+                            window,
+                            cx,
+                            model.clone(),
+                            GroupDialogMode::Rename(name.clone()),
+                        )
+                    }),
+                GroupMenuItem::Delete => PopupMenuItem::new(item.label())
+                    .icon(Icon::new(IconName::Trash).text_color(p.bad))
+                    .disabled(!enabled)
+                    .on_click(move |_, window, cx| {
+                        confirm_delete_group(window, cx, model.clone(), name.clone())
+                    }),
+            });
+        }
+        menu
     }
 
     fn render_row(
@@ -247,14 +458,19 @@ impl HostSidebar {
         } else {
             format_age(host.last_connected_at.as_deref(), now_ms)
         };
-        let verb = host.kind.activate_verb();
-        let show_vnc = host.has_vnc && host.kind == HostKind::Ssh;
         let favorite = host.favorite;
+        let kind = host.kind;
         let model = self.model.clone();
         let sidebar = cx.entity().downgrade();
+        let group = SharedString::from(format!("host-row-{key}-{id}"));
+        // The hover cluster's backing matches the row under it, so the
+        // buttons never sit on top of text.
+        let cluster_bg = if state.active { p.selected } else { p.raised };
+        let (m_fav, m_edit, m_del) = (model.clone(), model.clone(), model.clone());
 
         div()
             .id(SharedString::from(format!("host-{key}-{id}")))
+            .group(group.clone())
             .relative()
             .h(px(HOST_ROW_H))
             .flex()
@@ -307,15 +523,92 @@ impl HostSidebar {
                             .child(subtitle),
                     ),
             )
+            // Shown at rest, hidden under the hover buttons.
             .when(favorite, |d| {
-                d.child(Icon::new(IconName::StarFill).xsmall().text_color(p.warn))
+                d.child(
+                    div()
+                        .flex_none()
+                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .child(Icon::new(IconName::StarFill).xsmall().text_color(p.warn)),
+                )
             })
             .when(!age.is_empty(), |d| {
-                d.child(div().flex_none().text_xs().text_color(p.ink_3).child(age))
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(p.ink_3)
+                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .child(age),
+                )
             })
             .when(state.connecting, |d| {
                 d.child(Spinner::new().xsmall().color(p.accent))
             })
+            // HostRow.vue's hover buttons. Absolutely placed, so revealing
+            // them never reflows the row; shown on hover and on the row the
+            // arrow keys have reached. Clicks cannot land while they are
+            // hidden: the pointer over them is what hovers the row.
+            .child(
+                h_flex()
+                    .absolute()
+                    .right_1()
+                    .top_0()
+                    .bottom_0()
+                    .items_center()
+                    .gap_0p5()
+                    .pl_2()
+                    .bg(cluster_bg)
+                    .opacity(if focused { 1. } else { 0. })
+                    .group_hover(group, |s| s.opacity(1.))
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("fav-{key}-{id}")),
+                            IconName::Star,
+                            if favorite {
+                                "Remove from favourites"
+                            } else {
+                                "Add to favourites"
+                            },
+                        )
+                        .tone(p.warn)
+                        .active(favorite)
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            m_fav.update(cx, |m, cx| m.set_favorite(id, !favorite, cx));
+                        }),
+                    )
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("edit-{key}-{id}")),
+                            IconName::Pencil,
+                            "Edit host",
+                        )
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            open_host_editor(
+                                window,
+                                cx,
+                                m_edit.clone(),
+                                EditorKind::for_host(kind),
+                                Some(id),
+                                None,
+                            );
+                        }),
+                    )
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("delete-{key}-{id}")),
+                            IconName::Trash,
+                            "Delete host",
+                        )
+                        .tone(p.bad)
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            confirm_delete_host(window, cx, m_del.clone(), id);
+                        }),
+                    ),
+            )
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 this.focus_handle.focus(window, cx);
                 if e.click_count() >= 2 {
@@ -327,60 +620,8 @@ impl HostSidebar {
                     cx.notify();
                 }
             }))
-            .context_menu(move |menu, _, _| {
-                let m1 = model.clone();
-                let m2 = model.clone();
-                let m3 = model.clone();
-                let m4 = model.clone();
-                let sidebar = sidebar.clone();
-                menu.item(
-                    PopupMenuItem::new(verb)
-                        .icon(IconName::Zap)
-                        .on_click(move |_, _, cx| {
-                            if let Some(s) = sidebar.upgrade() {
-                                s.update(cx, |s, cx| s.activate(id, cx));
-                            }
-                        }),
-                )
-                .when(show_vnc, |menu| {
-                    menu.item(
-                        PopupMenuItem::new("Open remote desktop")
-                            .icon(IconName::Monitor)
-                            .on_click(move |_, _, cx| {
-                                m1.update(cx, |m, cx| {
-                                    m.open_vnc(id, cx);
-                                });
-                            }),
-                    )
-                })
-                .item(
-                    PopupMenuItem::new("Open local shell")
-                        .icon(IconName::SquareTerminal)
-                        .on_click(move |_, _, cx| {
-                            m2.update(cx, |m, cx| {
-                                m.open_local(None, cx);
-                            });
-                        }),
-                )
-                .separator()
-                .item(
-                    PopupMenuItem::new(if favorite { "Unfavorite" } else { "Favorite" })
-                        .icon(IconName::Star)
-                        .on_click(move |_, _, cx| {
-                            m3.update(cx, |m, cx| m.set_favorite(id, !favorite, cx));
-                        }),
-                )
-                .item(
-                    PopupMenuItem::new("Copy name")
-                        .icon(IconName::Copy)
-                        .on_click(move |_, _, cx| {
-                            if let Some(h) = m4.read(cx).host(id) {
-                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
-                                    h.name.clone(),
-                                ));
-                            }
-                        }),
-                )
+            .context_menu(move |menu, _, cx| {
+                Self::host_context_menu(&model, &sidebar, id, menu, cx)
             })
             .into_any_element()
     }
@@ -399,7 +640,8 @@ impl HostSidebar {
         } else {
             name.to_string().into()
         };
-        let entity = cx.entity().downgrade();
+        let model = self.model.clone();
+        let menu_name = name.to_string();
         div()
             .id(SharedString::from(format!("group-{name}")))
             .h(px(22.))
@@ -435,18 +677,7 @@ impl HostSidebar {
                 this.model
                     .update(cx, |m, cx| m.toggle_group(&toggle_name, cx));
             }))
-            .context_menu(move |menu, _, _| {
-                let entity = entity.clone();
-                menu.item(
-                    PopupMenuItem::new("New group…")
-                        .icon(IconName::FolderPlus)
-                        .on_click(move |_, window, cx| {
-                            if let Some(e) = entity.upgrade() {
-                                e.update(cx, |s, cx| s.new_group(window, cx));
-                            }
-                        }),
-                )
-            })
+            .context_menu(move |menu, _, cx| Self::group_context_menu(&model, &menu_name, menu, cx))
             .into_any_element()
     }
 }
@@ -522,15 +753,13 @@ impl Render for HostSidebar {
                 .compact()
                 .into_any_element()
         } else if total == 0 {
-            let this = cx.entity().downgrade();
+            let model = self.model.clone();
             EmptyState::empty(
                 "hosts-empty",
                 "No hosts yet",
                 "Add a host",
-                move |_, _, cx| {
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |_, cx| cx.emit(SidebarEvent::AddHost));
-                    }
+                move |_, window, cx| {
+                    open_host_editor(window, cx, model.clone(), EditorKind::Ssh, None, None)
                 },
             )
             .icon(Icon::new(IconName::Server))
@@ -596,7 +825,8 @@ impl Render for HostSidebar {
         };
         let m = self.model.clone();
         let m2 = self.model.clone();
-        let entity = cx.entity().downgrade();
+        let m_export = self.model.clone();
+        let m_menu = self.model.clone();
 
         v_flex()
             .size_full()
@@ -606,6 +836,11 @@ impl Render for HostSidebar {
                     .action(
                         IconButton::new("toggle-view", toggle_icon, toggle_label)
                             .on_click(move |_, _, cx| m.update(cx, |m, cx| m.toggle_view_mode(cx))),
+                    )
+                    .action(self.import_button())
+                    .action(
+                        IconButton::new("export-hosts", IconName::Upload, "Export hosts")
+                            .on_click(move |_, window, cx| export_hosts(window, cx, &m_export)),
                     )
                     .action(
                         IconButton::new(
@@ -618,7 +853,8 @@ impl Render for HostSidebar {
                                 m.open_local(None, cx);
                             });
                         }),
-                    ),
+                    )
+                    .action(self.add_button()),
             )
             .child(
                 div().px_2().py_1().border_b_1().border_color(p.line).child(
@@ -637,18 +873,7 @@ impl Render for HostSidebar {
                     .key_context("HostList")
                     .on_key_down(cx.listener(Self::on_key_down))
                     .child(body)
-                    .context_menu(move |menu, _, _| {
-                        let entity = entity.clone();
-                        menu.item(
-                            PopupMenuItem::new("New group…")
-                                .icon(IconName::FolderPlus)
-                                .on_click(move |_, window, cx| {
-                                    if let Some(e) = entity.upgrade() {
-                                        e.update(cx, |s, cx| s.new_group(window, cx));
-                                    }
-                                }),
-                        )
-                    }),
+                    .context_menu(move |menu, _, cx| Self::empty_context_menu(&m_menu, menu, cx)),
             )
     }
 }

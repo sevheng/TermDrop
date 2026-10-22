@@ -12,12 +12,15 @@ use std::sync::Arc;
 
 use gpui_kit::{Context, EventEmitter};
 
+use super::host_grouping::group_names;
 use super::host_kind::HostKind;
 use super::host_row_state::{HostRowState, host_row_state};
 use super::prefs::{self, Prefs, ThemeChoice, ViewMode};
 use super::tab_kind::{CloseAction, TabKind, next_local_tab_name};
 use super::tabs::{Tab, Tabs};
-use crate::backend::{HostStore, HostSummary};
+use crate::backend::{
+    HostRecord, HostStore, HostSummary, ImportEntry, ImportSummary, SecretKind, SshConfigEntry,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEvent {
@@ -129,6 +132,154 @@ impl AppModel {
         }
         cx.emit(AppEvent::HostsChanged);
         cx.notify();
+    }
+
+    /// Every column of one row, for an editor. Read fresh rather than kept,
+    /// because the list holds display summaries only.
+    pub fn host_record(&self, host_id: i64) -> Result<Option<HostRecord>, String> {
+        self.store.host_record(host_id).map_err(|e| e.to_string())
+    }
+
+    /// Insert or rewrite a host, then reload the list. Returns its id.
+    pub fn save_host(
+        &mut self,
+        id: Option<i64>,
+        record: &HostRecord,
+        cx: &mut Context<Self>,
+    ) -> Result<i64, String> {
+        let result = match id {
+            Some(id) => self.store.update_host(id, record).map(|()| id),
+            None => self.store.add_host(record),
+        };
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())
+    }
+
+    /// Store a secret typed into an editor. Never called with an empty one.
+    pub fn store_secret(&self, kind: SecretKind, host_id: i64, secret: &str) -> Result<(), String> {
+        self.store
+            .store_secret(kind, host_id, secret)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn has_secret(&self, kind: SecretKind, host_id: i64) -> bool {
+        self.store.has_secret(kind, host_id)
+    }
+
+    /// Delete a host after the user confirmed. Every tab for it closes first,
+    /// each the way its own kind closes, as the Vue sidebar's `deleteHost`
+    /// did: the row's sessions must not outlive it.
+    pub fn delete_host(&mut self, host_id: i64, cx: &mut Context<Self>) -> Result<(), String> {
+        let open: Vec<String> = self
+            .tabs
+            .all()
+            .iter()
+            .filter(|t| t.host_id == Some(host_id))
+            .map(|t| t.id.clone())
+            .collect();
+        for id in open {
+            self.close_tab(&id, cx);
+        }
+        let result = self.store.delete_host(host_id);
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())
+    }
+
+    /// Move a host to `group` (empty for Ungrouped).
+    pub fn set_host_group(
+        &mut self,
+        host_id: i64,
+        group: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let result = self.store.set_group(host_id, group);
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())
+    }
+
+    /// Rename a group: its hosts move, and the custom-group list and the
+    /// collapsed state follow the new name.
+    pub fn rename_group(
+        &mut self,
+        old: &str,
+        new: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let new = new.trim();
+        if new == old {
+            return Ok(());
+        }
+        let result = self.store.rename_group(old, new);
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())?;
+        let custom = &mut self.prefs.custom_groups;
+        custom.retain(|g| g != old);
+        if !custom.iter().any(|g| g == new) {
+            custom.push(new.to_string());
+        }
+        let raw = prefs::encode_list(&self.prefs.custom_groups);
+        self.save(prefs::HOST_CUSTOM_GROUPS, &raw, cx);
+        if self.is_group_collapsed(old) {
+            self.prefs.collapsed_groups.retain(|g| g != old);
+            self.prefs.collapsed_groups.push(new.to_string());
+            let raw = prefs::encode_list(&self.prefs.collapsed_groups);
+            self.save(prefs::HOST_COLLAPSED_GROUPS, &raw, cx);
+        }
+        cx.notify();
+        Ok(())
+    }
+
+    /// Delete a group: its hosts become ungrouped and it leaves the
+    /// custom-group list.
+    pub fn delete_group(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let result = self.store.clear_group(name);
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())?;
+        if self.prefs.custom_groups.iter().any(|g| g == name) {
+            self.prefs.custom_groups.retain(|g| g != name);
+            let raw = prefs::encode_list(&self.prefs.custom_groups);
+            self.save(prefs::HOST_CUSTOM_GROUPS, &raw, cx);
+        }
+        cx.notify();
+        Ok(())
+    }
+
+    /// Every group name in play: the hosts' and the user's empty ones.
+    pub fn group_names(&self) -> Vec<String> {
+        group_names(&self.hosts, &self.prefs.custom_groups)
+    }
+
+    pub fn export_hosts(&self) -> Result<String, String> {
+        self.store.export_hosts().map_err(|e| e.to_string())
+    }
+
+    /// Import, then reload whatever happened: a partial import must still
+    /// show up rather than look like nothing landed.
+    pub fn import_hosts(
+        &mut self,
+        entries: Vec<ImportEntry>,
+        cx: &mut Context<Self>,
+    ) -> Result<ImportSummary, String> {
+        let result = self.store.import_hosts(entries);
+        self.reload_hosts(cx);
+        result.map_err(|e| e.to_string())
+    }
+
+    pub fn parse_ssh_config(&self) -> Result<Vec<SshConfigEntry>, String> {
+        self.store.parse_ssh_config().map_err(|e| e.to_string())
+    }
+
+    /// Point a host at its jump host, rewriting only that column.
+    pub fn set_jump_host(&mut self, host_id: i64, jump_id: i64) -> Result<(), String> {
+        let mut rec = self
+            .store
+            .host_record(host_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("host {host_id} not found"))?;
+        rec.jump_host_id = Some(jump_id);
+        self.store
+            .update_host(host_id, &rec)
+            .map_err(|e| e.to_string())
     }
 
     pub fn row_state(&self, host_id: i64) -> HostRowState {
@@ -420,7 +571,9 @@ impl AppModel {
         &self.prefs.custom_groups
     }
 
-    /// A group the user created before putting any host in it.
+    /// A group the user created before putting any host in it. It starts
+    /// expanded, so it does not inherit a collapsed state from an old group
+    /// of the same name.
     pub fn add_custom_group(&mut self, name: &str, cx: &mut Context<Self>) {
         let name = name.trim();
         if name.is_empty() || self.prefs.custom_groups.iter().any(|g| g == name) {
@@ -429,6 +582,7 @@ impl AppModel {
         self.prefs.custom_groups.push(name.to_string());
         let raw = prefs::encode_list(&self.prefs.custom_groups);
         self.save(prefs::HOST_CUSTOM_GROUPS, &raw, cx);
+        self.set_group_collapsed(name, false, cx);
         cx.notify();
     }
 

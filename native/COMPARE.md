@@ -70,8 +70,9 @@ Read from the code on this branch, not from the plan.
 | Area | Native | Notes |
 |---|---|---|
 | Window, title bar, resizable sidebar and right pane | Yes | Widths are saved to the shared settings. |
-| Host sidebar | Yes | Search, grouped/flat view, collapsible groups, new group, favourites, keyboard navigation, context menu (connect, open remote desktop, open local shell, favourite, copy name). |
-| Adding, editing, deleting hosts; `~/.ssh/config` import | **No** | Use the Tauri app; the native one sees the result. |
+| Host sidebar | Yes | Search, grouped/flat view, collapsible groups, favourites, keyboard navigation (Enter connects, Delete asks to delete). Header: add menu (host, MongoDB, Redis, remote desktop), import menu, export, local shell. Row hover buttons: favourite, edit, delete. Context menus: host (connect/open, open remote desktop, edit, favourite, copy name, delete, move to group), group (add host here, rename, delete), empty area (new group, add host). No drag-and-drop between groups yet. |
+| Adding, editing, deleting hosts | Yes | One dialog per kind (SSH, MongoDB, Redis, VNC) with the Vue fields, defaults and messages, plus a group picker, a favourite box and an SSH host's own VNC settings. Saves go through the same `termdrop-core` operations as the Tauri commands (`hosts.rs`). Passwords go to the keyring; fields start empty and an empty one keeps what is stored. Deleting a host closes its tabs first. |
+| Import and export | Yes | `~/.ssh/config` (hosts already saved start unticked; `ProxyJump` linked after import) and JSON files, with native file dialogs (`rfd`, GTK on Linux). |
 | Settings | Partly | Theme (dark/light) and terminal font size only. |
 | Tabs | Yes | Tab strip, Ctrl+Tab / Ctrl+PageUp/Down, Ctrl+W with a confirm, Ctrl+Shift+T, Ctrl+, , Ctrl+Alt+B. |
 | Local terminal | Yes | Shell detection and the shell menu from `termdrop-core`, reconnect. |

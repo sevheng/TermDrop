@@ -23,3 +23,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Native file dialogs (export/import, key file). GTK on Linux, as the Tauri
+# dialog plugin uses, rather than the XDG portal, which WSLg lacks.
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
