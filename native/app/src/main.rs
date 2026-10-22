@@ -1,17 +1,10 @@
-use gpui_kit::*;
+use std::rc::Rc;
+use std::sync::Arc;
 
-struct Shell;
-
-impl Render for Shell {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().flex().items_center().justify_center().child("TermDrop")
-    }
-}
+use termdrop_gpui::backend::{FakeBackend, PlaceholderContent};
 
 fn main() {
-    application().with_assets(assets::Assets).run(|cx| {
-        init(cx);
-        open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Shell))
-            .expect("failed to open window");
-    });
+    // No real backend is wired yet: fictional hosts, in-memory settings and a
+    // placeholder in every tab (see backend.rs).
+    termdrop_gpui::run(Arc::new(FakeBackend::new()), Rc::new(PlaceholderContent));
 }
