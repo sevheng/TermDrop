@@ -9,6 +9,7 @@ import { hopOf, parseTrustError, shouldAskToTrust } from '../utils/trustError.js
 import { showPromptDialog } from '../composables/usePromptDialog.js'
 import { TAB_KIND, nextLocalTabName } from '../utils/tabKinds.js'
 import { applyTheme } from '../composables/useTheme.js'
+import { loadPrefs } from '../composables/usePrefs.js'
 import { loadTerminalTab } from '../components/terminalTabLoader.js'
 
 
@@ -144,7 +145,10 @@ export const useConnectionStore = defineStore('connection', () => {
       // looking like it never finished starting. Failures are logged rather
       // than toasted -- an empty sidebar is the visible symptom, and a toast
       // over the fade-in was noise.
-      bootstrapped = Promise.allSettled([loadSettings(), loadHosts()]).then(results => {
+      // loadPrefs reconciles the layout preferences with SQLite under the
+      // splash, so a value that differs from the localStorage cache moves
+      // before anyone sees it.
+      bootstrapped = Promise.allSettled([loadSettings(), loadHosts(), loadPrefs()]).then(results => {
         for (const r of results) {
           if (r.status === 'rejected') console.error('[bootstrap]', r.reason)
         }

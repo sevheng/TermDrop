@@ -1882,6 +1882,11 @@ async fn mongodb_restore(
 }
 
 #[tauri::command]
+fn scan_restore_folder(path: String) -> Result<Vec<mongodb::RestoreSourceDb>, String> {
+    mongodb::scan_restore_folder(path)
+}
+
+#[tauri::command]
 async fn mongodb_restore_archive(
     window: Window,
     state: State<'_, AppState>,
@@ -3117,7 +3122,7 @@ fn main() {
             vnc_store_secret,
             vnc_has_secret,
             vnc_clear_secret,
-            mongodb::scan_restore_folder,
+            scan_restore_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

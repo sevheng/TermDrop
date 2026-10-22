@@ -325,6 +325,7 @@
 <script setup>
 import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useConnectionStore } from '../stores/connection.js'
+import { usePref, savePref } from '../composables/usePrefs.js'
 import {
   Plus, Server, Database, Layers, Search, Upload, Download, FileTerminal,
   Folder, FolderOpen, FolderPlus,
@@ -364,16 +365,21 @@ const showVncModal = ref(false)
 const editingHost = ref(null)
 const searchQuery = ref('')
 const debouncedQuery = ref('')
-// Persisted like host-view-mode and host-custom-groups already are: every
-// relaunch used to expand every group again.
-const collapsedGroups = ref(new Set(loadCollapsed()))
+// Stored as arrays (usePrefs.js); the Sets are views over them, and every
+// assignment through a view is saved by the watch below -- including the
+// create and rename paths, which used to forget the collapsed state.
+const collapsedList = usePref('host-collapsed-groups', [])
+const collapsedGroups = setView(collapsedList)
+const customList = usePref('host-custom-groups', [])
+const customGroups = setView(customList)
+watch(collapsedList, () => savePref('host-collapsed-groups'))
+watch(customList, () => savePref('host-custom-groups'))
 
-function loadCollapsed() {
-  try {
-    return JSON.parse(localStorage.getItem('host-collapsed-groups') || '[]')
-  } catch {
-    return []
-  }
+function setView(list) {
+  return computed({
+    get: () => new Set(list.value),
+    set: (set) => { list.value = [...set] },
+  })
 }
 
 // Debounce search input to reduce computed recalculations
@@ -385,9 +391,8 @@ watch(searchQuery, (val) => {
   }, 200)
 }, { immediate: true })
 const importInput = ref(null)
-const viewMode = ref(localStorage.getItem('host-view-mode') || 'grouped')
+const viewMode = usePref('host-view-mode', 'grouped')
 const dragOverGroup = ref(null)
-const customGroups = ref(new Set(JSON.parse(localStorage.getItem('host-custom-groups') || '[]')))
 
 const pendingGroupForNewHost = ref(null)
 
@@ -431,7 +436,7 @@ const groupedHosts = computed(() => groupHosts(nonFavoriteHosts.value, customGro
 
 function toggleView() {
   viewMode.value = viewMode.value === 'grouped' ? 'flat' : 'grouped'
-  localStorage.setItem('host-view-mode', viewMode.value)
+  savePref('host-view-mode')
 }
 
 /**
@@ -512,11 +517,6 @@ function toggleGroup(name) {
   if (set.has(name)) set.delete(name)
   else set.add(name)
   collapsedGroups.value = set
-  try {
-    localStorage.setItem('host-collapsed-groups', JSON.stringify([...set]))
-  } catch {
-    // Blocked storage only costs the collapse state on the next launch.
-  }
 }
 
 async function toggleFavorite(host) {
@@ -581,7 +581,6 @@ async function deleteGroup() {
     onConfirm: async () => {
       await store.deleteGroup(name)
       customGroups.value = new Set([...customGroups.value].filter(g => g !== name))
-      localStorage.setItem('host-custom-groups', JSON.stringify([...customGroups.value]))
     },
   })
 }
@@ -608,7 +607,6 @@ async function handleGroupModalSave(name) {
   showGroupModal.value = false
   if (groupModalMode.value === 'create') {
     customGroups.value = new Set([...customGroups.value, name])
-    localStorage.setItem('host-custom-groups', JSON.stringify([...customGroups.value]))
     collapsedGroups.value = new Set([...collapsedGroups.value].filter(g => g !== name))
   } else if (groupModalMode.value === 'rename') {
     const oldName = groupModalCurrentName.value
@@ -618,7 +616,6 @@ async function handleGroupModalSave(name) {
       const updated = new Set([...customGroups.value].filter(g => g !== oldName))
       updated.add(name)
       customGroups.value = updated
-      localStorage.setItem('host-custom-groups', JSON.stringify([...updated]))
       // Preserve collapsed state under new name
       if (collapsedGroups.value.has(oldName)) {
         const newCollapsed = new Set([...collapsedGroups.value].filter(g => g !== oldName))
