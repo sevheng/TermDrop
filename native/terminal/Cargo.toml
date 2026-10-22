@@ -1,0 +1,7 @@
+[package]
+name = "termdrop-terminal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true

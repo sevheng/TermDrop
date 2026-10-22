@@ -1,0 +1,14 @@
+# The native (GPUI Kit) frontend. A workspace of its own, kept apart from
+# src-tauri so the Tauri build, its target dir and build.rs are untouched.
+# See docs/gpui-migration-plan.md.
+[workspace]
+resolver = "2"
+members = ["app", "terminal"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+gpui-kit = "0.8.0"

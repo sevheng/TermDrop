@@ -1,0 +1,12 @@
+[package]
+name = "termdrop-gpui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "termdrop-native"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit.workspace = true
+termdrop-terminal = { path = "../terminal" }
