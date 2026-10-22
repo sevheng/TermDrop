@@ -5,3 +5,12 @@ edition.workspace = true
 
 [dependencies]
 gpui-kit.workspace = true
+alacritty_terminal = "0.25.1"
+async-channel = "2"
+parking_lot = "0.12"
+regex = "1"
+unicode-width = "0.2"
+open = "5"
+
+[dev-dependencies]
+portable-pty = "0.9"
