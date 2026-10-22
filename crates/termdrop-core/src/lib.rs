@@ -18,6 +18,7 @@ pub mod dev_perf;
 pub mod docker;
 pub mod error;
 pub mod events;
+pub mod hosts;
 pub mod local_pty;
 pub mod local_shells;
 pub mod mongodb;

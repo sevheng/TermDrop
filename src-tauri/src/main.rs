@@ -20,7 +20,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 // `&Core` its helpers take.
 use termdrop_core::state::*;
 use termdrop_core::Core as AppState;
-use termdrop_core::{crypto, db, docker, local_shells, mongodb, redis};
+use termdrop_core::{db, docker, hosts, local_shells, mongodb, redis};
 use termdrop_core::{redis_backup, security, sftp, ssh_config_parser, system, uri, vnc};
 
 mod bridge;
@@ -45,33 +45,17 @@ fn get_hosts(state: State<'_, AppState>) -> Result<Vec<db::Host>, String> {
 
 #[tauri::command]
 fn add_host(state: State<'_, AppState>, host: db::NewHost) -> Result<i64, String> {
-    with_db(&state, |conn| db::add_host(conn, &host))
+    state.add_host(&host)
 }
 
 #[tauri::command]
 async fn update_host(state: State<'_, AppState>, id: i64, host: db::NewHost) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host(conn, id, &host))?;
-    // The address may have changed, and every one of these caches the old one.
-    // Redis was missing here: an edited URI stayed invisible until the app was
-    // restarted, and the stale tunnel stayed open behind it.
-    forget_mongo_clients(&state, id).await;
-    forget_redis(&state, id).await;
-    vnc_disconnect_host(state, id).await?;
-    Ok(())
+    state.update_host(id, &host).await
 }
 
 #[tauri::command]
 async fn delete_host(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    with_db(&state, |conn| db::delete_host(conn, id))?;
-    forget_mongo_clients(&state, id).await;
-    forget_redis(&state, id).await;
-    vnc_disconnect_host(state.clone(), id).await?;
-    crypto::delete_password(id).ok();
-    crypto::delete_secret(&mongo_account(id)).ok();
-    // Both of these were orphaned: the row went, the keyring entry stayed.
-    crypto::delete_secret(&redis_account(id)).ok();
-    crypto::delete_secret(&vnc_account(id)).ok();
-    Ok(())
+    state.delete_host(id).await
 }
 
 #[tauri::command]
@@ -81,7 +65,7 @@ fn get_host_by_id(state: State<'_, AppState>, id: i64) -> Result<Option<db::Host
 
 #[tauri::command]
 fn store_password(host_id: i64, password: String) -> Result<(), String> {
-    crypto::store_password(host_id, &password)
+    hosts::store_password(host_id, &password)
 }
 
 #[tauri::command]
@@ -589,7 +573,7 @@ fn exec_pty_disconnect(state: State<'_, AppState>, pty_session_id: String) -> Re
 
 #[tauri::command]
 fn update_host_group(state: State<'_, AppState>, id: i64, group: String) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host_group(conn, id, &group))
+    state.update_host_group(id, &group)
 }
 
 #[tauri::command]
@@ -598,30 +582,27 @@ fn batch_update_host_group(
     old_group: String,
     new_group: String,
 ) -> Result<usize, String> {
-    with_db(&state, |conn| {
-        db::update_hosts_group_by_name(conn, &old_group, &new_group)
-    })
+    state.batch_update_host_group(&old_group, &new_group)
 }
 
 #[tauri::command]
 fn batch_clear_host_group(state: State<'_, AppState>, group: String) -> Result<usize, String> {
-    with_db(&state, |conn| db::clear_hosts_group_by_name(conn, &group))
+    state.batch_clear_host_group(&group)
 }
 
 #[tauri::command]
 fn update_host_favorite(state: State<'_, AppState>, id: i64, favorite: i64) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host_favorite(conn, id, favorite))
+    state.update_host_favorite(id, favorite)
 }
 
 #[tauri::command]
 fn update_host_last_connected(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    with_db(&state, |conn| db::update_host_last_connected(conn, id))
+    state.update_host_last_connected(id)
 }
 
 #[tauri::command]
 fn export_hosts(state: State<'_, AppState>) -> Result<String, String> {
-    let hosts = with_db(&state, db::export_hosts)?;
-    serde_json::to_string(&hosts).map_err(|e| e.to_string())
+    state.export_hosts()
 }
 
 #[tauri::command]
@@ -632,12 +613,7 @@ fn import_hosts(
     state: State<'_, AppState>,
     entries: Vec<db::ImportEntry>,
 ) -> Result<db::ImportSummary, String> {
-    let mut conn = state.db.get().map_err(db_err)?;
-    // One transaction instead of one fsync per row.
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let summary = db::import_entries(&tx, entries);
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(summary)
+    state.import_hosts(entries)
 }
 
 #[tauri::command]
@@ -1061,22 +1037,19 @@ async fn mongodb_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<
 /// empty password field in the edit dialog can never silently delete it.
 #[tauri::command]
 fn mongodb_store_secret(host_id: i64, password: String) -> Result<(), String> {
-    if password.is_empty() {
-        return Err("refusing to store an empty MongoDB password".to_string());
-    }
-    crypto::store_secret(&mongo_account(host_id), &password)
+    hosts::store_mongo_secret(host_id, &password)
 }
 
 /// Whether a password is stored, so the UI can say so without revealing it.
 #[tauri::command]
 fn mongodb_has_secret(host_id: i64) -> bool {
-    crypto::get_secret(&mongo_account(host_id)).is_ok()
+    hosts::has_mongo_secret(host_id)
 }
 
 /// Forget the stored password for one side.
 #[tauri::command]
 fn mongodb_clear_secret(host_id: i64) -> Result<(), String> {
-    crypto::delete_secret(&mongo_account(host_id))
+    hosts::clear_mongo_secret(host_id)
 }
 
 /// Open a Redis connection and report what the server is.
@@ -1325,22 +1298,19 @@ async fn redis_import(
 /// cannot silently delete one; clearing is `redis_clear_secret`.
 #[tauri::command]
 fn redis_store_secret(host_id: i64, password: String) -> Result<(), String> {
-    if password.is_empty() {
-        return Err("refusing to store an empty Redis password".to_string());
-    }
-    crypto::store_secret(&redis_account(host_id), &password)
+    hosts::store_redis_secret(host_id, &password)
 }
 
 /// Whether a password is stored, so the UI can say so without revealing it.
 #[tauri::command]
 fn redis_has_secret(host_id: i64) -> bool {
-    crypto::get_secret(&redis_account(host_id)).is_ok()
+    hosts::has_redis_secret(host_id)
 }
 
 /// Forget the stored password for a Redis host.
 #[tauri::command]
 fn redis_clear_secret(host_id: i64) -> Result<(), String> {
-    crypto::delete_secret(&redis_account(host_id))
+    hosts::clear_redis_secret(host_id)
 }
 
 #[tauri::command]
@@ -1429,22 +1399,7 @@ async fn vnc_disconnect(state: State<'_, AppState>, session_id: String) -> Resul
 /// Close every session for a host. Used when the last tab for it goes away.
 #[tauri::command]
 async fn vnc_disconnect_host(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
-    {
-        let mut sessions = state
-            .vnc_sessions
-            .lock()
-            .map_err(|_| "session registry poisoned".to_string())?;
-        sessions.retain(|_, handle| {
-            if handle.host_id == host_id {
-                handle.disconnect();
-                false
-            } else {
-                true
-            }
-        });
-    }
-    release_vnc_host(&state, host_id).await;
-    Ok(())
+    state.vnc_disconnect_host(host_id).await
 }
 
 #[tauri::command]
@@ -1561,20 +1516,17 @@ fn vnc_send_clipboard(
 
 #[tauri::command]
 fn vnc_store_secret(host_id: i64, password: String) -> Result<(), String> {
-    if password.is_empty() {
-        return Err("password is empty".to_string());
-    }
-    crypto::store_secret(&vnc_account(host_id), &password)
+    hosts::store_vnc_secret(host_id, &password)
 }
 
 #[tauri::command]
 fn vnc_has_secret(host_id: i64) -> Result<bool, String> {
-    Ok(crypto::get_secret(&vnc_account(host_id)).is_ok())
+    Ok(hosts::has_vnc_secret(host_id))
 }
 
 #[tauri::command]
 fn vnc_clear_secret(host_id: i64) -> Result<(), String> {
-    crypto::delete_secret(&vnc_account(host_id))
+    hosts::clear_vnc_secret(host_id)
 }
 
 #[tauri::command]
