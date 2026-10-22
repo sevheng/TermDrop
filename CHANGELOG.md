@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-22
+
 ### Added
 - **Icons in terminal apps.** File trees, prompts and status lines that draw Nerd Font icons used to show empty boxes. TermDrop now ships the icon-only Symbols Nerd Font, so those icons appear in every terminal without installing anything. Ordinary text still uses JetBrains Mono.
 
@@ -14,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Layout preferences are saved with your hosts.** Panel widths, SFTP columns, the host list's view, collapsed groups and empty groups you created used to live only in the window's browser storage, and were lost whenever it was reset. They are now saved in TermDrop's database and moved there automatically on first launch. Renaming or creating a group now also keeps its collapsed state.
 - **Updates are tied to the version they announce.** The updater now checks that a downloaded update was signed for the exact version it claims to be, so a tampered update feed can't push an older release disguised as a newer one.
 - **Remote desktop (VNC) is smoother, especially with a Mac.** macOS resends large parts of the screen that haven't changed; TermDrop now skips those before drawing, cutting the data per update from 1–6 MB to about 50–230 KB. While you move the mouse, the screen updates about a third more often (15 to 21 times a second).
+- **Dependencies refreshed.** Tauri 2.12.5 and Tauri CLI 2.12.4.
 
 ## [0.5.0] — 2026-10-17
 
