@@ -1405,7 +1405,6 @@ fn collect_bson_collections(dir: &std::path::Path) -> Vec<RestoreSourceCollectio
 }
 
 /// Scan a folder for mongodump-style data and return the databases/collections found.
-#[tauri::command]
 pub fn scan_restore_folder(path: String) -> Result<Vec<RestoreSourceDb>, String> {
     let root = std::path::Path::new(&path);
     if !root.is_dir() {

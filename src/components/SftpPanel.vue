@@ -267,6 +267,7 @@ import { useConfirmDialog } from '../composables/useConfirmDialog.js'
 import { useContextMenu } from '../composables/useContextMenu.js'
 import { useListenerGroup } from '../composables/useListenerGroup.js'
 import { useSftpTransfers } from '../composables/useSftpTransfers.js'
+import { usePref, savePref } from '../composables/usePrefs.js'
 import { LIST_HEAD, NUM } from '../utils/listStyles.js'
 
 const props = defineProps({
@@ -286,11 +287,9 @@ const { contextMenu, openContextMenu } = useContextMenu(contextMenuEl, { file: n
 const sortKey = ref('name')
 const sortOrder = ref('asc')
 const showColumnMenu = ref(false)
-const showColumns = ref({
-  size: false,
-  modified: false,
-  perms: false,
-})
+// Shared by every SFTP panel; defaults fill in any column a saved value lacks.
+const showColumns = usePref('sftp-columns', {})
+showColumns.value = { size: false, modified: false, perms: false, ...showColumns.value }
 const filterQuery = ref('')
 const selectedFiles = ref(new Set())
 const lastSelectedIndex = ref(-1)
@@ -557,15 +556,6 @@ async function bulkDownload() {
 }
 
 onMounted(async () => {
-  // Load saved column visibility
-  const saved = localStorage.getItem('sftp-columns')
-  if (saved) {
-    try {
-      showColumns.value = { ...showColumns.value, ...JSON.parse(saved) }
-    } catch (e) {
-      console.warn('Failed to parse saved column visibility:', e)
-    }
-  }
   await resolveHomeDir()
   await loadFiles()
   await listeners.listen('sftp-progress', (event) => {
@@ -594,9 +584,7 @@ watch(() => props.sftpSessionId, async () => {
   await loadFiles()
 })
 
-watch(showColumns, (val) => {
-  localStorage.setItem('sftp-columns', JSON.stringify(val))
-}, { deep: true })
+watch(showColumns, () => savePref('sftp-columns'), { deep: true })
 
 /** Loads the current directory. Returns false if the listing failed. */
 async function loadFiles() {

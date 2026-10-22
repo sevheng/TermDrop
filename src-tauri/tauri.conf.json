@@ -58,6 +58,7 @@
     "updater": {
       "active": true,
       "dialog": false,
+      "requireSignedVersion": true,
       "endpoints": [
         "https://github.com/sevheng/TermDrop/releases/latest/download/latest.json"
       ],

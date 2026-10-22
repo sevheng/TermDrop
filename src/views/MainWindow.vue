@@ -323,6 +323,7 @@ import {
 import { toast } from '../utils/toast.js'
 import { isInsertableCommand, canReceiveCommand } from '../utils/terminalInsert.js'
 import { useConfirmDialog } from '../composables/useConfirmDialog.js'
+import { usePref, savePref } from '../composables/usePrefs.js'
 import { loadTerminalTab } from '../components/terminalTabLoader.js'
 
 defineEmits(['update-available'])
@@ -363,8 +364,8 @@ const PANEL_TABS = [
 const showForwardModal = ref(false)
 const forwardPrefill = ref(null)
 const editForward = ref(null)
-const sidebarWidth = ref(220)
-const sftpWidth = ref(260)
+const sidebarWidth = usePref('sidebar-width', 220)
+const sftpWidth = usePref('sftp-width', 260)
 
 const { confirmDialog, openConfirm } = useConfirmDialog()
 
@@ -637,7 +638,7 @@ function startResizeSidebar(e) {
   function onUp() {
     window.removeEventListener('mousemove', onMove)
     window.removeEventListener('mouseup', onUp)
-    localStorage.setItem('sidebar-width', String(sidebarWidth.value))
+    savePref('sidebar-width')
   }
 
   window.addEventListener('mousemove', onMove)
@@ -658,7 +659,7 @@ function startResizeSftp(e) {
   function onUp() {
     window.removeEventListener('mousemove', onMove)
     window.removeEventListener('mouseup', onUp)
-    localStorage.setItem('sftp-width', String(sftpWidth.value))
+    savePref('sftp-width')
   }
 
   window.addEventListener('mousemove', onMove)
@@ -666,11 +667,6 @@ function startResizeSftp(e) {
 }
 
 onMounted(() => {
-  const savedSidebarWidth = localStorage.getItem('sidebar-width')
-  if (savedSidebarWidth) sidebarWidth.value = parseInt(savedSidebarWidth)
-  const savedSftpWidth = localStorage.getItem('sftp-width')
-  if (savedSftpWidth) sftpWidth.value = parseInt(savedSftpWidth)
-
   // Settings are the record for the theme, the terminal font size and the
   // download path. Nothing loaded them at startup, so the persisted theme was
   // never applied until the Settings dialog happened to be opened. (This used
