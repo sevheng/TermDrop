@@ -1,7 +1,7 @@
 /**
  * Separating a MongoDB URI from its password.
  *
- * Mirrors split_mongo_password in src-tauri/src/mongodb.rs: the last `@` in the
+ * Mirrors split_mongo_password in crates/termdrop-core/src/mongodb.rs: the last `@` in the
  * authority separates userinfo from the host list, and the first `:` within the
  * userinfo separates user from password. The password is left percent-encoded,
  * exactly as it appeared.

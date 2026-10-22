@@ -1,8 +1,6 @@
 use ssh2::Channel as SshChannel;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::ipc::{Channel as DataChannel, InvokeResponseBody};
 use tokio::sync::mpsc;
 
 /// Decode as much of `bytes` as forms whole characters.
@@ -59,11 +57,12 @@ pub const COALESCE_MAX_BYTES: usize = 64 * 1024;
 /// The longest output waits to be sent while more keeps arriving.
 pub const COALESCE_MAX_AGE: Duration = Duration::from_millis(4);
 
-/// The frontend's data channel. Raw rather than `Vec<u8>`: Tauri serialises a
-/// `Vec<u8>` as a JSON array of decimal numbers, while a Raw payload of 1 KB
-/// or more crosses as a real `ArrayBuffer` (smaller ones are inlined either
-/// way, which is why output is coalesced before it is sent).
-pub type TerminalChannel = Arc<Mutex<Option<DataChannel<InvokeResponseBody>>>>;
+/// The UI's data channel for a terminal. In the Tauri app it is a
+/// `Channel<InvokeResponseBody>` fed `Raw` bytes: Tauri serialises a `Vec<u8>`
+/// as a JSON array of decimal numbers, while a Raw payload of 1 KB or more
+/// crosses as a real `ArrayBuffer` (smaller ones are inlined either way, which
+/// is why output is coalesced before it is sent).
+pub type TerminalChannel = crate::events::ByteSlot;
 
 /// Where terminal output goes: gathered into as few messages as the stream
 /// allows, then sent on the data channel, or -- before the frontend has
@@ -199,9 +198,12 @@ where
 /// An `OutputSink` sender for the frontend's data channel.
 pub fn channel_sender(data_channel: TerminalChannel) -> impl FnMut(Vec<u8>) -> Result<(), Vec<u8>> {
     move |bytes| match data_channel.lock() {
-        Ok(lock) => match lock.as_ref() {
+        Ok(mut lock) => match lock.as_mut() {
             Some(ch) => {
-                let _ = ch.send(InvokeResponseBody::Raw(bytes));
+                // A receiver that has gone is no reason to fall back to the
+                // event path, which is what the Tauri channel's ignored send
+                // error always meant: the tab is closing and nobody would see it.
+                let _ = ch.send(bytes);
                 crate::dev_perf::mark("sent");
                 Ok(())
             }
@@ -401,6 +403,7 @@ mod tests {
 mod loop_tests {
     use super::*;
     use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
 
     /// A PTY whose reads are scripted: `Some(bytes)` is data, `None` is
     /// `WouldBlock`, and running out is EOF.
@@ -446,12 +449,10 @@ mod loop_tests {
         let channel: TerminalChannel = Arc::new(Mutex::new(None));
         if with_channel {
             let sent = sent.clone();
-            *channel.lock().unwrap() = Some(DataChannel::new(move |body| {
-                if let InvokeResponseBody::Raw(bytes) = body {
-                    sent.lock().unwrap().push(bytes);
-                }
-                Ok(())
-            }));
+            *channel.lock().unwrap() = Some(Box::new(crate::events::FnSink(move |bytes| {
+                sent.lock().unwrap().push(bytes);
+                true
+            })));
         }
         let (_write_tx, write_rx) = mpsc::unbounded_channel();
         let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel();

@@ -8,9 +8,9 @@ pub mod trust;
 
 pub use session::{create_exec_session, Accept, SshTarget};
 
+use crate::events::{CoreEvent, Events, PtyKind};
 use ssh2::{Channel as SshChannel, Session};
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Window};
 use tokio::sync::mpsc;
 
 pub struct SshSessionHandle {
@@ -31,41 +31,16 @@ pub struct ExecPtyHandle {
     pub data_channel: io_loop::TerminalChannel,
 }
 
-/// Event names and payload id key that distinguish the interactive shell
-/// from the exec-PTY (docker exec/logs) channel on the frontend.
-pub(crate) struct PtyEvents {
-    pub id_key: &'static str,
-    pub error: &'static str,
-    pub connected: &'static str,
-    pub data: &'static str,
-    pub disconnected: &'static str,
-}
-
-pub(crate) const SHELL_EVENTS: PtyEvents = PtyEvents {
-    id_key: "session_id",
-    error: "ssh-error",
-    connected: "ssh-connected",
-    data: "ssh-data",
-    disconnected: "ssh-disconnected",
-};
-
-const EXEC_PTY_EVENTS: PtyEvents = PtyEvents {
-    id_key: "pty_session_id",
-    error: "exec-pty-error",
-    connected: "exec-pty-connected",
-    data: "exec-pty-data",
-    disconnected: "exec-pty-disconnected",
-};
-
 /// Connect, open a channel via `open_channel`, and run the I/O loop on a
-/// dedicated thread. Failures before the loop starts are reported through
-/// `events.error`; the loop reports data and disconnects through the rest.
+/// dedicated thread. Failures before the loop starts are reported as
+/// `PtyError`; the loop reports data and disconnects through the rest. `kind`
+/// tells the shell's events from a docker exec PTY's.
 #[allow(clippy::too_many_arguments)]
 fn spawn_pty_thread(
-    window: Window,
+    events: Events,
     id: String,
     target: SshTarget,
-    events: PtyEvents,
+    kind: PtyKind,
     open_channel: impl FnOnce(&Session) -> Result<SshChannel, String> + Send + 'static,
     write_rx: mpsc::UnboundedReceiver<String>,
     disconnect_rx: mpsc::UnboundedReceiver<()>,
@@ -79,23 +54,24 @@ fn spawn_pty_thread(
         // already has a terminal.
         let session = match session::create_session(&target, &Accept::none()) {
             Ok(s) => s,
-            Err(e) => {
-                let payload = serde_json::json!({ events.id_key: &id, "error": e });
-                let _ = window.emit(events.error, payload);
+            Err(error) => {
+                events.emit(CoreEvent::PtyError { kind, id, error });
                 return;
             }
         };
 
         let channel = match open_channel(&session) {
             Ok(c) => c,
-            Err(e) => {
-                let payload = serde_json::json!({ events.id_key: &id, "error": e });
-                let _ = window.emit(events.error, payload);
+            Err(error) => {
+                events.emit(CoreEvent::PtyError { kind, id, error });
                 return;
             }
         };
 
-        let _ = window.emit(events.connected, id.clone());
+        events.emit(CoreEvent::PtyConnected {
+            kind,
+            id: id.clone(),
+        });
 
         io_loop::run_loop(
             channel,
@@ -104,11 +80,17 @@ fn spawn_pty_thread(
             resize_rx,
             data_channel,
             |data| {
-                let payload = serde_json::json!({ events.id_key: &id, "data": data });
-                let _ = window.emit(events.data, payload);
+                events.emit(CoreEvent::PtyData {
+                    kind,
+                    id: id.clone(),
+                    data: data.to_string(),
+                })
             },
             || {
-                let _ = window.emit(events.disconnected, id.clone());
+                events.emit(CoreEvent::PtyDisconnected {
+                    kind,
+                    id: id.clone(),
+                })
             },
         );
     });
@@ -117,7 +99,7 @@ fn spawn_pty_thread(
 /// Connect to an SSH host and spawn an interactive shell.
 #[allow(clippy::too_many_arguments)]
 pub fn connect(
-    window: Window,
+    events: Events,
     session_id: String,
     host_id: i64,
     target: SshTarget,
@@ -130,10 +112,10 @@ pub fn connect(
     let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
 
     spawn_pty_thread(
-        window,
+        events,
         session_id,
         target,
-        SHELL_EVENTS,
+        PtyKind::Shell,
         move |session| pty::create_pty_channel(session, initial_cols, initial_rows),
         write_rx,
         disconnect_rx,
@@ -154,7 +136,7 @@ pub fn connect(
 /// Connect to an SSH host and execute a command in a PTY.
 #[allow(clippy::too_many_arguments)]
 pub fn exec_pty_connect(
-    window: Window,
+    events: Events,
     pty_session_id: String,
     host_id: i64,
     target: SshTarget,
@@ -165,10 +147,10 @@ pub fn exec_pty_connect(
     let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
 
     spawn_pty_thread(
-        window,
+        events,
         pty_session_id,
         target,
-        EXEC_PTY_EVENTS,
+        PtyKind::ExecPty,
         move |session| pty::create_exec_pty_channel(session, &command),
         write_rx,
         disconnect_rx,

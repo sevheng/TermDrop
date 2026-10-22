@@ -1,3 +1,4 @@
+use crate::events::{CoreEvent, Events, MongoProgress};
 use futures_util::stream::TryStreamExt;
 use mongodb::{options::ClientOptions, Client};
 use std::collections::HashMap;
@@ -6,7 +7,6 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Window};
 
 /// Lock through a poisoned mutex instead of panicking.
 ///
@@ -63,29 +63,34 @@ fn is_retryable_error(stderr: &str) -> bool {
     .any(|&s| lower.contains(s))
 }
 
-/// Emits the `mongodb-sync-*` events for one operation. Each method
-/// reproduces the exact payload shape the frontend expects on that path.
+/// Emits the progress events for one operation (`mongodb-sync-*` in the Tauri
+/// app). Each method reproduces the exact payload the frontend expects on
+/// that path.
 struct ProgressEmitter<'a> {
-    window: &'a Window,
+    events: &'a Events,
     op_id: &'a str,
     db: &'a str,
 }
 
 impl ProgressEmitter<'_> {
+    fn progress(&self, collection: &str, stage: &str, synced: u64, percent: u64) -> MongoProgress {
+        MongoProgress {
+            op_id: self.op_id.to_string(),
+            db: self.db.to_string(),
+            collection: collection.to_string(),
+            stage: stage.to_string(),
+            synced,
+            total: 1,
+            percent,
+            detail: None,
+        }
+    }
+
     /// Pulse while a CLI tool runs: no collection, estimated percent.
     fn pulse(&self, stage: &str, percent: u64) {
-        let _ = self.window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "collection": "",
-                "stage": stage,
-                "synced": 0,
-                "total": 1,
-                "percent": percent,
-            }),
-        );
+        self.events.emit(CoreEvent::MongoProgress(
+            self.progress("", stage, 0, percent),
+        ));
     }
 
     /// Real progress parsed from a CLI tool's stderr. `detail` is the tool's
@@ -93,42 +98,23 @@ impl ProgressEmitter<'_> {
     /// for mongorestore, so it is passed through as text.
     fn cli(&self, stage: &str, ns: &str, detail: &str, percent: f64) {
         let collection = ns.split_once('.').map(|(_, c)| c).unwrap_or(ns);
-        let _ = self.window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "collection": collection,
-                "stage": stage,
-                "synced": 0,
-                "total": 1,
-                "percent": percent.round() as u64,
-                "detail": detail,
-            }),
-        );
+        self.events.emit(CoreEvent::MongoProgress(MongoProgress {
+            detail: Some(detail.to_string()),
+            ..self.progress(collection, stage, 0, percent.round() as u64)
+        }));
     }
 
     /// Terminal event once a CLI tool has finished.
     fn done(&self) {
-        let _ = self.window.emit(
-            "mongodb-sync-progress",
-            serde_json::json!({
-                "opId": self.op_id,
-                "db": self.db,
-                "collection": "",
-                "stage": "done",
-                "synced": 1,
-                "total": 1,
-                "percent": 100,
-            }),
-        );
+        self.events
+            .emit(CoreEvent::MongoProgress(self.progress("", "done", 1, 100)));
     }
 
     fn cancelled(&self) {
-        let _ = self.window.emit(
-            "mongodb-sync-cancelled",
-            serde_json::json!({"opId": self.op_id, "db": self.db}),
-        );
+        self.events.emit(CoreEvent::MongoCancelled {
+            op_id: self.op_id.to_string(),
+            db: self.db.to_string(),
+        });
     }
 }
 
@@ -515,7 +501,7 @@ async fn run_cli_op<F>(
     panic_label: &str,
     tool: &'static str,
     stage: &'static str,
-    window: Window,
+    events: Events,
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
@@ -539,7 +525,7 @@ where
             stage,
             3,
             expected_collections,
-            &window,
+            &events,
             &cancelled,
             &mongo_ops,
             &op_id,
@@ -547,7 +533,7 @@ where
             move || build_cmd(&config_arg),
         )?;
         ProgressEmitter {
-            window: &window,
+            events: &events,
             op_id: &op_id,
             db: &progress_db,
         }
@@ -564,7 +550,7 @@ fn run_with_retry<F>(
     stage: &str,
     max_retries: u32,
     expected_collections: u64,
-    window: &Window,
+    events: &Events,
     cancelled: &Arc<AtomicBool>,
     mongo_ops: &Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: &str,
@@ -580,7 +566,7 @@ where
     // or from the time-based estimate.
     let mut highest: f64 = 0.0;
 
-    let progress = ProgressEmitter { window, op_id, db };
+    let progress = ProgressEmitter { events, op_id, db };
 
     progress.pulse(stage, 0);
 
@@ -670,6 +656,7 @@ where
                             .map(|l| redact_uris_in_text(l))
                             .collect();
                         tracing::debug!(
+                            target: "termdrop::mongodb",
                             label = label,
                             stage = stage,
                             exit_code = status.code(),
@@ -1184,7 +1171,7 @@ pub async fn list_collections(uri: &str, db: &str) -> Result<Vec<String>, String
 
 /// Dump selected collections from remote to a local directory or archive using mongodump.
 pub async fn dump_collections(
-    window: Window,
+    events: Events,
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
@@ -1219,7 +1206,7 @@ pub async fn dump_collections(
         "dump",
         "mongodump",
         "dump",
-        window,
+        events,
         cancelled,
         mongo_ops,
         op_id,
@@ -1242,7 +1229,7 @@ pub async fn dump_collections(
 
 /// Restore selected collections from a local directory or archive to remote using mongorestore.
 pub async fn restore_collections(
-    window: Window,
+    events: Events,
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
@@ -1272,6 +1259,7 @@ pub async fn restore_collections(
     let restore_dir = input_dir.clone();
 
     tracing::debug!(
+        target: "termdrop::mongodb",
         db = %db,
         is_archive = is_archive,
         is_direct_db = is_direct_db,
@@ -1292,7 +1280,12 @@ pub async fn restore_collections(
                     .collect()
             })
             .unwrap_or_default();
-        tracing::debug!(restore_dir = %restore_dir, contents = ?contents, "restore folder contents");
+        tracing::debug!(
+            target: "termdrop::mongodb",
+            restore_dir = %restore_dir,
+            contents = ?contents,
+            "restore folder contents"
+        );
     }
 
     let cmd_db = db.clone();
@@ -1300,7 +1293,7 @@ pub async fn restore_collections(
         "restore",
         "mongorestore",
         "restore",
-        window,
+        events,
         cancelled,
         mongo_ops,
         op_id,
@@ -1319,7 +1312,10 @@ pub async fn restore_collections(
                 drop_first,
             );
 
+            // Pinned to the target RUST_LOG has always used for this, from
+            // before the module moved out of the `termdrop` crate.
             tracing::debug!(
+                target: "termdrop::mongodb",
                 program = %cmd.get_program().to_string_lossy(),
                 args = ?cmd
                     .get_args()
@@ -1337,7 +1333,7 @@ pub async fn restore_collections(
 /// Restore selected namespaces from a single archive file to remote using mongorestore.
 /// This runs once for the whole archive, filtering with --nsInclude.
 pub async fn restore_archive(
-    window: Window,
+    events: Events,
     cancelled: Arc<AtomicBool>,
     mongo_ops: Arc<Mutex<HashMap<String, crate::MongoOpHandle>>>,
     op_id: String,
@@ -1353,7 +1349,7 @@ pub async fn restore_archive(
         "restore archive",
         "mongorestore",
         "restore",
-        window,
+        events,
         cancelled,
         mongo_ops,
         op_id,

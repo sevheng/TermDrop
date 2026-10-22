@@ -5,7 +5,7 @@
  * installed, so component logic is otherwise untestable.
  */
 
-/** Must match MAX_FIND_LIMIT in src-tauri/src/mongodb.rs. */
+/** Must match MAX_FIND_LIMIT in crates/termdrop-core/src/mongodb.rs. */
 export const MAX_PAGE_SIZE = 200
 export const DEFAULT_PAGE_SIZE = 25
 

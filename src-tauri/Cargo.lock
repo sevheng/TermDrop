@@ -5725,6 +5725,32 @@ dependencies = [
 name = "termdrop"
 version = "0.5.1"
 dependencies = [
+ "dirs",
+ "r2d2",
+ "r2d2_sqlite",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "termdrop-core",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "termdrop-core"
+version = "0.0.0"
+dependencies = [
  "aes",
  "aes-gcm",
  "base64 0.22.1",
@@ -5751,20 +5777,8 @@ dependencies = [
  "sha1 0.10.7",
  "sha2 0.10.9",
  "ssh2",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uuid",
  "whoami",
 ]

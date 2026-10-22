@@ -5,7 +5,7 @@
 // It drives real local terminal tabs through the real backend and webview:
 // throughput of two output workloads, keystroke-to-echo latency, and a window
 // of idle tabs. Each echo is also broken into stages, using backend
-// timestamps from `dev_perf_marks` (src-tauri/src/dev_perf.rs) lined up with
+// timestamps from `dev_perf_marks` (crates/termdrop-core/src/dev_perf.rs) lined up with
 // the webview's own on the shared wall clock. CPU is not visible from here; run `pidstat` alongside and cut
 // its samples by the phase timestamps in the report. The report is written by
 // the debug-only `dev_perf_report` command to <data dir>/termdrop/perf/.

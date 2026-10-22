@@ -9,14 +9,14 @@
 //! `run_local_loop` sleeps until output, a keystroke, a resize, a disconnect or
 //! the shell exiting actually happens.
 
+use crate::events::{CoreEvent, Events, PtyKind};
 use crate::local_shells::LocalShell;
 use crate::ssh::io_loop::{self, OutputSink, COALESCE_MAX_AGE, COALESCE_MAX_BYTES};
-use crate::ssh::{SshSessionHandle, SHELL_EVENTS};
+use crate::ssh::SshSessionHandle;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Window};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep_until;
 
@@ -229,7 +229,7 @@ pub fn run_local_loop(
 /// is the command's error rather than an event into a tab that is not there.
 /// `data_channel` is passed in so a reconnect can keep the tab's channel.
 pub fn connect(
-    window: Window,
+    events: Events,
     session_id: String,
     shell: LocalShell,
     cols: u32,
@@ -251,8 +251,11 @@ pub fn connect(
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        let events = &SHELL_EVENTS;
-        let _ = window.emit(events.connected, session_id.clone());
+        let kind = PtyKind::Shell;
+        events.emit(CoreEvent::PtyConnected {
+            kind,
+            id: session_id.clone(),
+        });
         run_local_loop(
             pty,
             write_rx,
@@ -260,11 +263,17 @@ pub fn connect(
             resize_rx,
             loop_channel,
             |data| {
-                let payload = serde_json::json!({ events.id_key: &session_id, "data": data });
-                let _ = window.emit(events.data, payload);
+                events.emit(CoreEvent::PtyData {
+                    kind,
+                    id: session_id.clone(),
+                    data: data.to_string(),
+                })
             },
             || {
-                let _ = window.emit(events.disconnected, session_id.clone());
+                events.emit(CoreEvent::PtyDisconnected {
+                    kind,
+                    id: session_id.clone(),
+                })
             },
         );
     });
@@ -282,8 +291,8 @@ pub fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::FnSink;
     use std::sync::{Arc, Mutex};
-    use tauri::ipc::{Channel, InvokeResponseBody};
 
     #[test]
     fn sizes_are_clamped_into_range() {
@@ -297,13 +306,11 @@ mod tests {
     fn channel() -> (io_loop::TerminalChannel, Sent) {
         let sent: Sent = Arc::new(Mutex::new(Vec::new()));
         let sink = sent.clone();
-        let ch = Channel::new(move |body| {
-            if let InvokeResponseBody::Raw(bytes) = body {
-                sink.lock().unwrap().push((Instant::now(), bytes));
-            }
-            Ok(())
+        let ch = FnSink(move |bytes| {
+            sink.lock().unwrap().push((Instant::now(), bytes));
+            true
         });
-        (Arc::new(Mutex::new(Some(ch))), sent)
+        (Arc::new(Mutex::new(Some(Box::new(ch)))), sent)
     }
 
     struct Session {
