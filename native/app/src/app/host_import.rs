@@ -5,7 +5,7 @@
 use serde_json::{Map, Value};
 use termdrop_core::uri::split_password;
 
-use super::uri_form::is_mongo_uri;
+use super::uri_form::{is_mongo_uri, is_redis_uri};
 use crate::backend::{HostSummary, ImportHost, ImportSummary, SshConfigEntry};
 
 /// Larger than any real export; a guard against opening the wrong file.
@@ -105,12 +105,28 @@ pub fn normalize_import_host(raw: &Map<String, Value>) -> Result<ImportHost, Str
     };
     let strip = |field: &str| {
         js_opt_string(raw.get(field)).map(|u| {
-            if !u.is_empty() && is_mongo_uri(&u) {
+            if !u.is_empty() && (is_mongo_uri(&u) || is_redis_uri(&u)) {
                 split_password(&u).0
             } else {
                 u
             }
         })
+    };
+    let vnc_port = match raw.get("vnc_port") {
+        None | Some(Value::Null) => None,
+        v => {
+            let n = js_number(v);
+            if n.is_finite() && n.fract() == 0.0 && (1.0..=65535.0).contains(&n) {
+                Some(n as i64)
+            } else {
+                let name = trimmed_str(raw.get("name"));
+                let name = if name.is_empty() { "unnamed" } else { &name };
+                return Err(format!(
+                    "{name}: VNC port must be a whole number from 1 to 65535, got {}",
+                    v.map_or(String::new(), Value::to_string)
+                ));
+            }
+        }
     };
     Ok(ImportHost {
         name: trimmed_str(raw.get("name")),
@@ -129,6 +145,14 @@ pub fn normalize_import_host(raw: &Map<String, Value>) -> Result<ImportHost, Str
         favorite: i64::from(js_truthy(raw.get("favorite"))),
         mongo_uri: strip("mongo_uri"),
         mongo_local_uri: strip("mongo_local_uri"),
+        // These four were dropped, as they still are by the Vue import: a
+        // Redis- or VNC-only row then reached the backend as an SSH host
+        // with port 0 and failed, and an SSH host lost its VNC settings.
+        redis_uri: strip("redis_uri"),
+        vnc_host: js_opt_string(raw.get("vnc_host")),
+        vnc_port,
+        vnc_username: js_opt_string(raw.get("vnc_username")),
+        vnc_view_only: i64::from(js_truthy(raw.get("vnc_view_only"))),
     })
 }
 
@@ -520,6 +544,62 @@ mod tests {
                 .group
                 .as_deref(),
             Some("5")
+        );
+    }
+
+    #[test]
+    fn an_exported_redis_or_vnc_row_imports_with_its_service_fields() {
+        // The rows `export_hosts` writes for a Redis-only host, a VNC-only
+        // host and an SSH host with a screen. Before the fix the Redis and
+        // VNC fields were dropped here, so the first two failed the import
+        // with "Port must be between 1 and 65535, got 0".
+        let rows = parse_hosts_file(
+            r#"[
+            {"name":"cache","host":"","port":0,"username":"","auth_type":"password",
+             "key_path":"","group":"","favorite":0,"mongo_uri":null,"mongo_local_uri":null,
+             "redis_uri":"redis://:old%2Fsecret@localhost:6380/2","vnc_host":null,
+             "vnc_port":null,"vnc_username":null,"vnc_view_only":0},
+            {"name":"kiosk","host":"","port":0,"username":"","auth_type":"password",
+             "key_path":"","group":"","favorite":1,"mongo_uri":null,"mongo_local_uri":null,
+             "redis_uri":null,"vnc_host":"10.0.0.5","vnc_port":5902,
+             "vnc_username":"me","vnc_view_only":1},
+            {"name":"box","host":"10.0.0.7","port":22,"username":"u","auth_type":"password",
+             "vnc_host":"127.0.0.1","vnc_port":5901}
+        ]"#,
+        )
+        .unwrap();
+        let hosts: Vec<ImportHost> = rows.iter().map(normalize_import_host_ok).collect();
+
+        // A password left in an old file is stripped, as for MongoDB.
+        assert_eq!(
+            hosts[0].redis_uri.as_deref(),
+            Some("redis://@localhost:6380/2")
+        );
+        assert!(hosts[0].waives_ssh_fields());
+
+        assert_eq!(hosts[1].vnc_host.as_deref(), Some("10.0.0.5"));
+        assert_eq!(hosts[1].vnc_port, Some(5902));
+        assert_eq!(hosts[1].vnc_username.as_deref(), Some("me"));
+        assert_eq!(hosts[1].vnc_view_only, 1);
+        assert!(hosts[1].waives_ssh_fields());
+
+        assert_eq!(hosts[2].vnc_port, Some(5901));
+        assert_eq!(hosts[2].vnc_view_only, 0);
+        assert_eq!(hosts[2].redis_uri, None);
+    }
+
+    #[test]
+    fn a_vnc_port_that_is_not_a_port_fails_the_file() {
+        for bad in [json!(0), json!(70000), json!(5901.5), json!("abc")] {
+            assert!(
+                normalize_import_host(&obj(json!({"name": "v", "vnc_port": bad})))
+                    .unwrap_err()
+                    .starts_with("v: VNC port must be"),
+            );
+        }
+        assert_eq!(
+            normalize_import_host_ok(&obj(json!({"vnc_port": "5901"}))).vnc_port,
+            Some(5901)
         );
     }
 

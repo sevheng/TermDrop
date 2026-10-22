@@ -108,14 +108,14 @@ fn import_host(h: ImportHost) -> db::NewHost {
         favorite: Some(h.favorite),
         mongo_uri: h.mongo_uri,
         mongo_local_uri: h.mongo_local_uri,
-        redis_uri: None,
+        redis_uri: h.redis_uri,
         redis_tunnel_host_id: None,
         jump_host_id: None,
-        vnc_host: None,
-        vnc_port: None,
-        vnc_username: None,
+        vnc_host: h.vnc_host,
+        vnc_port: h.vnc_port,
+        vnc_username: h.vnc_username,
         vnc_tunnel_host_id: None,
-        vnc_view_only: None,
+        vnc_view_only: Some(h.vnc_view_only),
     }
 }
 
@@ -423,6 +423,35 @@ mod tests {
             vnc_tunnel_host_id: None,
             vnc_view_only: 0,
         }
+    }
+
+    #[test]
+    fn an_imported_redis_or_vnc_row_passes_the_cores_checks() {
+        let redis = ImportHost {
+            name: "cache".into(),
+            auth_type: "password".into(),
+            redis_uri: Some("redis://@localhost:6380".into()),
+            ..Default::default()
+        };
+        let vnc = ImportHost {
+            name: "kiosk".into(),
+            auth_type: "password".into(),
+            vnc_host: Some("10.0.0.5".into()),
+            vnc_port: Some(5902),
+            vnc_username: Some("me".into()),
+            vnc_view_only: 1,
+            ..Default::default()
+        };
+        let redis = import_host(redis);
+        assert_eq!(db::validate_new_host(&redis), Ok(()));
+        assert_eq!(redis.redis_uri.as_deref(), Some("redis://@localhost:6380"));
+        let vnc = import_host(vnc);
+        assert_eq!(db::validate_new_host(&vnc), Ok(()));
+        assert_eq!(
+            (vnc.vnc_host.as_deref(), vnc.vnc_port, vnc.vnc_view_only),
+            (Some("10.0.0.5"), Some(5902), Some(1))
+        );
+        assert_eq!(vnc.vnc_username.as_deref(), Some("me"));
     }
 
     #[test]

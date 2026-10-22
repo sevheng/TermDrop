@@ -149,6 +149,24 @@ pub struct ImportHost {
     pub favorite: i64,
     pub mongo_uri: Option<String>,
     pub mongo_local_uri: Option<String>,
+    pub redis_uri: Option<String>,
+    pub vnc_host: Option<String>,
+    pub vnc_port: Option<i64>,
+    pub vnc_username: Option<String>,
+    pub vnc_view_only: i64,
+}
+
+impl ImportHost {
+    /// `db::waives_ssh_fields`: a MongoDB-, Redis- or VNC-only row has no
+    /// SSH host or port to check.
+    pub fn waives_ssh_fields(&self) -> bool {
+        self.mongo_uri.is_some()
+            || self.redis_uri.is_some()
+            || self
+                .vnc_host
+                .as_deref()
+                .is_some_and(|h| !h.trim().is_empty())
+    }
 }
 
 /// One host to import, as `db::ImportEntry`: `replace_id` names an existing
@@ -466,7 +484,7 @@ impl HostStore for FakeBackend {
 /// `db::validate_new_host`, for the in-memory store. The real store runs the
 /// core's own copy.
 fn validate_import(host: &ImportHost) -> std::result::Result<(), String> {
-    let waives_ssh = host.mongo_uri.is_some();
+    let waives_ssh = host.waives_ssh_fields();
     if host.name.trim().is_empty() {
         return Err("Name is required".to_string());
     }
@@ -501,6 +519,11 @@ fn import_record(h: &ImportHost) -> HostRecord {
         favorite: h.favorite != 0,
         mongo_uri: h.mongo_uri.clone(),
         mongo_local_uri: h.mongo_local_uri.clone(),
+        redis_uri: h.redis_uri.clone(),
+        vnc_host: h.vnc_host.clone(),
+        vnc_port: h.vnc_port.and_then(|p| u16::try_from(p).ok()),
+        vnc_username: h.vnc_username.clone(),
+        vnc_view_only: h.vnc_view_only != 0,
         ..Default::default()
     }
 }
@@ -740,6 +763,20 @@ mod tests {
             )]
         );
         assert_eq!(b.host_record(1).unwrap().unwrap().name, "replaced");
+        // A Redis-only row has port 0 and no host, and that is fine.
+        let redis = ImportHost {
+            name: "cache".into(),
+            auth_type: "password".into(),
+            redis_uri: Some("redis://@localhost:6380".into()),
+            ..Default::default()
+        };
+        let summary = b
+            .import_hosts(vec![ImportEntry {
+                host: redis,
+                replace_id: None,
+            }])
+            .unwrap();
+        assert_eq!((summary.added, summary.failed.len()), (1, 0));
         // The export is the same shape the core writes, and carries no secret.
         let json: serde_json::Value = serde_json::from_str(&b.export_hosts().unwrap()).unwrap();
         assert!(json.as_array().unwrap()[0].get("auth_type").is_some());
