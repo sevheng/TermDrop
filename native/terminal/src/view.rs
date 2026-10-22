@@ -20,7 +20,7 @@ use crate::keys::{self, KeyModes};
 use crate::mouse::{mouse_report, ReportButton, ReportEncoding, ReportKind, ReportModifiers};
 use crate::palette::Palette;
 use crate::paste::{paste_chunks, paste_payload};
-use crate::url::url_at;
+use crate::url::{is_openable, url_at};
 
 /// The terminal font: JetBrains Mono, as in the Tauri app.
 pub const DEFAULT_FONT_FAMILY: &str = "JetBrains Mono";
@@ -68,6 +68,8 @@ pub fn init(cx: &mut App) {
 const PASTE_CHUNK_DELAY: Duration = Duration::from_millis(1);
 /// Lines scrolled per wheel notch.
 const WHEEL_LINES: f32 = 3.0;
+/// Producer messages handled per UI update before yielding to paint.
+const MAX_MSGS_PER_UPDATE: usize = 256;
 
 /// Construction options for a terminal.
 #[derive(Clone, Debug)]
@@ -215,14 +217,21 @@ impl TerminalView {
             let wake_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 while let Ok(first) = rx.recv().await {
                     let mut batch = vec![first];
-                    while let Ok(more) = rx.try_recv() {
+                    while batch.len() < MAX_MSGS_PER_UPDATE {
+                        let Ok(more) = rx.try_recv() else { break };
                         batch.push(more);
                     }
+                    let full = batch.len() == MAX_MSGS_PER_UPDATE;
                     if this
                         .update(cx, |view, cx| view.handle_msgs(batch, cx))
                         .is_err()
                     {
                         break;
+                    }
+                    if full {
+                        // A program flooding queries (`yes $'\e[c'`) would
+                        // otherwise hold the UI thread for the whole queue.
+                        cx.background_executor().timer(Duration::ZERO).await;
                     }
                 }
             });
@@ -265,6 +274,18 @@ impl TerminalView {
     /// The handle to feed output through, from any thread.
     pub fn feed(&self) -> TerminalFeed {
         TerminalFeed(self.shared.clone())
+    }
+
+    /// Readies the view for a new session in place of one that ended
+    /// (reconnect): modes the old program left on are cleared and the parser
+    /// starts clean, while the screen and scrollback stay.
+    pub fn reset_for_new_session(&mut self, cx: &mut Context<Self>) {
+        self.shared.reset_for_new_session();
+        self.paste_task = None;
+        self.selecting = false;
+        self.last_report_cell = None;
+        self.exited = false;
+        cx.notify();
     }
 
     /// The current grid size (cols, rows), once laid out.
@@ -360,10 +381,16 @@ impl TerminalView {
                 Msg::Wake => notify = true,
                 Msg::Exited => self.exit(cx),
                 Msg::SyncDeadline(deadline) => self.watch_sync(deadline, cx),
+                Msg::Notices => {
+                    let (bell, title) = self.shared.notices.take();
+                    if let Some(title) = title {
+                        cx.emit(TerminalEvent::TitleChanged(title.unwrap_or_default()));
+                    }
+                    if bell {
+                        cx.emit(TerminalEvent::Bell);
+                    }
+                }
                 Msg::Term(event) => match event {
-                    Event::Title(title) => cx.emit(TerminalEvent::TitleChanged(title)),
-                    Event::ResetTitle => cx.emit(TerminalEvent::TitleChanged(String::new())),
-                    Event::Bell => cx.emit(TerminalEvent::Bell),
                     Event::ClipboardStore(_, text) => cx.emit(TerminalEvent::ClipboardStore(text)),
                     // Replies the terminal owes the program (DA, DSR, ...).
                     Event::PtyWrite(text) => (self.input)(text.into_bytes()),
@@ -609,6 +636,12 @@ impl TerminalView {
             return;
         }
         let ks = &event.keystroke;
+        // An AltGr character is text: leave it, unhandled, to the input
+        // handler, which inserts `key_char`. Encoding it would send the
+        // Ctrl+Alt control code Windows reports AltGr as.
+        if keys::is_altgr_text(ks, event.prefer_character_input) {
+            return;
+        }
         if keys::is_copy(ks) {
             self.copy_selection(cx);
             cx.stop_propagation();
@@ -659,7 +692,9 @@ impl TerminalView {
 
         if event.button == MouseButton::Left && Self::link_modifier(&event.modifiers) {
             if let Some(hit) = self.url_at_cell(col, row) {
-                let _ = open::that_detached(&hit.url);
+                if is_openable(&hit.url) {
+                    let _ = open::that_detached(&hit.url);
+                }
                 cx.stop_propagation();
                 return;
             }

@@ -1001,6 +1001,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn export_header_names_the_callers_version_not_the_cores() {
+        let h = export_header(
+            "9.8.7",
+            "redis://:secret@db.example:6379",
+            "7.2.4",
+            3,
+            Some("user:*"),
+        );
+        assert_eq!(h.app, "TermDrop 9.8.7");
+        assert!(!h.source.contains("secret"));
+        assert_eq!(h.dbs, vec![3]);
+        assert_eq!(h.pattern.as_deref(), Some("user:*"));
+    }
+
+    #[test]
     fn keyspace_info_is_parsed_from_a_real_reply() {
         // As Redis actually sends it: a comment header and CRLF line endings.
         let info = "# Keyspace\r\ndb0:keys=12481,expires=307,avg_ttl=0\r\ndb3:keys=7,expires=0,avg_ttl=0\r\n";
@@ -1359,6 +1374,28 @@ fn refuse_cluster(mode: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The header an export writes. `app_version` comes from the caller because
+/// `env!("CARGO_PKG_VERSION")` here would be this crate's version, which is
+/// never released (`0.0.0`), not the app's: every file would claim to come
+/// from "TermDrop 0.0.0".
+fn export_header(
+    app_version: &str,
+    source_uri: &str,
+    server_version: &str,
+    db: i64,
+    pattern: Option<&str>,
+) -> BackupHeader {
+    BackupHeader {
+        app: format!("TermDrop {}", app_version),
+        created_at: now_rfc3339(),
+        source: crate::uri::redact_uri(source_uri),
+        redis_version: server_version.to_string(),
+        dbs: vec![u8::try_from(db).unwrap_or(0)],
+        pattern: pattern.map(str::to_string),
+        consistency: "scan".to_string(),
+    }
+}
+
 /// `SCAN` + `DUMP` a database into a `.tdredis` file.
 #[allow(clippy::too_many_arguments)]
 pub async fn export_keys(
@@ -1373,6 +1410,7 @@ pub async fn export_keys(
     source_uri: &str,
     server_version: &str,
     server_mode: &str,
+    app_version: &str,
 ) -> Result<RedisOpSummary, String> {
     refuse_cluster(server_mode)?;
 
@@ -1389,15 +1427,7 @@ pub async fn export_keys(
     let part_path = format!("{}.part", output_path);
     let file =
         std::fs::File::create(&part_path).map_err(|e| format!("create {}: {}", part_path, e))?;
-    let header = BackupHeader {
-        app: format!("TermDrop {}", env!("CARGO_PKG_VERSION")),
-        created_at: now_rfc3339(),
-        source: crate::uri::redact_uri(source_uri),
-        redis_version: server_version.to_string(),
-        dbs: vec![u8::try_from(db).unwrap_or(0)],
-        pattern: pattern.map(str::to_string),
-        consistency: "scan".to_string(),
-    };
+    let header = export_header(app_version, source_uri, server_version, db, pattern);
 
     let cleanup = |e: String| -> String {
         let _ = std::fs::remove_file(&part_path);

@@ -87,6 +87,32 @@ fn meta(alt: bool, mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
+/// Whether `ks` is an AltGr character that must go to the input handler as
+/// text instead of being encoded. Windows reports AltGr as Ctrl+Alt, so
+/// German AltGr+Q (`@`) would otherwise reach `encode_keystroke` as Ctrl+Alt+Q
+/// and send ESC ^Q. GPUI marks such keys with `prefer_character_input`; the
+/// second test catches the same shape when that flag is not set: Ctrl and Alt
+/// held and a printable character that is not just the key itself, which a
+/// genuine Ctrl+Alt+letter (Meta+Ctrl) never produces.
+pub fn is_altgr_text(ks: &Keystroke, prefer_character_input: bool) -> bool {
+    let m = &ks.modifiers;
+    if m.platform {
+        return false;
+    }
+    let printable = ks
+        .key_char
+        .as_deref()
+        .is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control));
+    if !printable {
+        return false;
+    }
+    if prefer_character_input {
+        return true;
+    }
+    let produced = ks.key_char.as_deref().unwrap_or_default();
+    m.control && m.alt && !produced.eq_ignore_ascii_case(&ks.key)
+}
+
 /// The bytes for `ks`, or `None` when the key is ordinary text (left to the
 /// input handler) or belongs to the application (Cmd/Super shortcuts).
 pub fn encode_keystroke(ks: &Keystroke, modes: KeyModes) -> Option<Vec<u8>> {
@@ -281,6 +307,35 @@ mod tests {
         assert_eq!(enc("shift-a"), None);
         assert_eq!(enc("space"), None);
         assert_eq!(enc("cmd-k"), None);
+    }
+
+    #[test]
+    fn altgr_characters_are_text() {
+        // Windows: German AltGr+Q arrives as ctrl-alt-q typing '@'.
+        let altgr_q = Keystroke {
+            key_char: Some("@".into()),
+            ..Keystroke::parse("ctrl-alt-q").unwrap()
+        };
+        assert!(is_altgr_text(&altgr_q, true));
+        assert!(is_altgr_text(&altgr_q, false));
+        let altgr_7 = Keystroke {
+            key_char: Some("{".into()),
+            ..Keystroke::parse("ctrl-alt-7").unwrap()
+        };
+        assert!(is_altgr_text(&altgr_7, false));
+        // A real Ctrl+Alt+letter still encodes as Meta+Ctrl.
+        let ctrl_alt_x = Keystroke {
+            key_char: Some("x".into()),
+            ..Keystroke::parse("ctrl-alt-x").unwrap()
+        };
+        assert!(!is_altgr_text(&ctrl_alt_x, false));
+        assert!(!is_altgr_text(
+            &Keystroke::parse("ctrl-alt-x").unwrap(),
+            false
+        ));
+        assert!(!is_altgr_text(&Keystroke::parse("ctrl-c").unwrap(), false));
+        // No printable character: nothing for the input handler to insert.
+        assert!(!is_altgr_text(&Keystroke::parse("up").unwrap(), true));
     }
 
     #[test]

@@ -138,7 +138,7 @@ impl LocalPty {
 /// enough to cross as binary (see `OutputSink`).
 pub fn run_local_loop(
     mut pty: LocalPty,
-    mut write_rx: mpsc::UnboundedReceiver<String>,
+    mut write_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
     mut resize_rx: mpsc::UnboundedReceiver<(u32, u32)>,
     data_channel: io_loop::TerminalChannel,
@@ -193,7 +193,7 @@ pub fn run_local_loop(
                     // The reader thread drains output independently, so a
                     // blocking write here cannot deadlock against a shell
                     // that is busy echoing.
-                    let _ = pty.writer.write_all(data.as_bytes());
+                    let _ = pty.writer.write_all(&data);
                     let _ = pty.writer.flush();
                     crate::dev_perf::mark("pty_write");
                 }
@@ -239,7 +239,7 @@ pub fn connect(
     let home: Option<PathBuf> = dirs::home_dir();
     let pty = LocalPty::spawn(&shell.program, &shell.args, home.as_deref(), cols, rows)?;
 
-    let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
+    let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
     let (resize_tx, resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
 
@@ -314,7 +314,7 @@ mod tests {
     }
 
     struct Session {
-        write_tx: mpsc::UnboundedSender<String>,
+        write_tx: mpsc::UnboundedSender<Vec<u8>>,
         disconnect_tx: mpsc::UnboundedSender<()>,
         sent: Sent,
         disconnected: Arc<Mutex<bool>>,
@@ -407,7 +407,7 @@ mod tests {
         for i in 0..20 {
             let word = format!("w{}\n", i);
             let sent_at = Instant::now();
-            s.write_tx.send(word.clone()).unwrap();
+            s.write_tx.send(word.clone().into_bytes()).unwrap();
             let arrived = wait_for(&s.sent, &format!("w{}", i));
             worst = worst.max(arrived.saturating_duration_since(sent_at));
         }

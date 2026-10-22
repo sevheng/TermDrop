@@ -2,7 +2,7 @@
 //! local tabs share everything here, as they share the core's handle and
 //! events; only connecting differs (`ssh.rs`, `local.rs`).
 //!
-//! Keystrokes go to `Core::ssh_write`, grid changes to `ssh_resize`, output
+//! Keystrokes go to `Core::ssh_write_bytes`, grid changes to `ssh_resize`, output
 //! comes back through a byte sink the bridge attaches. Closing the tab calls
 //! `ssh_disconnect`, which drops the host's exec session and caches when it
 //! was the host's last terminal, exactly as the Tauri command does.
@@ -108,9 +108,9 @@ impl TerminalTab {
             Box::new(move |bytes: Vec<u8>| {
                 let id = lock(&session).clone();
                 if let Some(id) = id {
-                    // The core takes text; the encoder only produces UTF-8
-                    // (Alt is sent as an ESC prefix, never as a high bit).
-                    let _ = core.ssh_write(&id, String::from_utf8_lossy(&bytes).into_owned());
+                    // Bytes, not text: a legacy mouse report's coordinates
+                    // are raw bytes that are not valid UTF-8 past column 94.
+                    let _ = core.ssh_write_bytes(&id, bytes);
                 }
             })
         };

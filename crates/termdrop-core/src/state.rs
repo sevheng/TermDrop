@@ -1279,6 +1279,13 @@ impl Core {
 
     /// Send keystrokes (or a paste) to a terminal, SSH or local.
     pub fn ssh_write(&self, session_id: &str, data: String) -> Result<(), String> {
+        self.ssh_write_bytes(session_id, data.into_bytes())
+    }
+
+    /// `ssh_write` for input that is not text. A legacy (X10) mouse report
+    /// carries each coordinate as one raw byte, 0x80 and up past column 94,
+    /// which a `String` could only hold by replacing it with U+FFFD.
+    pub fn ssh_write_bytes(&self, session_id: &str, data: Vec<u8>) -> Result<(), String> {
         crate::dev_perf::mark("cmd");
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions.get(session_id).ok_or("Session not found")?;
@@ -1515,7 +1522,10 @@ impl Core {
         let session = sessions
             .get(pty_session_id)
             .ok_or("PTY session not found")?;
-        session.write_tx.send(data).map_err(|e| e.to_string())?;
+        session
+            .write_tx
+            .send(data.into_bytes())
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1821,6 +1831,37 @@ mod tests {
         assert_eq!(core.get_setting("theme").unwrap().as_deref(), Some("light"));
         drop(core);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn terminal_input_reaches_the_session_as_raw_bytes() {
+        // A legacy mouse report at column 100: its coordinate byte is 0xa5,
+        // which is not UTF-8 and must not become U+FFFD on the way.
+        let core = Core::new(
+            Pool::builder()
+                .max_size(1)
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (disconnect_tx, _d) = tokio::sync::mpsc::unbounded_channel();
+        let (resize_tx, _r) = tokio::sync::mpsc::unbounded_channel();
+        core.sessions.lock().unwrap().insert(
+            "s".into(),
+            ssh::SshSessionHandle {
+                host_id: None,
+                local_shell: None,
+                write_tx,
+                disconnect_tx,
+                resize_tx,
+                data_channel: Arc::new(Mutex::new(None)),
+            },
+        );
+        let report = vec![0x1b, b'[', b'M', 0x20, 0xa5, 0x21];
+        core.ssh_write_bytes("s", report.clone()).unwrap();
+        assert_eq!(write_rx.try_recv().unwrap(), report);
+        core.ssh_write("s", "é".into()).unwrap();
+        assert_eq!(write_rx.try_recv().unwrap(), "é".as_bytes());
     }
 
     #[test]

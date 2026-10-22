@@ -254,7 +254,7 @@ impl PtyIo for SshChannel {
 /// when `resize_rx` is given, terminal resize requests.
 pub fn run_loop(
     mut channel: impl PtyIo,
-    mut write_rx: mpsc::UnboundedReceiver<String>,
+    mut write_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     mut disconnect_rx: mpsc::UnboundedReceiver<()>,
     mut resize_rx: Option<mpsc::UnboundedReceiver<(u32, u32)>>,
     data_channel: TerminalChannel,
@@ -282,7 +282,7 @@ pub fn run_loop(
         while let Ok(data) = write_rx.try_recv() {
             let mut written = 0;
             while written < data.len() {
-                match channel.write(&data.as_bytes()[written..]) {
+                match channel.write(&data[written..]) {
                     Ok(n) => written += n,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5));

@@ -8,8 +8,12 @@ use regex::Regex;
 fn url_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        // The same schemes xterm's web-links addon recognises, plus file://.
-        Regex::new(r#"(?:https?|ftp|file)://[^\s<>"'`{}|\\^\x00-\x1f]+"#).expect("valid URL regex")
+        // http(s) only, as in xterm's web-links addon and the Tauri app's
+        // opener scope. The text comes from a remote host, and a click hands
+        // it to the OS: `file://host/share/x.exe` is a UNC path that Windows
+        // fetches (leaking NTLM credentials) and runs, and xdg-open launches
+        // a local `.desktop` file. Only a browser launch is safe to offer.
+        Regex::new(r#"https?://[^\s<>"'`{}|\\^\x00-\x1f]+"#).expect("valid URL regex")
     })
 }
 
@@ -34,6 +38,13 @@ fn trim_url(s: &str) -> &str {
         end -= last.len_utf8();
     }
     &s[..end]
+}
+
+/// Whether `url` may be handed to the OS opener. Checked again at the click,
+/// so a later change to the regex cannot widen what remote text can launch.
+pub fn is_openable(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
 }
 
 /// Every URL in `text`, as byte ranges.
@@ -78,7 +89,19 @@ mod tests {
             urls("see https://example.com/a?b=c#d and http://x.io"),
             ["https://example.com/a?b=c#d", "http://x.io"]
         );
-        assert_eq!(urls("file:///tmp/x.log"), ["file:///tmp/x.log"]);
+    }
+
+    #[test]
+    fn only_web_urls_are_links() {
+        // Remote output must never produce anything but a browser launch.
+        assert!(urls("file:///tmp/x.log").is_empty());
+        assert!(urls("file://attacker.example/share/report.exe").is_empty());
+        assert!(urls("ftp://host/x").is_empty());
+        assert!(is_openable("https://a.b"));
+        assert!(is_openable("HTTP://a.b"));
+        assert!(!is_openable("file:///etc/passwd"));
+        assert!(!is_openable("ftp://a.b"));
+        assert!(!is_openable("javascript:alert(1)"));
     }
 
     #[test]

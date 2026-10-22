@@ -18,7 +18,7 @@ pub struct SshSessionHandle {
     pub host_id: Option<i64>,
     /// What a local tab is running, so a reconnect starts the same shell.
     pub local_shell: Option<crate::local_shells::LocalShell>,
-    pub write_tx: mpsc::UnboundedSender<String>,
+    pub write_tx: mpsc::UnboundedSender<Vec<u8>>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub resize_tx: mpsc::UnboundedSender<(u32, u32)>,
     pub data_channel: io_loop::TerminalChannel,
@@ -26,7 +26,7 @@ pub struct SshSessionHandle {
 
 pub struct ExecPtyHandle {
     pub host_id: i64,
-    pub write_tx: mpsc::UnboundedSender<String>,
+    pub write_tx: mpsc::UnboundedSender<Vec<u8>>,
     pub disconnect_tx: mpsc::UnboundedSender<()>,
     pub data_channel: io_loop::TerminalChannel,
 }
@@ -42,7 +42,7 @@ fn spawn_pty_thread(
     target: SshTarget,
     kind: PtyKind,
     open_channel: impl FnOnce(&Session) -> Result<SshChannel, String> + Send + 'static,
-    write_rx: mpsc::UnboundedReceiver<String>,
+    write_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     disconnect_rx: mpsc::UnboundedReceiver<()>,
     resize_rx: Option<mpsc::UnboundedReceiver<(u32, u32)>>,
     data_channel: io_loop::TerminalChannel,
@@ -106,7 +106,7 @@ pub fn connect(
     initial_cols: u32,
     initial_rows: u32,
 ) -> Result<SshSessionHandle, String> {
-    let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
+    let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
     let (resize_tx, resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
     let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
@@ -142,7 +142,7 @@ pub fn exec_pty_connect(
     target: SshTarget,
     command: String,
 ) -> Result<ExecPtyHandle, String> {
-    let (write_tx, write_rx) = mpsc::unbounded_channel::<String>();
+    let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel::<()>();
     let data_channel: io_loop::TerminalChannel = Arc::new(Mutex::new(None));
 

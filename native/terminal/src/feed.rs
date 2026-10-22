@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use parking_lot::Mutex;
 
@@ -27,8 +27,12 @@ const PARSE_SLICE: usize = 64 * 1024;
 pub(crate) enum Msg {
     /// The grid changed since the last paint.
     Wake,
-    /// Something the terminal itself raised (title, bell, OSC 52, replies).
+    /// Something the terminal itself raised that must be handled in order:
+    /// replies to the program (DA, DSR, colour and size queries), OSC 52
+    /// writes, and exit.
     Term(Event),
+    /// A bell or a title change is waiting in [`Notices`].
+    Notices,
     /// The producer has no more output: the shell or channel ended.
     Exited,
     /// A synchronized update (DECSET 2026) is holding output back until this
@@ -37,14 +41,61 @@ pub(crate) enum Msg {
     SyncDeadline(Instant),
 }
 
+/// Bells and title changes, folded into flags. A program can raise them as
+/// fast as the parser runs (`cat` of a binary is full of 0x07, `yes` with an
+/// OSC title is hundreds of thousands a second); as one message each they
+/// grew an unbounded queue and an emit per event on the UI thread. Only the
+/// fact of a bell and the latest title matter, so that is all that is kept.
+#[derive(Default)]
+pub(crate) struct Notices {
+    /// A `Msg::Notices` is in the queue and has not been taken yet.
+    queued: AtomicBool,
+    bell: AtomicBool,
+    /// The latest title change since the last take: `Some(None)` is a reset.
+    title: Mutex<Option<Option<String>>>,
+}
+
+impl Notices {
+    /// Whether a bell rang, and the latest title change, since the last take.
+    pub(crate) fn take(&self) -> (bool, Option<Option<String>>) {
+        // Lowered first, so an event raised during the take queues again.
+        self.queued.store(false, Ordering::Release);
+        let bell = self.bell.swap(false, Ordering::AcqRel);
+        (bell, self.title.lock().take())
+    }
+}
+
 /// The terminal's event sink. alacritty calls it while the grid lock is held,
 /// so it only queues; the view handles each event on the UI thread.
 #[derive(Clone)]
-pub(crate) struct Listener(pub(crate) async_channel::Sender<Msg>);
+pub(crate) struct Listener {
+    tx: async_channel::Sender<Msg>,
+    notices: Arc<Notices>,
+}
 
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
-        let _ = self.0.try_send(Msg::Term(event));
+        match event {
+            Event::Bell => self.notices.bell.store(true, Ordering::Release),
+            Event::Title(title) => *self.notices.title.lock() = Some(Some(title)),
+            Event::ResetTitle => *self.notices.title.lock() = Some(None),
+            Event::PtyWrite(_)
+            | Event::ColorRequest(..)
+            | Event::TextAreaSizeRequest(_)
+            | Event::ClipboardStore(..)
+            | Event::Exit
+            | Event::ChildExit(_) => {
+                let _ = self.tx.try_send(Msg::Term(event));
+                return;
+            }
+            // Nothing the view acts on (mouse cursor and blink changes, which
+            // a mode toggle raises every time; OSC 52 reads stay denied, as
+            // in alacritty's default), so it is not queued at all.
+            _ => return,
+        }
+        if !self.notices.queued.swap(true, Ordering::AcqRel) {
+            let _ = self.tx.try_send(Msg::Notices);
+        }
     }
 }
 
@@ -73,6 +124,7 @@ impl Dimensions for GridSize {
 
 pub(crate) struct Shared {
     pub(crate) state: FairMutex<TermState>,
+    pub(crate) notices: Arc<Notices>,
     dirty: AtomicBool,
     /// A `SyncDeadline` has been sent and its timer has not fired yet.
     sync_watched: AtomicBool,
@@ -86,19 +138,24 @@ impl Shared {
             scrolling_history: scrollback,
             ..Config::default()
         };
+        let notices = Arc::new(Notices::default());
         let term = Term::new(
             config,
             &GridSize {
                 cols: 80,
                 lines: 24,
             },
-            Listener(tx.clone()),
+            Listener {
+                tx: tx.clone(),
+                notices: notices.clone(),
+            },
         );
         Arc::new(Self {
             state: FairMutex::new(TermState {
                 term,
                 parser: Processor::new(),
             }),
+            notices,
             dirty: AtomicBool::new(false),
             sync_watched: AtomicBool::new(false),
             tx,
@@ -132,6 +189,51 @@ impl Shared {
             self.mark_dirty();
         }
         pending
+    }
+
+    /// Puts the terminal back in the state a fresh shell expects, keeping the
+    /// screen and scrollback. Used when a session is replaced under the same
+    /// view (reconnect): whatever was running when the old one died may have
+    /// left the alternate screen, mouse reporting, application cursor keys,
+    /// bracketed paste or a hidden cursor on, and a half-parsed escape
+    /// sequence or a held synchronized update in the parser. Left alone, the
+    /// new prompt lands on the stale alternate screen and clicks are typed
+    /// into the shell as mouse reports.
+    pub(crate) fn reset_for_new_session(&self) {
+        let mut state = self.state.lock();
+        let TermState { term, parser } = &mut *state;
+        // Show what a held synchronized update had, then start parsing clean.
+        if parser.sync_timeout().sync_timeout().is_some() {
+            parser.stop_sync(term);
+        }
+        *parser = Processor::new();
+        let mut reset: Vec<u8> = Vec::new();
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            // Only when on it: leaving restores the saved cursor, which on
+            // the primary screen would jump the prompt to the top.
+            reset.extend_from_slice(b"\x1b[?1049l");
+        }
+        reset.extend_from_slice(
+            concat!(
+                "\x1b[?1l",                                     // DECCKM: normal cursor keys
+                "\x1b>",                                        // DECKPNM: numeric keypad
+                "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l", // mouse, focus reports
+                "\x1b[?1005l\x1b[?1006l",                       // mouse encodings
+                "\x1b[?2004l",                                  // bracketed paste
+                "\x1b[?6l",                                     // DECOM: origin mode
+                "\x1b[?7h",                                     // DECAWM: autowrap
+                "\x1b[?25h",                                    // DECTCEM: cursor shown
+                "\x1b[r",                                       // full scroll region
+                "\x1b[0m",                                      // SGR
+                "\x1b(B",                                       // ASCII charset
+                "\r\n",
+            )
+            .as_bytes(),
+        );
+        parser.advance(term, &reset);
+        drop(state);
+        self.sync_watched.store(false, Ordering::Release);
+        self.mark_dirty();
     }
 
     /// Called by the paint once it has its snapshot.
@@ -255,6 +357,69 @@ mod tests {
         let state = shared.state.lock();
         let row = &state.term.grid()[Line(0)];
         (0..5).map(|c| row[Column(c)].c).collect()
+    }
+
+    #[test]
+    fn a_flood_of_bells_and_titles_is_one_message() {
+        let (tx, rx) = async_channel::unbounded();
+        let shared = Shared::new(100, tx);
+        let feed = TerminalFeed(shared.clone());
+        for i in 0..10_000 {
+            feed.feed(format!("\x07\x1b]0;t{i}\x07\x1b[?1000h\x1b[?1000l").as_bytes());
+        }
+        let msgs: Vec<Msg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let notices = msgs.iter().filter(|m| matches!(m, Msg::Notices)).count();
+        let term = msgs.iter().filter(|m| matches!(m, Msg::Term(_))).count();
+        assert_eq!((notices, term), (1, 0));
+        assert_eq!(shared.notices.take(), (true, Some(Some("t9999".into()))));
+        assert_eq!(shared.notices.take(), (false, None));
+        // Once taken, the next one queues again.
+        feed.feed(b"\x07");
+        assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|m| matches!(m, Msg::Notices)));
+    }
+
+    #[test]
+    fn replies_to_the_program_stay_queued_in_order() {
+        let (tx, rx) = async_channel::unbounded();
+        let shared = Shared::new(100, tx);
+        let feed = TerminalFeed(shared.clone());
+        feed.feed(b"\x1b[c\x1b[6n");
+        let replies: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|m| match m {
+                Msg::Term(Event::PtyWrite(s)) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(replies.len(), 2);
+        assert!(
+            replies[1].ends_with('R'),
+            "DSR answered second: {replies:?}"
+        );
+    }
+
+    #[test]
+    fn a_new_session_starts_from_clean_modes() {
+        let (tx, _rx) = async_channel::unbounded();
+        let shared = Shared::new(100, tx);
+        let feed = TerminalFeed(shared.clone());
+        feed.feed(b"$ vim\r\n\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?1h\x1b[?2004h\x1b[?25l\x1b[?2026h\x1b[");
+        shared.reset_for_new_session();
+        let mode = *shared.state.lock().term.mode();
+        for m in [
+            TermMode::ALT_SCREEN,
+            TermMode::MOUSE_REPORT_CLICK,
+            TermMode::SGR_MOUSE,
+            TermMode::APP_CURSOR,
+            TermMode::BRACKETED_PASTE,
+        ] {
+            assert!(!mode.contains(m), "{m:?} left on");
+        }
+        assert!(mode.contains(TermMode::SHOW_CURSOR));
+        // The primary screen, with what was on it, is back.
+        assert_eq!(first_row(&shared), "$ vim");
+        // The parser is clean: the half sequence did not swallow this.
+        feed.feed(b"\x1b[Hok");
+        assert_eq!(first_row(&shared), "okvim");
     }
 
     #[test]

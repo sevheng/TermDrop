@@ -9,7 +9,7 @@
 //! - [`Bridge`], the core's [`EventSink`]. It carries events to the UI thread
 //!   and routes early terminal output (see [`Bridge::attach`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Result, anyhow};
@@ -88,21 +88,36 @@ enum Slot {
 /// would let it overtake, or be overtaken by, the bytes the attached sink
 /// feeds from that same thread.
 pub struct Bridge {
-    slots: Mutex<HashMap<String, Slot>>,
+    slots: Mutex<Slots>,
     tx: async_channel::Sender<CoreEvent>,
+}
+
+/// How many detached session ids are remembered.
+const CLOSED_REMEMBERED: usize = 64;
+
+#[derive(Default)]
+struct Slots {
+    by_id: HashMap<String, Slot>,
+    /// Terminals detached recently. The PTY thread keeps running until the
+    /// disconnect lands, and output it sends meanwhile arrives as `PtyData`
+    /// (a tab closed mid-connect never had a sink). Without this, that
+    /// output would open a `Pending` slot nothing ever detaches again. Kept
+    /// to a bounded window, since a session that had already ended sends
+    /// nothing after its detach to say it is done.
+    closed: VecDeque<String>,
 }
 
 impl Bridge {
     pub fn new() -> (Arc<Self>, async_channel::Receiver<CoreEvent>) {
         let (tx, rx) = async_channel::unbounded();
         let bridge = Arc::new(Self {
-            slots: Mutex::new(HashMap::new()),
+            slots: Mutex::new(Slots::default()),
             tx,
         });
         (bridge, rx)
     }
 
-    fn slots(&self) -> MutexGuard<'_, HashMap<String, Slot>> {
+    fn slots(&self) -> MutexGuard<'_, Slots> {
         // A panic while holding this lock leaves a plain map behind; nothing
         // in it can be half-updated, so keep going.
         self.slots.lock().unwrap_or_else(|e| e.into_inner())
@@ -118,10 +133,14 @@ impl Bridge {
     /// to the event.
     pub fn attach(&self, core: &Core, session_id: &str, feed: TerminalFeed) -> Result<(), String> {
         let mut slots = self.slots();
-        if let Some(Slot::Pending(early)) = slots.remove(session_id) {
+        // A reattach (reconnect) brings a detached id back to life.
+        slots.closed.retain(|id| id != session_id);
+        if let Some(Slot::Pending(early)) = slots.by_id.remove(session_id) {
             feed.feed(&early);
         }
-        slots.insert(session_id.to_string(), Slot::Attached(feed.clone()));
+        slots
+            .by_id
+            .insert(session_id.to_string(), Slot::Attached(feed.clone()));
         core.attach_terminal_sink(
             session_id,
             Box::new(FnSink(move |bytes: Vec<u8>| {
@@ -133,7 +152,14 @@ impl Bridge {
 
     /// Forget a terminal: its early output and its feed.
     pub fn detach(&self, session_id: &str) {
-        self.slots().remove(session_id);
+        let mut slots = self.slots();
+        slots.by_id.remove(session_id);
+        if !slots.closed.iter().any(|id| id == session_id) {
+            if slots.closed.len() == CLOSED_REMEMBERED {
+                slots.closed.pop_front();
+            }
+            slots.closed.push_back(session_id.to_string());
+        }
     }
 }
 
@@ -146,7 +172,13 @@ impl EventSink for Bridge {
         } = &event
         {
             let mut slots = self.slots();
+            if slots.closed.iter().any(|c| c == id) {
+                // The tab is gone; this is the PTY's last words before the
+                // disconnect lands.
+                return;
+            }
             match slots
+                .by_id
                 .entry(id.clone())
                 .or_insert_with(|| Slot::Pending(Vec::new()))
             {
@@ -261,7 +293,7 @@ mod tests {
             kind: PtyKind::Shell,
             id: "s".into(),
         });
-        match bridge.slots().get("s") {
+        match bridge.slots().by_id.get("s") {
             Some(Slot::Pending(buf)) => assert_eq!(buf, b"hello world"),
             _ => panic!("early output was not held"),
         }
@@ -271,6 +303,23 @@ mod tests {
             "output must not go through the queue"
         );
         bridge.detach("s");
-        assert!(bridge.slots().is_empty());
+        assert!(bridge.slots().by_id.is_empty());
+    }
+
+    #[test]
+    fn output_after_a_detach_does_not_open_a_new_slot() {
+        let (bridge, _rx) = Bridge::new();
+        bridge.detach("s");
+        bridge.emit(CoreEvent::PtyData {
+            kind: PtyKind::Shell,
+            id: "s".into(),
+            data: "late".into(),
+        });
+        assert!(bridge.slots().by_id.is_empty(), "late output leaked a slot");
+        // The remembered ids stay bounded however many tabs close.
+        for i in 0..1000 {
+            bridge.detach(&format!("t{i}"));
+        }
+        assert_eq!(bridge.slots().closed.len(), CLOSED_REMEMBERED);
     }
 }

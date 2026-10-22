@@ -85,7 +85,10 @@ fn store_password(host_id: i64, password: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-#[instrument(skip(window, state), fields(host_id))]
+// `skip_all` rather than `skip(window, state)`: a skipped-by-default list
+// records every other argument with Debug, which put `password` into the span
+// and so into every log line written inside it.
+#[instrument(skip_all, fields(host_id = host_id))]
 async fn ssh_connect(
     window: Window,
     state: State<'_, AppState>,
@@ -211,7 +214,8 @@ fn ssh_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-#[instrument(skip(window, state), fields(session_id))]
+// `skip_all` for the same reason as `ssh_connect`: `password` must stay out of the span.
+#[instrument(skip_all, fields(session_id = %session_id))]
 async fn ssh_reconnect(
     window: Window,
     state: State<'_, AppState>,
@@ -231,7 +235,8 @@ async fn ssh_reconnect(
 }
 
 #[tauri::command]
-#[instrument(skip(state), fields(host_id))]
+// `skip_all` for the same reason as `ssh_connect`: `password` must stay out of the span.
+#[instrument(skip_all, fields(host_id = host_id))]
 async fn sftp_connect(
     state: State<'_, AppState>,
     host_id: i64,
@@ -1262,6 +1267,7 @@ async fn redis_export(
             &uri,
             &info.version,
             &info.mode,
+            env!("CARGO_PKG_VERSION"),
         )
         .await
     })

@@ -281,6 +281,13 @@ impl TerminalTab {
             return;
         };
         self.set_status(Status::Connecting, cx);
+        // The new shell reuses this view, so whatever the dead session's
+        // program left on (alternate screen, mouse reporting, app cursor
+        // keys...) is cleared first. Before the reconnect starts, because a
+        // local shell's channel carries over and its prompt can arrive before
+        // the result does.
+        self.terminal
+            .update(cx, |view, cx| view.reset_for_new_session(cx));
         let services = self.services.clone();
         let id = session_id.clone();
         let pw = password.clone();
