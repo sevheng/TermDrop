@@ -318,9 +318,36 @@ pub fn mismatch_message(info: &HostKeyInfo, expected: &str, source: &str) -> Str
         source,
         info.fingerprint,
         info.key_type,
-        info.host,
-        source.split(':').next().unwrap_or(source),
+        // `ssh-keygen -R localhost` does not touch `[localhost]:2222`: off
+        // port 22 the entry is only found under its bracketed name.
+        command_arg(&known_hosts::lookup_name(&info.host, info.port)),
+        command_arg(source_file(source)),
     )
+}
+
+/// The file half of a `path:line` source. Split at the *last* colon, and
+/// only when a line number follows it: a Windows path has a colon of its own.
+fn source_file(source: &str) -> &str {
+    match source.rsplit_once(':') {
+        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => file,
+        _ => source,
+    }
+}
+
+/// One argument of a command the user is told to paste into a shell.
+/// Plain words go bare; anything else is single-quoted, because brackets
+/// are a glob to zsh (`no matches found`) and a macOS data directory has a
+/// space in it.
+fn command_arg(arg: &str) -> String {
+    let plain = !arg.is_empty()
+        && arg
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-/:@%+=,".contains(&b));
+    if plain {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
 }
 
 /// Append an accepted key to our own store. Never touches the user's file.
@@ -494,6 +521,49 @@ mod tests {
             !message.to_lowercase().contains("anyway"),
             "the dangerous path must not be offered"
         );
+    }
+
+    #[test]
+    fn the_mismatch_remedy_names_the_entry_ssh_keygen_will_find() {
+        // Off port 22 the entry is `[host]:port`; `ssh-keygen -R host` leaves
+        // it in place and the user is stuck behind the same dialog.
+        let off_port = HostKeyInfo {
+            port: 2222,
+            ..info()
+        };
+        let message = mismatch_message(
+            &off_port,
+            "SHA256:x",
+            "/home/u/.local/share/termdrop/known_hosts:3",
+        );
+        assert!(
+            message.ends_with(
+                "ssh-keygen -R '[db.internal]:2222' -f /home/u/.local/share/termdrop/known_hosts"
+            ),
+            "{message}"
+        );
+
+        // A path with a space is quoted, and a Windows drive letter is not
+        // mistaken for the line-number separator.
+        let mac = mismatch_message(
+            &info(),
+            "SHA256:x",
+            "/Users/u/Library/Application Support/termdrop/known_hosts:1",
+        );
+        assert!(mac.ends_with(
+            "ssh-keygen -R db.internal -f '/Users/u/Library/Application Support/termdrop/known_hosts'"
+        ));
+        let windows = mismatch_message(
+            &info(),
+            "SHA256:x",
+            r"C:\Users\u\AppData\Roaming\termdrop\known_hosts:12",
+        );
+        assert!(
+            windows.ends_with(r"-f 'C:\Users\u\AppData\Roaming\termdrop\known_hosts'"),
+            "{windows}"
+        );
+        assert_eq!(command_arg("it's"), "'it'\\''s'");
+        assert_eq!(source_file("known_hosts"), "known_hosts");
     }
 
     #[test]
