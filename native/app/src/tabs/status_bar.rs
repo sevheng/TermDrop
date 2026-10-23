@@ -31,6 +31,9 @@ use gpui_kit::{
     WindowVisibility, div, pulsating_between, px,
 };
 
+use futures::future::{BoxFuture, Shared};
+
+use super::single_flight::{SingleFlight, joined};
 use super::system_panel::SystemPanel;
 use crate::app::{AppEvent, AppModel};
 use crate::core_backend::Services;
@@ -214,6 +217,9 @@ pub struct StatusBar {
     expanded: bool,
     panel: Option<Entity<SystemPanel>>,
     poll: Option<Task<()>>,
+    /// The `get_system_stats` call in flight, which a restarted poll awaits
+    /// rather than sending another (see `single_flight`).
+    fetch: SingleFlight<Result<serde_json::Value, String>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -253,6 +259,7 @@ impl StatusBar {
                 expanded: false,
                 panel: None,
                 poll: None,
+                fetch: SingleFlight::new(),
                 _subscriptions: subscriptions,
             }
         })
@@ -272,6 +279,11 @@ impl StatusBar {
                 self.disconnected = true;
                 self.status = HostStatus::default();
                 self.error = None;
+                // Its session is gone; a reconnect asks the new one.
+                self.fetch.forget();
+                if let Some(panel) = &self.panel {
+                    panel.update(cx, |p, _| p.forget_inflight());
+                }
             }
         }
         self.update_polling(cx);
@@ -293,7 +305,9 @@ impl StatusBar {
         }
         // The panel polls only while it is open and in sight. Vue's kept
         // polling an open panel behind another tab; nothing could see it.
-        let panel_on = on_screen && self.expanded;
+        // Nor once the shell has ended: the host's exec session is gone, or
+        // is another tab's, and live data under "Disconnected" misleads.
+        let panel_on = on_screen && self.expanded && self.connected;
         if let Some(panel) = &self.panel {
             panel.update(cx, |p, cx| p.set_polling(panel_on, cx));
         }
@@ -311,9 +325,7 @@ impl StatusBar {
                     let Ok(job) = this.update(cx, |this, cx| this.begin_fetch(cx)) else {
                         return;
                     };
-                    let result = job
-                        .await
-                        .unwrap_or_else(|e| Err(format!("stats task failed: {e}")));
+                    let result = job.await;
                     if this
                         .update(cx, |this, cx| this.finish_fetch(result, cx))
                         .is_err()
@@ -329,14 +341,20 @@ impl StatusBar {
     fn begin_fetch(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> tokio::task::JoinHandle<Result<serde_json::Value, String>> {
+    ) -> Shared<BoxFuture<'static, Result<serde_json::Value, String>>> {
         self.loading = true;
         cx.notify();
-        let core = self.services.core.clone();
+        let services = self.services.clone();
         let host_id = self.host_id;
-        self.services
-            .rt
-            .spawn(async move { core.get_system_stats(host_id).await })
+        self.fetch.get_or_start(move || {
+            let core = services.core.clone();
+            joined(
+                services
+                    .rt
+                    .spawn(async move { core.get_system_stats(host_id).await }),
+                "stats",
+            )
+        })
     }
 
     fn finish_fetch(&mut self, result: Result<serde_json::Value, String>, cx: &mut Context<Self>) {

@@ -176,8 +176,10 @@ impl ForwardEditor {
         let editing = self.editing();
         let core = self.services.core.clone();
         let job = self.services.rt.spawn_blocking(move || match edit_id {
-            Some(id) => core.update_port_forward(id, &row),
-            None => core.add_port_forward(&row).map(|_| ()),
+            // A running forward restarts on the edited row (Vue's kept the
+            // old listener); `Some` is a restart that failed after the save.
+            Some(id) => core.update_port_forward_restarting(id, &row),
+            None => core.add_port_forward(&row).map(|_| None),
         });
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
@@ -187,8 +189,16 @@ impl ForwardEditor {
                     cx.notify();
                 });
                 match result {
-                    Ok(()) => {
+                    Ok(restart_error) => {
                         toast(window, cx, saved_message(editing), ToastKind::Success);
+                        if let Some(e) = restart_error {
+                            toast(
+                                window,
+                                cx,
+                                format!("Port forward stopped: {e}"),
+                                ToastKind::Error,
+                            );
+                        }
                         super::notify_saved(host_id, cx);
                         window.close_dialog(cx);
                     }

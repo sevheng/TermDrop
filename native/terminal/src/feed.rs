@@ -13,7 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::Line;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
@@ -241,6 +242,31 @@ impl Shared {
         self.mark_dirty();
     }
 
+    /// xterm.js's `clear()`: the cursor's line becomes the first line and
+    /// everything else, scrollback included, is dropped. A successful
+    /// reconnect does this, as Vue's `onReconnected` did, so the dead
+    /// session's output is no longer found or selected. On the alternate
+    /// screen there is no scrollback and nothing else is kept either.
+    pub(crate) fn clear_keeping_cursor_line(&self) {
+        let mut state = self.state.lock();
+        let term = &mut state.term;
+        let rows = term.screen_lines();
+        let grid = term.grid_mut();
+        let line = grid.cursor.point.line.0.max(0) as usize;
+        if line > 0 {
+            grid.scroll_up(&(Line(0)..Line(rows as i32)), line);
+        }
+        grid.clear_history();
+        if rows > 1 {
+            grid.reset_region(Line(1)..);
+        }
+        grid.cursor.point.line = Line(0);
+        grid.scroll_display(Scroll::Bottom);
+        term.selection = None;
+        drop(state);
+        self.mark_dirty();
+    }
+
     /// Called by the paint once it has its snapshot.
     pub(crate) fn clear_dirty(&self) {
         self.dirty.store(false, Ordering::Release);
@@ -444,6 +470,34 @@ mod tests {
         assert_eq!(row(3), "logout ");
         assert_eq!(row(5), "Welcome");
         assert_eq!(row(6), "$      ");
+    }
+
+    #[test]
+    fn clearing_keeps_only_the_cursor_line_as_xterm_clear_does() {
+        let (tx, _rx) = async_channel::unbounded();
+        let shared = Shared::new(100, tx);
+        let feed = TerminalFeed(shared.clone());
+        for i in 0..60 {
+            feed.feed(format!("old {i}\r\n").as_bytes());
+        }
+        feed.feed(b"$ ");
+        shared.clear_keeping_cursor_line();
+        {
+            let state = shared.state.lock();
+            assert_eq!(state.term.grid().history_size(), 0, "scrollback dropped");
+            let cursor = state.term.grid().cursor.point;
+            assert_eq!((cursor.line, cursor.column), (Line(0), Column(2)));
+        }
+        assert_eq!(first_row(&shared), "$    ");
+        feed.feed(b"x\r\nnext");
+        let state = shared.state.lock();
+        let row = |l: i32| -> String {
+            let row = &state.term.grid()[Line(l)];
+            (0..4).map(|c| row[Column(c)].c).collect()
+        };
+        assert_eq!(row(0), "$ x ");
+        assert_eq!(row(1), "next");
+        assert_eq!(row(2), "    ", "nothing of the old screen is left");
     }
 
     #[test]

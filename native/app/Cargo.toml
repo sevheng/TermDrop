@@ -50,6 +50,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # tauri-plugin-single-instance: a named mutex on Windows, an abstract socket
 # on Linux, flock on macOS.
 single-instance = "0.3"
+# Opening a forward in the browser with an error to report (panels/tunnels),
+# which `App::open_url` does not give. In the lock through termdrop-terminal.
+open = "5"
+# One status/panel request in flight per poller (tabs/single_flight.rs). In
+# the lock through GPUI.
+futures = "0.3"
 
 # Packaging for the preview release (`cargo packager --release`, from
 # native/app or with `-p termdrop-gpui`). See native/RELEASING.md and

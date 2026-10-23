@@ -409,7 +409,18 @@ impl TunnelsPanel {
                         d.child(
                             IconButton::new(key("open"), IconName::ExternalLink, "Open in browser")
                                 .tone(p.accent)
-                                .on_click(move |_, _, cx| cx.open_url(&url)),
+                                .on_click(move |_, window, cx| {
+                                    // `cx.open_url` reports nothing; Vue's
+                                    // `openUrl` rejection was a toast.
+                                    if let Err(e) = open::that_detached(&url) {
+                                        toast(
+                                            window,
+                                            cx,
+                                            format!("Failed to open: {e}"),
+                                            ToastKind::Error,
+                                        );
+                                    }
+                                }),
                         )
                     })
                     .child(

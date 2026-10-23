@@ -4,9 +4,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use gpui_kit::DismissEvent;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
@@ -27,7 +28,7 @@ use super::window_state::WindowStateSaver;
 use crate::app::host_form::EditorKind;
 use crate::app::tab_kind::{TabKind, has_right_panel};
 use crate::app::tabs::SftpLink;
-use crate::app::{AppEvent, AppModel, ShellDetection};
+use crate::app::{AppEvent, AppModel, LocalShellChoice, ShellDetection};
 use crate::backend::TabContentFactory;
 use crate::panels::PanelKind;
 use crate::ui::dialogs::{ConfirmOptions, confirm};
@@ -583,60 +584,46 @@ fn new_local_button(
         .loading(pending)
         .tooltip(LABEL)
         .accessibility_label(LABEL)
-        .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
-            if shells.is_empty() {
-                let text = if detection == ShellDetection::Pending {
-                    "Detecting shells…"
-                } else {
-                    "No shells found"
-                };
-                let spinning = detection == ShellDetection::Pending;
-                return menu.item(
-                    PopupMenuItem::element(move |_, cx| {
-                        let p = *palette(cx);
-                        h_flex()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(p.ink_2)
-                            .when(spinning, |d| d.child(Spinner::new().xsmall()))
-                            .child(text)
-                    })
-                    .disabled(true),
-                );
-            }
-            menu = menu.min_w(px(200.));
-            for shell in &shells {
-                let model = model.clone();
-                let shell = shell.clone();
-                let row = shell.clone();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, cx| {
-                        let p = *palette(cx);
-                        let tip: SharedString = row.command_line.clone().into();
-                        h_flex()
-                            .id(SharedString::from(format!("shell-{}", row.id)))
-                            .w_full()
-                            .gap_2()
-                            .text_xs()
-                            .child(
-                                Icon::new(IconName::SquareTerminal)
-                                    .xsmall()
-                                    .text_color(p.ink_2),
-                            )
-                            .child(div().min_w_0().truncate().child(row.label.clone()))
-                            .when(row.default, |d| {
-                                d.child(div().ml_auto().pl_3().text_color(p.ink_3).child("default"))
-                            })
-                            .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    })
-                    .on_click(move |_, _, cx| {
-                        model.update(cx, |m, cx| {
-                            m.open_local_shell(&shell, cx);
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
+            // The popover builds this menu once per opening and keeps it, so
+            // it follows the model itself: Vue's menu re-renders in place.
+            let opened_pending = model.read(cx).shell_detection() == ShellDetection::Pending;
+            let mut seen = shell_menu_state(model.read(cx));
+            cx.observe_in(&model, window, move |menu, model, window, cx| {
+                let now = shell_menu_state(model.read(cx));
+                if now == seen {
+                    return;
+                }
+                seen = now;
+                let m = model.read(cx);
+                match shell_menu_update(opened_pending, m.shell_detection(), m.local_shells().len())
+                {
+                    ShellMenuUpdate::Rebuild => {
+                        menu.rebuild(window, cx, |menu, _, cx| fill_shell_menu(menu, &model, cx));
+                    }
+                    ShellMenuUpdate::OpenDirectly => {
+                        // The first click while detection ran: Vue awaited it
+                        // and then opened the only shell (or the default). A
+                        // menu the user already closed has lost focus and
+                        // stands for nothing.
+                        if !menu.focus_handle(cx).contains_focused(window, cx) {
+                            return;
+                        }
+                        cx.emit(DismissEvent);
+                        let shell = model.read(cx).local_shells().first().cloned();
+                        model.update(cx, |m, cx| match shell {
+                            Some(shell) => {
+                                m.open_local_shell(&shell, cx);
+                            }
+                            None => {
+                                m.open_local(None, cx);
+                            }
                         });
-                    }),
-                );
-            }
-            menu
+                    }
+                }
+            })
+            .detach();
+            fill_shell_menu(menu, &model, cx)
         })
         .on_open_change(move |open, _, cx| {
             if *open {
@@ -644,6 +631,95 @@ fn new_local_button(
             }
         })
         .into_any_element()
+}
+
+/// What the open shell menu shows, compared to skip unrelated model
+/// notifications.
+fn shell_menu_state(m: &AppModel) -> (ShellDetection, Vec<LocalShellChoice>) {
+    (m.shell_detection(), m.local_shells().to_vec())
+}
+
+/// What an open shell menu does when the detected list changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellMenuUpdate {
+    /// Show the new list in place.
+    Rebuild,
+    /// Close, and open the only shell (or the default) as the click asked.
+    OpenDirectly,
+}
+
+/// A menu opened while the first detection ran stands for a click Vue
+/// would have held until detection finished: with one shell or none that
+/// click opens it. A menu opened over a known list only follows the list.
+fn shell_menu_update(
+    opened_pending: bool,
+    detection: ShellDetection,
+    shells: usize,
+) -> ShellMenuUpdate {
+    if opened_pending && detection == ShellDetection::Known && shells <= 1 {
+        ShellMenuUpdate::OpenDirectly
+    } else {
+        ShellMenuUpdate::Rebuild
+    }
+}
+
+/// The shell menu's rows, read from the model when built or rebuilt.
+fn fill_shell_menu(mut menu: PopupMenu, model: &Entity<AppModel>, cx: &App) -> PopupMenu {
+    let m = model.read(cx);
+    let shells = m.local_shells().to_vec();
+    let detection = m.shell_detection();
+    if shells.is_empty() {
+        let text = if detection == ShellDetection::Pending {
+            "Detecting shells…"
+        } else {
+            "No shells found"
+        };
+        let spinning = detection == ShellDetection::Pending;
+        return menu.item(
+            PopupMenuItem::element(move |_, cx| {
+                let p = *palette(cx);
+                h_flex()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(p.ink_2)
+                    .when(spinning, |d| d.child(Spinner::new().xsmall()))
+                    .child(text)
+            })
+            .disabled(true),
+        );
+    }
+    menu = menu.min_w(px(200.));
+    for shell in shells {
+        let model = model.clone();
+        let row = shell.clone();
+        menu = menu.item(
+            PopupMenuItem::element(move |_, cx| {
+                let p = *palette(cx);
+                let tip: SharedString = row.command_line.clone().into();
+                h_flex()
+                    .id(SharedString::from(format!("shell-{}", row.id)))
+                    .w_full()
+                    .gap_2()
+                    .text_xs()
+                    .child(
+                        Icon::new(IconName::SquareTerminal)
+                            .xsmall()
+                            .text_color(p.ink_2),
+                    )
+                    .child(div().min_w_0().truncate().child(row.label.clone()))
+                    .when(row.default, |d| {
+                        d.child(div().ml_auto().pl_3().text_color(p.ink_3).child("default"))
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+            })
+            .on_click(move |_, _, cx| {
+                model.update(cx, |m, cx| {
+                    m.open_local_shell(&shell, cx);
+                });
+            }),
+        );
+    }
+    menu
 }
 
 impl Render for MainWindow {
@@ -831,6 +907,19 @@ mod tests {
         // A background refresh does not change what a known list does.
         assert_eq!(shell_button(Known, true, 1), ShellButton::Open);
         assert_eq!(shell_button(Known, true, 3), ShellButton::Menu);
+    }
+
+    #[test]
+    fn a_menu_opened_during_detection_opens_a_lone_shell_when_it_lands() {
+        use ShellDetection::*;
+        use ShellMenuUpdate::*;
+        assert_eq!(shell_menu_update(true, Known, 0), OpenDirectly);
+        assert_eq!(shell_menu_update(true, Known, 1), OpenDirectly);
+        assert_eq!(shell_menu_update(true, Known, 3), Rebuild);
+        assert_eq!(shell_menu_update(true, Pending, 0), Rebuild);
+        // A menu opened over a known list only follows a re-detection.
+        assert_eq!(shell_menu_update(false, Known, 1), Rebuild);
+        assert_eq!(shell_menu_update(false, Known, 4), Rebuild);
     }
 
     #[test]

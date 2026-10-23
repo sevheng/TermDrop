@@ -213,7 +213,8 @@ in `MainWindow.vue`.
 On `ctx.core()` (`termdrop_core::forward_ops`, the Tauri commands' own
 bodies), all synchronous, so through `ctx.spawn_blocking`:
 `get_port_forwards(host_id)`, `add_port_forward(&row)`,
-`update_port_forward(id, &row)`, `delete_port_forward(id)` (stops it first),
+`update_port_forward_restarting(id, &row)` (a running forward restarts on the
+new row; `Ok(Some(e))` is a save whose restart failed), `delete_port_forward(id)` (stops it first),
 `start_port_forward(id)` (keyring + listener; each connection opens its own
 SSH session, host key checked and failing closed), `stop_port_forward(id)`,
 `port_forward_status(id)`.

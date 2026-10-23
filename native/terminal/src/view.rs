@@ -286,13 +286,22 @@ impl TerminalView {
 
     /// Readies the view for a new session in place of one that ended
     /// (reconnect): modes the old program left on are cleared and the parser
-    /// starts clean, while the screen and scrollback stay.
+    /// starts clean. The screen and scrollback stay until the new session is
+    /// up, when the tab calls `clear`.
     pub fn reset_for_new_session(&mut self, cx: &mut Context<Self>) {
         self.shared.reset_for_new_session();
         self.paste_task = None;
         self.selecting = false;
         self.last_report_cell = None;
         self.exited = false;
+        cx.notify();
+    }
+
+    /// Drops everything but the cursor's line, as xterm.js's `clear()`
+    /// (see `Shared::clear_keeping_cursor_line`).
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.shared.clear_keeping_cursor_line();
+        self.selecting = false;
         cx.notify();
     }
 

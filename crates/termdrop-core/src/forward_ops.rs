@@ -26,6 +26,38 @@ impl Core {
         with_db(self, |conn| db::update_port_forward(conn, id, forward))
     }
 
+    /// `update_port_forward` for the native app: a running forward is
+    /// restarted on the new row, so the listener and target are the ones the
+    /// panel shows. The old listener is joined before the new bind, so an
+    /// edit that keeps the port does not race it. `Ok(Some(e))` is a row
+    /// that saved but could not restart (its port is taken, say); the
+    /// forward is then stopped. The Tauri command keeps the plain update.
+    pub fn update_port_forward_restarting(
+        &self,
+        id: i64,
+        forward: &db::NewPortForward,
+    ) -> Result<Option<String>, String> {
+        self.update_port_forward(id, forward)?;
+        if !self.forward_manager.is_active(id) {
+            return Ok(None);
+        }
+        self.forward_manager.stop_and_wait(id);
+        Ok(self.start_port_forward(id).err())
+    }
+
+    /// `delete_host_row` for the native app: the host's port forwards go
+    /// with its row (`ON DELETE CASCADE`), so the running ones are stopped
+    /// too, or they would keep their ports and the deleted host's
+    /// credentials with no panel left to stop them.
+    pub fn delete_host_row_and_forwards(&self, host_id: i64) -> Result<(), String> {
+        let forwards = self.get_port_forwards(host_id).unwrap_or_default();
+        self.delete_host_row(host_id)?;
+        for forward in forwards {
+            self.forward_manager.stop(forward.id);
+        }
+        Ok(())
+    }
+
     /// Stops the forward first, so deleting a running rule frees its port.
     pub fn delete_port_forward(&self, id: i64) -> Result<(), String> {
         self.forward_manager.stop(id);
@@ -140,6 +172,71 @@ mod tests {
         core.delete_port_forward(id).unwrap();
         assert!(core.get_port_forwards(a).unwrap().is_empty());
         assert_eq!(core.get_port_forwards(b).unwrap().len(), 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn listen(core: &Core, id: i64) {
+        core.forward_manager
+            .start_dynamic(id, Default::default(), "127.0.0.1".into(), 0)
+            .unwrap();
+        assert!(core.port_forward_status(id));
+    }
+
+    #[test]
+    fn deleting_a_host_stops_its_running_forwards() {
+        let (core, path) = core("delete-host");
+        let (a, b) = (host(&core), host(&core));
+        let mine = core.add_port_forward(&rule(a, "dynamic")).unwrap();
+        let other = core.add_port_forward(&rule(b, "dynamic")).unwrap();
+        listen(&core, mine);
+        listen(&core, other);
+        core.delete_host_row_and_forwards(a).unwrap();
+        assert!(!core.port_forward_status(mine));
+        assert!(
+            core.port_forward_status(other),
+            "another host's forward runs on"
+        );
+        core.stop_port_forward(other);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn editing_a_running_forward_restarts_it() {
+        let (core, path) = core("edit-running");
+        let a = host(&core);
+        let idle = core.add_port_forward(&rule(a, "local")).unwrap();
+        // Not running: a plain update, nothing started.
+        assert_eq!(
+            core.update_port_forward_restarting(idle, &rule(a, "dynamic")),
+            Ok(None)
+        );
+        assert!(!core.port_forward_status(idle));
+
+        // Running: the old listener stops and the new row is started. This
+        // rule's host row is gone, so the restart fails before any keyring
+        // or network work, which shows the attempt was made on the new row.
+        let orphan = with_db(&core, |conn| {
+            conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+            let id = db::add_port_forward(conn, &rule(999_999, "local"))?;
+            conn.execute_batch("PRAGMA foreign_keys = ON")?;
+            Ok(id)
+        })
+        .unwrap();
+        listen(&core, orphan);
+        let mut edited = rule(999_999, "local");
+        edited.local_port = 18081;
+        assert_eq!(
+            core.update_port_forward_restarting(orphan, &edited),
+            Ok(Some("Host not found".to_string()))
+        );
+        assert!(!core.port_forward_status(orphan));
+        assert_eq!(
+            with_db(&core, |conn| db::get_port_forward_by_id(conn, orphan))
+                .unwrap()
+                .unwrap()
+                .local_port,
+            18081
+        );
         let _ = std::fs::remove_file(path);
     }
 

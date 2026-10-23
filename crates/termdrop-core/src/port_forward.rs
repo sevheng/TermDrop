@@ -142,6 +142,19 @@ impl ForwardManager {
         }
     }
 
+    /// `stop`, then waits for the listener thread to drop its socket, so the
+    /// port can be bound again at once. The thread checks its flag every
+    /// 100ms, so this waits at most that long.
+    pub fn stop_and_wait(&self, rule_id: i64) {
+        let removed = self.active.lock().unwrap().remove(&rule_id);
+        if let Some(mut fw) = removed {
+            fw.shutdown.store(true, Ordering::Relaxed);
+            if let Some(handle) = fw.thread_handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
     pub fn is_active(&self, rule_id: i64) -> bool {
         let active = self.active.lock().unwrap();
         active.contains_key(&rule_id)

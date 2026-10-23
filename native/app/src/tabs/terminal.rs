@@ -459,8 +459,7 @@ impl TerminalTab {
     }
 
     /// The terminal's own shortcuts, taken before the keys reach the
-    /// program, as `attachCustomKeyEventHandler` did: Ctrl+F opens the find
-    /// bar, Ctrl+Shift+A selects everything, Esc closes an open find bar.
+    /// program, as `attachCustomKeyEventHandler` did (see `tab_shortcut`).
     fn on_key_capture(
         &mut self,
         event: &KeyDownEvent,
@@ -469,23 +468,15 @@ impl TerminalTab {
     ) {
         let ks = &event.keystroke;
         let m = &ks.modifiers;
-        let key = ks.key.to_lowercase();
-        if m.control && !m.alt && !m.platform {
-            if m.shift && key == "a" {
+        match tab_shortcut(m.control, m.shift, &ks.key, self.find_open) {
+            Some(TabShortcut::SelectAll) => {
                 self.terminal.update(cx, |t, cx| t.select_all(cx));
-                cx.stop_propagation();
-                return;
             }
-            if !m.shift && key == "f" {
-                self.open_find(window, cx);
-                cx.stop_propagation();
-                return;
-            }
+            Some(TabShortcut::OpenFind) => self.open_find(window, cx),
+            Some(TabShortcut::CloseFind) => self.close_find(window, cx),
+            None => return,
         }
-        if self.find_open && key == "escape" && !m.modified() {
-            self.close_find(window, cx);
-            cx.stop_propagation();
-        }
+        cx.stop_propagation();
     }
 
     fn render_find_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -678,5 +669,70 @@ impl Render for TerminalTab {
                 )
             })
             .when_some(self.status_bar.clone(), |col, bar| col.child(bar))
+    }
+}
+
+/// A key the terminal tab takes for itself before the program sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabShortcut {
+    SelectAll,
+    OpenFind,
+    CloseFind,
+}
+
+/// `attachCustomKeyEventHandler`'s rules, modifier for modifier: Ctrl+Shift+A
+/// selects everything and any Ctrl+F (with Shift, Alt or neither) opens the
+/// find bar; Esc closes an open find bar whatever else is held.
+fn tab_shortcut(control: bool, shift: bool, key: &str, find_open: bool) -> Option<TabShortcut> {
+    let key = key.to_lowercase();
+    if control && shift && key == "a" {
+        return Some(TabShortcut::SelectAll);
+    }
+    if control && key == "f" {
+        return Some(TabShortcut::OpenFind);
+    }
+    if find_open && key == "escape" {
+        return Some(TabShortcut::CloseFind);
+    }
+    None
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::{TabShortcut, tab_shortcut};
+
+    #[test]
+    fn every_ctrl_f_chord_opens_find_as_in_xterm_handler() {
+        assert_eq!(
+            tab_shortcut(true, false, "f", false),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(
+            tab_shortcut(true, true, "f", false),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(
+            tab_shortcut(true, false, "F", true),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(tab_shortcut(false, false, "f", false), None);
+    }
+
+    #[test]
+    fn select_all_needs_ctrl_shift_and_escape_needs_an_open_bar() {
+        assert_eq!(
+            tab_shortcut(true, true, "a", false),
+            Some(TabShortcut::SelectAll)
+        );
+        assert_eq!(tab_shortcut(true, false, "a", false), None);
+        assert_eq!(
+            tab_shortcut(false, false, "escape", true),
+            Some(TabShortcut::CloseFind)
+        );
+        assert_eq!(
+            tab_shortcut(false, true, "escape", true),
+            Some(TabShortcut::CloseFind)
+        );
+        assert_eq!(tab_shortcut(false, false, "escape", false), None);
     }
 }

@@ -9,6 +9,7 @@
 //! tab closes.
 
 mod local;
+mod single_flight;
 mod ssh;
 mod status_bar;
 mod system_panel;

@@ -20,6 +20,7 @@ use gpui_kit::{
 };
 use termdrop_core::system::{DiskInfo, NetInterface, NetPort, NetworkInfo, Process};
 
+use super::single_flight::{SingleFlight, joined};
 use crate::core_backend::Services;
 use crate::panels::common::{format_bytes, text_2xs};
 use crate::ui::theme::{Palette, palette};
@@ -104,6 +105,9 @@ pub struct SystemPanel {
     network: Option<NetworkInfo>,
     disk: Option<DiskInfo>,
     poll: Option<Task<()>>,
+    /// The `get_system_panel` call in flight, which a restarted poll awaits
+    /// rather than sending another (see `single_flight`).
+    fetch: SingleFlight<Result<termdrop_core::system::SystemPanel, String>>,
 }
 
 impl SystemPanel {
@@ -117,6 +121,7 @@ impl SystemPanel {
             network: None,
             disk: None,
             poll: None,
+            fetch: SingleFlight::new(),
         })
     }
 
@@ -139,17 +144,21 @@ impl SystemPanel {
                 let mut first = true;
                 loop {
                     let Ok(job) = this.update(cx, |this, _| {
-                        let core = this.services.core.clone();
+                        let services = this.services.clone();
                         let host_id = this.host_id;
-                        this.services
-                            .rt
-                            .spawn(async move { core.get_system_panel(host_id).await })
+                        this.fetch.get_or_start(move || {
+                            let core = services.core.clone();
+                            joined(
+                                services
+                                    .rt
+                                    .spawn(async move { core.get_system_panel(host_id).await }),
+                                "panel",
+                            )
+                        })
                     }) else {
                         return;
                     };
-                    let result = job
-                        .await
-                        .unwrap_or_else(|e| Err(format!("panel task failed: {e}")));
+                    let result = job.await;
                     if this
                         .update(cx, |this, cx| this.loaded(result, first, cx))
                         .is_err()
@@ -161,6 +170,12 @@ impl SystemPanel {
                 }
             }),
         );
+    }
+
+    /// The tab's shell ended: a request still running speaks for the old
+    /// session, so a reconnect does not wait on it.
+    pub(crate) fn forget_inflight(&mut self) {
+        self.fetch.forget();
     }
 
     fn loaded(

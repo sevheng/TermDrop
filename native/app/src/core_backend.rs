@@ -161,9 +161,12 @@ impl HostStore for CoreStore {
         }
     }
 
-    /// `Core::delete_host`, likewise.
+    /// `Core::delete_host`, likewise, and the host's running port forwards
+    /// are stopped with their rows (which Tauri's leaves listening).
     fn delete_host(&self, host_id: i64) -> Result<()> {
-        self.core.delete_host_row(host_id).map_err(|e| anyhow!(e))?;
+        self.core
+            .delete_host_row_and_forwards(host_id)
+            .map_err(|e| anyhow!(e))?;
         hosts::delete_host_secrets(host_id);
         self.forget_in_background(host_id);
         Ok(())
