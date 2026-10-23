@@ -213,8 +213,12 @@ impl Shared {
             // the primary screen would jump the prompt to the top.
             reset.extend_from_slice(b"\x1b[?1049l");
         }
+        // Resetting the scroll region homes the cursor, which wrote the new
+        // session's first lines over the top of the old screen, so the
+        // cursor is saved first and restored after it.
         reset.extend_from_slice(
             concat!(
+                "\x1b7",                                        // DECSC
                 "\x1b[?1l",                                     // DECCKM: normal cursor keys
                 "\x1b>",                                        // DECKPNM: numeric keypad
                 "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l", // mouse, focus reports
@@ -224,6 +228,7 @@ impl Shared {
                 "\x1b[?7h",                                     // DECAWM: autowrap
                 "\x1b[?25h",                                    // DECTCEM: cursor shown
                 "\x1b[r",                                       // full scroll region
+                "\x1b8",                                        // DECRC
                 "\x1b[0m",                                      // SGR
                 "\x1b(B",                                       // ASCII charset
                 "\r\n",
@@ -420,6 +425,25 @@ mod tests {
         // The parser is clean: the half sequence did not swallow this.
         feed.feed(b"\x1b[Hok");
         assert_eq!(first_row(&shared), "okvim");
+    }
+
+    #[test]
+    fn a_new_session_starts_below_the_old_output() {
+        let (tx, _rx) = async_channel::unbounded();
+        let shared = Shared::new(100, tx);
+        let feed = TerminalFeed(shared.clone());
+        feed.feed(b"$ echo AAA\r\nAAA\r\n$ exit\r\nlogout\r\n");
+        shared.reset_for_new_session();
+        feed.feed(b"Welcome\r\n$ ");
+        let state = shared.state.lock();
+        let row = |l: i32| -> String {
+            let row = &state.term.grid()[Line(l)];
+            (0..7).map(|c| row[Column(c)].c).collect()
+        };
+        assert_eq!(row(1), "AAA    ", "the old output is not written over");
+        assert_eq!(row(3), "logout ");
+        assert_eq!(row(5), "Welcome");
+        assert_eq!(row(6), "$      ");
     }
 
     #[test]
