@@ -58,7 +58,7 @@ use termdrop_core::vnc::VncSessionInfo;
 use self::input::{Input, Move, Send};
 use self::keysym::CTRL_ALT_DELETE;
 use self::layout::{FitMode, WheelDelta};
-use self::renderer::{Message, Update};
+use self::renderer::{CursorSprite, Message, Update};
 use self::screen::{Geometry, VncScreen};
 use super::{OpSubscription, ServiceTabContext};
 use crate::app::AppEvent;
@@ -241,6 +241,12 @@ pub(crate) struct VncTab {
     /// `grid.0` across. `None` until a frame has drawn it.
     grid: (usize, usize),
     tiles: Vec<Option<Arc<RenderImage>>>,
+    /// The remote cursor's shape, painted over the screen at the pointer.
+    /// `None` until the server sends one (or for a server that never does).
+    cursor: Option<CursorSprite>,
+    /// The pointer was over the image at the last move, so a move off it
+    /// repaints once to take the cursor sprite away.
+    pointer_over: bool,
     /// A frame applied while the tab or window was hidden, acknowledged when
     /// it is shown again rather than waiting out the session's timeout.
     withheld_ack: Option<u32>,
@@ -310,7 +316,8 @@ impl VncTab {
                 this.disconnect_session();
                 // The tiles' textures stay in the window's atlas until they
                 // are dropped from it; the view has no window here.
-                let tiles: Vec<_> = this.tiles.drain(..).flatten().collect();
+                let mut tiles: Vec<_> = this.tiles.drain(..).flatten().collect();
+                tiles.extend(this.cursor.take().and_then(|c| c.image));
                 let handle = this.window;
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, _| {
@@ -357,6 +364,8 @@ impl VncTab {
             drawn_size: (0, 0),
             grid: (0, 0),
             tiles: Vec::new(),
+            cursor: None,
+            pointer_over: false,
             withheld_ack: None,
             paused: false,
             input: Input::new(false),
@@ -504,6 +513,7 @@ impl VncTab {
         self.view_only = info.view_only;
         self.input = Input::new(info.view_only);
         self.drop_tiles(window);
+        self.set_cursor(None, window);
         self.withheld_ack = None;
         self.paused = false;
         self.session = Some(Session {
@@ -620,6 +630,15 @@ impl VncTab {
                 let _ = window.drop_image(old);
             }
         }
+        if let Some(cursor) = update.cursor.clone() {
+            tracing::debug!(
+                target: "termdrop::vnc",
+                size = ?cursor.size,
+                hot = ?cursor.hot,
+                "remote cursor shape"
+            );
+            self.set_cursor(Some(cursor), window);
+        }
         if let Some(stats) = self.stats.as_mut() {
             stats.record(&update);
         }
@@ -638,6 +657,13 @@ impl VncTab {
         self.withheld_ack = None;
         if let Some(id) = self.session_id() {
             let _ = self.ctx.core().vnc_frame_ack(id, seq);
+        }
+    }
+
+    /// Replace the cursor sprite, dropping the old one's texture.
+    fn set_cursor(&mut self, cursor: Option<CursorSprite>, window: &mut Window) {
+        if let Some(old) = std::mem::replace(&mut self.cursor, cursor).and_then(|c| c.image) {
+            let _ = window.drop_image(old);
         }
     }
 
@@ -790,6 +816,13 @@ impl VncTab {
         geo: Geometry,
         cx: &mut Context<Self>,
     ) {
+        // The cursor sprite follows the pointer, so it needs a paint per
+        // move while over the image, and one more to leave it.
+        let sprite = self.cursor.as_ref().is_some_and(|c| c.image.is_some());
+        if sprite && (hovered || self.pointer_over) {
+            cx.notify();
+        }
+        self.pointer_over = hovered;
         if !hovered && !self.input.buttons().any() {
             return;
         }
@@ -1175,6 +1208,7 @@ mod tests {
             tiles: Vec::new(),
             bytes,
             apply: Duration::from_micros(1500),
+            cursor: None,
         };
         stats.record(&update(2048));
         stats.record(&update(2048));

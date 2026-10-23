@@ -3,6 +3,8 @@
 //! page with a download button for the binary types it knows by extension.
 //! Text and images are read over SFTP (`sftp_read_file`, at most 5 MB, and
 //! `sftp_read_file_base64`, at most 10 MB); binaries are never read.
+//! The dialog starts at 640 x 480 and is resized from its bottom-right
+//! corner, down to 320 x 200, as the Vue dialog's handle did.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,9 +18,10 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, Image, ImageFormat, IntoElement, ObjectFit,
-    ParentElement, Render, SharedString, Styled, StyledImage as _, Subscription, Task, Window, div,
-    img, px,
+    App, AppContext as _, Context, CursorStyle, DragMoveEvent, Empty, Entity, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ObjectFit, ParentElement,
+    Pixels, Point, Render, SharedString, StatefulInteractiveElement as _, Styled, StyledImage as _,
+    Subscription, Task, Window, div, img, px,
 };
 
 use super::model::{ImageKind, PreviewKind, match_label, preview_kind};
@@ -29,6 +32,38 @@ use crate::ui::icon_button::IconButton;
 use crate::ui::theme::palette;
 
 type Action = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// The Vue dialog's starting size (`modalWidth`, `modalHeight`).
+const START_W: f32 = 640.;
+const START_H: f32 = 480.;
+/// Its `minWidth` / `minHeight`.
+const MIN_W: f32 = 320.;
+const MIN_H: f32 = 200.;
+/// The dialog's own height around this view: its top padding, the title
+/// and the gap under it. The view is the rest of the dialog's height.
+const CHROME_H: f32 = 44.;
+/// The dialog's padding, which this view draws itself on the right and at
+/// the bottom so the resize handle can sit in the dialog's very corner.
+const PAD: f32 = 16.;
+
+/// `onResizeMove`: the size after dragging the handle by `(dx, dy)` from
+/// a drag that started at `start`, never below the minimum.
+pub fn resized(start: (f32, f32), dx: f32, dy: f32) -> (f32, f32) {
+    ((start.0 + dx).max(MIN_W), (start.1 + dy).max(MIN_H))
+}
+
+/// Drag payload for the resize handle.
+#[derive(Clone)]
+struct ResizePreview;
+
+/// What follows the cursor during the drag: nothing; the dialog resizes.
+struct Ghost;
+
+impl Render for Ghost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
 
 enum Body {
     Loading,
@@ -46,6 +81,11 @@ pub struct FilePreview {
     query: String,
     on_edit: Action,
     on_download: Action,
+    /// The whole dialog's size.
+    width: f32,
+    height: f32,
+    /// (mouse, (w, h)) when a corner drag started.
+    resize_from: Option<(Point<Pixels>, (f32, f32))>,
     _task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -73,8 +113,16 @@ pub fn open_preview(
         },
         display_name(&name)
     ));
-    window.open_dialog(cx, move |dialog, _, _| {
-        dialog.title(title.clone()).w(px(640.)).child(view.clone())
+    // Built on every render, so the width follows the handle. The right and
+    // bottom padding are the view's own, putting the handle in the corner.
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let width = view.read(cx).width;
+        dialog
+            .title(title.clone())
+            .w(px(width))
+            .pr(px(0.))
+            .pb(px(0.))
+            .child(view.clone())
     });
 }
 
@@ -167,6 +215,9 @@ impl FilePreview {
             query: String::new(),
             on_edit: Rc::new(on_edit),
             on_download: Rc::new(on_download),
+            width: START_W,
+            height: START_H,
+            resize_from: None,
             _task: task,
             _subscriptions: subscriptions,
         }
@@ -314,15 +365,67 @@ impl Render for FilePreview {
                 .into_any_element(),
         };
 
-        v_flex().h(px(420.)).gap_2().child(toolbar).child(
-            div()
-                .flex_1()
-                .min_h_0()
-                .overflow_hidden()
-                .border_1()
-                .border_color(p.line)
-                .rounded_sm()
-                .child(content),
-        )
+        let grip = div()
+            .id("preview-resize")
+            .absolute()
+            .bottom(px(2.))
+            .right(px(2.))
+            .size(px(12.))
+            .border_r_2()
+            .border_b_2()
+            .border_color(p.ink_3)
+            .cursor(CursorStyle::ResizeUpLeftDownRight)
+            .tooltip(|window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new("Resize").build(window, cx)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &MouseDownEvent, _, _| {
+                    this.resize_from = Some((e.position, (this.width, this.height)));
+                }),
+            )
+            .on_drag(ResizePreview, |_, _, _, cx| cx.new(|_| Ghost));
+
+        v_flex()
+            .id("file-preview")
+            .relative()
+            .h(px((self.height - CHROME_H).max(0.)))
+            .pr(px(PAD))
+            .pb(px(PAD))
+            .gap_2()
+            .on_drag_move(
+                cx.listener(|this, e: &DragMoveEvent<ResizePreview>, _, cx| {
+                    if let Some((mouse, start)) = this.resize_from {
+                        let d = e.event.position - mouse;
+                        (this.width, this.height) = resized(start, f32::from(d.x), f32::from(d.y));
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(toolbar)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(p.line)
+                    .rounded_sm()
+                    .child(content),
+            )
+            .child(grip)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resized;
+
+    // `onResizeMove` in FilePreviewDialog.vue.
+    #[test]
+    fn the_handle_grows_and_shrinks_the_dialog_down_to_its_minimum() {
+        assert_eq!(resized((640., 480.), 100., -30.), (740., 450.));
+        assert_eq!(resized((640., 480.), -1000., -1000.), (320., 200.));
+        assert_eq!(resized((320., 200.), 0., 0.), (320., 200.));
     }
 }
