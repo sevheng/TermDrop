@@ -40,6 +40,12 @@ jobs:
         with:
           workspaces: native
 
+      # Git Bash's perl lacks modules OpenSSL's Configure needs (ssh2 builds a
+      # vendored OpenSSL); the runner's Strawberry Perl has them.
+      - name: Use Strawberry Perl for OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         working-directory: .
