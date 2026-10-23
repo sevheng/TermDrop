@@ -5,7 +5,6 @@
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -21,7 +20,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use termdrop_core::state::*;
 use termdrop_core::Core as AppState;
 use termdrop_core::{db, docker, hosts, local_shells, mongodb, redis};
-use termdrop_core::{redis_backup, security, sftp, ssh_config_parser, system, uri, vnc};
+use termdrop_core::{redis_backup, security, sftp, sftp_ops, ssh_config_parser, system, uri, vnc};
 
 mod bridge;
 #[cfg(debug_assertions)]
@@ -238,10 +237,7 @@ async fn sftp_list(
     sftp_session_id: String,
     path: String,
 ) -> Result<Vec<sftp::SftpFile>, String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_list(handle, &path)
-    })
-    .await
+    state.sftp_list(&sftp_session_id, path).await
 }
 
 #[tauri::command]
@@ -252,12 +248,14 @@ async fn sftp_upload(
     local_path: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let session_id = sftp_session_id.clone();
-    let events = bridge::events(&window);
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_upload(events, &session_id, handle, &local_path, &remote_path)
-    })
-    .await
+    state
+        .sftp_upload(
+            bridge::events(&window),
+            &sftp_session_id,
+            local_path,
+            remote_path,
+        )
+        .await
 }
 
 #[tauri::command]
@@ -267,41 +265,9 @@ async fn sftp_download(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let file_name = Path::new(&remote_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "download".to_string());
-    let download_dir = dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .unwrap_or_else(std::env::temp_dir);
-    let local_path = download_dir.join(&file_name);
-    let local_path_str = local_path.to_string_lossy().to_string();
-    let local_path_str_for_dl = local_path_str.clone();
-    let session_id = sftp_session_id.clone();
-    let events = bridge::events(&window);
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_download(
-            events,
-            &session_id,
-            handle,
-            &remote_path,
-            &local_path_str_for_dl,
-        )
-    })
-    .await?;
-    Ok(local_path_str)
-}
-
-fn shell_escape(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || "_-./:@".contains(c))
-    {
-        return s.to_string();
-    }
-    format!("'{}'", s.replace('\'', "'\"'\"'"))
+    state
+        .sftp_download(bridge::events(&window), &sftp_session_id, remote_path)
+        .await
 }
 
 #[tauri::command]
@@ -311,118 +277,7 @@ async fn sftp_download_dir(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    // Get SFTP handle and host_id
-    let handle = sftp_handle(&state, &sftp_session_id)?;
-    let host_id = handle.host_id;
-
-    // Get exec session for tar command
-    let exec_session = exec_session(&state, host_id, "No exec session for this host")?;
-
-    let folder_name = Path::new(&remote_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "archive".to_string());
-    let parent_path = Path::new(&remote_path)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "/".to_string());
-
-    let remote_temp = format!("/tmp/termdrop-{}.tar.gz", uuid::Uuid::new_v4());
-
-    // Create tar.gz on remote
-    let exec_session_clone = exec_session.clone();
-    let remote_temp_clone = remote_temp.clone();
-    let parent_path_clone = parent_path.clone();
-    let folder_name_clone = folder_name.clone();
-    tokio::task::spawn_blocking(move || {
-        let session = exec_session_clone.lock().map_err(|e| e.to_string())?;
-        let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-        let cmd = format!(
-            "tar -czf {} -C {} {}",
-            shell_escape(&remote_temp_clone),
-            shell_escape(&parent_path_clone),
-            shell_escape(&folder_name_clone)
-        );
-        channel.exec(&cmd).map_err(|e| e.to_string())?;
-        let mut stdout = String::new();
-        use std::io::Read;
-        channel
-            .read_to_string(&mut stdout)
-            .map_err(|e| e.to_string())?;
-        let mut stderr = String::new();
-        channel
-            .stderr()
-            .read_to_string(&mut stderr)
-            .map_err(|e| e.to_string())?;
-        channel.wait_close().ok();
-        let status = channel.exit_status().unwrap_or(0);
-        if status != 0 {
-            return Err(format!(
-                "tar failed: {}",
-                if stderr.is_empty() { stdout } else { stderr }
-            ));
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    // Download the archive (blocking I/O off the async thread)
-    let download_dir = dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .unwrap_or_else(std::env::temp_dir);
-    let archive_name = format!("{}.tar.gz", folder_name);
-    let local_archive = download_dir.join(&archive_name);
-    let local_archive_str = local_archive.to_string_lossy().to_string();
-    let remote_temp_clone = remote_temp.clone();
-    let handle_clone = handle.clone();
-    let local_archive_str_for_dl = local_archive_str.clone();
-
-    tokio::task::spawn_blocking(move || {
-        sftp::sftp_download_simple(&handle_clone, &remote_temp_clone, &local_archive_str_for_dl)
-    })
-    .await
-    .map_err(|e| format!("download task failed: {}", e))?
-    .map_err(|e| format!("download failed: {}", e))?;
-
-    // Extract locally
-    let extract_dir = download_dir.join(&folder_name);
-    let extract_dir_str = extract_dir.to_string_lossy().to_string();
-    let local_archive_str_clone = local_archive_str.clone();
-    let extract_dir_str_clone = extract_dir_str.clone();
-    tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&extract_dir_str_clone)
-            .map_err(|e| format!("create dir: {}", e))?;
-        let output = std::process::Command::new("tar")
-            .args([
-                "-xzf",
-                &local_archive_str_clone,
-                "-C",
-                &extract_dir_str_clone,
-                "--strip-components=1",
-            ])
-            .output()
-            .map_err(|e| format!("extract: {}", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("extract failed: {}", err));
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    // Clean up local archive and remote temp (best effort)
-    let local_archive_clone = local_archive.clone();
-    let remote_temp_clone = remote_temp.clone();
-    let handle_clone = handle.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        let _ = std::fs::remove_file(&local_archive_clone);
-        let _ = sftp::sftp_delete(&handle_clone, &remote_temp_clone);
-    })
-    .await;
-
-    Ok(extract_dir_str)
+    state.sftp_download_dir(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -432,10 +287,9 @@ async fn sftp_write_file(
     remote_path: String,
     content: String,
 ) -> Result<(), String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_write_file(handle, &remote_path, &content)
-    })
-    .await
+    state
+        .sftp_write_file(&sftp_session_id, remote_path, content)
+        .await
 }
 
 /// Size and mtime of a remote file, used to detect that it changed while an
@@ -446,10 +300,7 @@ async fn sftp_stat_file(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<sftp::SftpStat, String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_stat_file(handle, &remote_path)
-    })
-    .await
+    state.sftp_stat_file(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -458,10 +309,7 @@ async fn sftp_realpath(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_realpath(handle, &remote_path)
-    })
-    .await
+    state.sftp_realpath(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -470,10 +318,7 @@ async fn sftp_delete(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_delete(handle, &remote_path)
-    })
-    .await
+    state.sftp_delete(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -483,10 +328,9 @@ async fn sftp_rename(
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_rename(handle, &old_path, &new_path)
-    })
-    .await
+    state
+        .sftp_rename(&sftp_session_id, old_path, new_path)
+        .await
 }
 
 #[tauri::command]
@@ -495,10 +339,7 @@ async fn sftp_mkdir(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_mkdir(handle, &remote_path)
-    })
-    .await
+    state.sftp_mkdir(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -507,10 +348,7 @@ async fn sftp_rmdir(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_rmdir(handle, &remote_path)
-    })
-    .await
+    state.sftp_rmdir(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -519,10 +357,7 @@ async fn sftp_read_file(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_read_file(handle, &remote_path)
-    })
-    .await
+    state.sftp_read_file(&sftp_session_id, remote_path).await
 }
 
 #[tauri::command]
@@ -531,17 +366,14 @@ async fn sftp_read_file_base64(
     sftp_session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    sftp_blocking(&state, &sftp_session_id, move |handle| {
-        sftp::sftp_read_file_base64(handle, &remote_path)
-    })
-    .await
+    state
+        .sftp_read_file_base64(&sftp_session_id, remote_path)
+        .await
 }
 
 #[tauri::command]
 fn sftp_disconnect(state: State<'_, AppState>, sftp_session_id: String) -> Result<(), String> {
-    let mut sftp_sessions = state.sftp_sessions.lock().map_err(|e| e.to_string())?;
-    sftp_sessions.remove(&sftp_session_id);
-    Ok(())
+    state.sftp_disconnect(&sftp_session_id)
 }
 
 #[tauri::command]
@@ -702,7 +534,7 @@ fn get_port_forward_status(state: State<'_, AppState>, rule_id: i64) -> Result<b
 
 #[tauri::command]
 fn write_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+    sftp_ops::write_file(&path, &content)
 }
 
 #[tauri::command]
@@ -711,17 +543,7 @@ async fn docker_ps(
     host_id: i64,
     all: bool,
 ) -> Result<Vec<docker::Container>, String> {
-    cached_per_host(
-        &state,
-        &state.docker_cache,
-        &state.docker_ps_fetching,
-        host_id,
-        5,
-        15,
-        false,
-        move |session| docker::docker_ps(session, all),
-    )
-    .await
+    state.docker_ps(host_id, all).await
 }
 
 #[tauri::command]
@@ -730,11 +552,7 @@ async fn docker_start(
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    invalidate_docker_cache(&state, host_id)?;
-    with_exec_session(&state, host_id, 60, move |session| {
-        docker::docker_start(session, &container_id)
-    })
-    .await
+    state.docker_start(host_id, container_id).await
 }
 
 #[tauri::command]
@@ -743,11 +561,7 @@ async fn docker_stop(
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    invalidate_docker_cache(&state, host_id)?;
-    with_exec_session(&state, host_id, 60, move |session| {
-        docker::docker_stop(session, &container_id)
-    })
-    .await
+    state.docker_stop(host_id, container_id).await
 }
 
 #[tauri::command]
@@ -756,11 +570,7 @@ async fn docker_restart(
     host_id: i64,
     container_id: String,
 ) -> Result<(), String> {
-    invalidate_docker_cache(&state, host_id)?;
-    with_exec_session(&state, host_id, 60, move |session| {
-        docker::docker_restart(session, &container_id)
-    })
-    .await
+    state.docker_restart(host_id, container_id).await
 }
 
 #[tauri::command]
@@ -769,19 +579,12 @@ async fn docker_inspect_shell(
     host_id: i64,
     container_id: String,
 ) -> Result<String, String> {
-    with_exec_session(&state, host_id, 60, move |session| {
-        docker::docker_inspect_shell(session, &container_id)
-    })
-    .await
+    state.docker_inspect_shell(host_id, container_id).await
 }
 
 #[tauri::command]
 async fn docker_install(state: State<'_, AppState>, host_id: i64) -> Result<String, String> {
-    invalidate_docker_cache(&state, host_id)?;
-    with_exec_session(&state, host_id, 60, move |session| {
-        docker::install_docker(session)
-    })
-    .await
+    state.docker_install(host_id).await
 }
 
 #[tauri::command]
@@ -790,17 +593,7 @@ async fn run_security_audit(
     host_id: i64,
     force: bool,
 ) -> Result<security::SecurityReport, String> {
-    cached_per_host(
-        &state,
-        &state.security_report_cache,
-        &state.security_report_fetching,
-        host_id,
-        30,
-        300,
-        force,
-        security::run_security_audit,
-    )
-    .await
+    state.run_security_audit(host_id, force).await
 }
 
 #[tauri::command]
@@ -808,10 +601,7 @@ async fn get_system_stats(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<serde_json::Value, String> {
-    with_exec_session(&state, host_id, 60, move |session| {
-        system::get_system_stats(session)
-    })
-    .await
+    state.get_system_stats(host_id).await
 }
 
 #[tauri::command]
@@ -819,10 +609,7 @@ async fn get_system_panel(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<system::SystemPanel, String> {
-    with_exec_session(&state, host_id, 60, move |session| {
-        system::get_system_panel(session)
-    })
-    .await
+    state.get_system_panel(host_id).await
 }
 
 #[tauri::command]

@@ -1538,6 +1538,23 @@ impl Core {
     }
 }
 
+/// Shared by the tests of the modules that add `impl Core` blocks.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    /// A core over one in-memory database. One connection, because each
+    /// in-memory connection is its own database.
+    pub fn memory_core() -> Core {
+        let pool = Pool::builder()
+            .max_size(1)
+            .build(SqliteConnectionManager::memory())
+            .unwrap();
+        prepare_database(&pool.get().unwrap()).unwrap();
+        Core::new(pool)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

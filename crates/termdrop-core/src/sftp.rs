@@ -414,3 +414,45 @@ pub fn sftp_write_file(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::EventLog;
+    use std::sync::Arc;
+
+    #[test]
+    fn copy_reports_progress_as_core_events_ending_with_the_total() {
+        let log = Arc::new(EventLog::default());
+        let events: Events = log.clone();
+        let data = vec![7u8; SFTP_BUF_SIZE * 3 + 10];
+        let mut out = Vec::new();
+        copy_with_progress(
+            &mut data.as_slice(),
+            &mut out,
+            data.len() as u64,
+            Some((&events, "sid", "/remote/f")),
+        )
+        .unwrap();
+        assert_eq!(out, data);
+        let got = log.take();
+        assert!(!got.is_empty());
+        assert_eq!(
+            got.last().unwrap(),
+            &CoreEvent::SftpProgress {
+                sftp_session_id: "sid".into(),
+                file: "/remote/f".into(),
+                bytes_transferred: data.len() as u64,
+                total_bytes: data.len() as u64,
+            }
+        );
+    }
+
+    #[test]
+    fn copy_without_progress_emits_nothing() {
+        let data = b"abc".to_vec();
+        let mut out = Vec::new();
+        copy_with_progress(&mut data.as_slice(), &mut out, 3, None).unwrap();
+        assert_eq!(out, data);
+    }
+}
