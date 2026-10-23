@@ -344,7 +344,7 @@ impl SftpPanel {
 
     fn on_upload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let panel = cx.entity().downgrade();
-        pick_file(window, cx, "Upload", None, move |path, window, cx| {
+        pick_file(window, cx, "Upload", &[], move |path, window, cx| {
             let _ = panel.update(cx, |this, cx| {
                 this.upload_paths(vec![path], false, window, cx)
             });

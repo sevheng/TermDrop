@@ -3,6 +3,8 @@
 //! `src/utils/mongoSelection.js` and the job planning in
 //! `useMongoBackup.js`, with its wording.
 
+pub use crate::datastores::common::CheckState;
+
 /// One database in the tree. Collections load lazily, on first expand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbEntry {
@@ -24,14 +26,6 @@ impl DbEntry {
     }
 }
 
-/// A database checkbox's state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DbCheck {
-    None,
-    Some,
-    All,
-}
-
 /// Collections ticked for the next backup, by database, in the order they
 /// were ticked (the Vue `Map<db, Set<collection>>`). A database with
 /// nothing ticked is not kept.
@@ -49,14 +43,14 @@ impl Selection {
         self.dbs.iter().find(|(d, _)| d == db).map(|(_, c)| c)
     }
 
-    pub fn db_state(&self, db: &DbEntry) -> DbCheck {
+    pub fn db_state(&self, db: &DbEntry) -> CheckState {
         match self.get(&db.name) {
-            None => DbCheck::None,
-            Some(set) if set.is_empty() => DbCheck::None,
+            None => CheckState::None,
+            Some(set) if set.is_empty() => CheckState::None,
             Some(set) if !db.collections.is_empty() && set.len() == db.collections.len() => {
-                DbCheck::All
+                CheckState::All
             }
-            Some(_) => DbCheck::Some,
+            Some(_) => CheckState::Some,
         }
     }
 
@@ -165,6 +159,17 @@ pub struct Job {
     pub title: String,
     /// Restores only: `--drop` (set from the confirmation).
     pub drop_first: bool,
+}
+
+impl Job {
+    /// What the finished-run notice names this job by: its database, or
+    /// "archive" for an archive restore (Vue's `done.push(...)`).
+    pub fn done_name(&self) -> String {
+        match &self.kind {
+            JobKind::Dump { db, .. } | JobKind::Restore { db, .. } => db.clone(),
+            JobKind::RestoreArchive { .. } => "archive".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,12 +327,12 @@ mod tests {
     fn ticking_follows_the_vue_selection_map() {
         let mut s = Selection::default();
         let shop = db("shop", &["a", "b"]);
-        assert_eq!(s.db_state(&shop), DbCheck::None);
+        assert_eq!(s.db_state(&shop), CheckState::None);
         s.toggle("shop", "a");
         assert!(s.is_selected("shop", "a"));
-        assert_eq!(s.db_state(&shop), DbCheck::Some);
+        assert_eq!(s.db_state(&shop), CheckState::Some);
         s.toggle("shop", "b");
-        assert_eq!(s.db_state(&shop), DbCheck::All);
+        assert_eq!(s.db_state(&shop), CheckState::All);
         s.toggle("logs", "x");
         assert_eq!(s.count(), 3);
         assert_eq!(s.dbs(), ["shop", "logs"]);
@@ -361,7 +366,7 @@ mod tests {
     fn an_unloaded_database_is_never_all_ticked() {
         let mut s = Selection::default();
         s.toggle("d", "x");
-        assert_eq!(s.db_state(&DbEntry::new("d")), DbCheck::Some);
+        assert_eq!(s.db_state(&DbEntry::new("d")), CheckState::Some);
     }
 
     #[test]

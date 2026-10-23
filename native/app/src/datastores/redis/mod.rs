@@ -53,6 +53,7 @@ use crate::ui::choice::Choice;
 use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
+use crate::ui::tag::{Tag, TagTone};
 use crate::ui::theme::{Palette, mono_font, palette};
 use crate::ui::toast::ToastKind;
 
@@ -649,7 +650,7 @@ impl RedisTab {
             cx,
             "Back up Redis database",
             &name,
-            Some(BACKUP_FILTER),
+            &[BACKUP_FILTER],
             move |path, window, cx| {
                 let _ = this.update(cx, |this, cx| this.start_backup(path, window, cx));
             },
@@ -728,6 +729,12 @@ impl RedisTab {
             Ok(summary) => summarize_op(summary, verb),
             Err(e) => op_error_message(e, noun),
         };
+        // Only a success is announced on the desktop; a failure or a cancel
+        // has its toast (`useRedisBackup.js`'s `finish`).
+        if kind == ToastKind::Success {
+            self.ctx
+                .notify_if_unfocused(window, cx, format!("{noun} complete"), message.clone());
+        }
         self.ctx.toast(window, cx, message, kind);
         cx.notify();
     }
@@ -741,7 +748,7 @@ impl RedisTab {
             window,
             cx,
             "Restore a Redis backup",
-            Some(BACKUP_FILTER),
+            &[BACKUP_FILTER],
             move |path, window, cx| {
                 let _ = this.update(cx, |this, cx| this.read_backup(path, window, cx));
             },
@@ -847,7 +854,7 @@ impl RedisTab {
 
     // ---- rendering: header, banners ------------------------------------
 
-    fn render_header(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.busy();
         let cluster = self.is_cluster();
         let connected = self.info.is_some();
@@ -862,23 +869,16 @@ impl RedisTab {
             );
         if self.info.as_ref().is_some_and(|i| i.tunnelled) {
             let tip = format!("Tunnelled through {}", self.tunnel_name);
-            header = header.badge(badge(
-                "redis-via",
-                format!("via {}", self.tunnel_name),
-                tip,
-                p.accent,
-                p.active,
-            ));
+            header = header.badge(
+                Tag::new("redis-via", format!("via {}", self.tunnel_name))
+                    .tone(TagTone::Accent)
+                    .tooltip(tip),
+            );
         }
         if cluster {
-            header = header.badge(badge(
-                "redis-cluster",
-                "cluster".into(),
+            header = header.badge(Tag::new("redis-cluster", "cluster").tone(TagTone::Warn).tooltip(
                 "SCAN sees only this node, so the key list is one node's keyspace and backup \
-                 is disabled"
-                    .into(),
-                p.warn,
-                p.warn_bg,
+                 is disabled",
             ));
         }
         let mut backup = Button::new("redis-backup")
@@ -1329,12 +1329,11 @@ impl RedisTab {
             .border_color(p.line);
         let Some(key) = &self.active_key else {
             return pane
-                .child(notice(
-                    "redis-value-none",
-                    IconName::FileText,
-                    "Select a key to view it",
-                    None,
-                ))
+                .child(
+                    EmptyState::notice("redis-value-none", "Select a key to view it")
+                        .icon(Icon::new(IconName::FileText))
+                        .compact(),
+                )
                 .into_any_element();
         };
         let mono = mono_font(cx);
@@ -1408,15 +1407,16 @@ impl RedisTab {
                 .compact()
                 .into_any_element()
             } else if !is_viewable_kind(&page.kind) {
-                notice(
+                EmptyState::notice(
                     "redis-value-unviewable",
-                    IconName::CircleAlert,
                     "TermDrop cannot display this type",
-                    Some(format!(
-                        "{} \u{2014} usually a Redis module type",
-                        page.kind
-                    )),
                 )
+                .icon(Icon::new(IconName::CircleAlert))
+                .hint(format!(
+                    "{} \u{2014} usually a Redis module type",
+                    page.kind
+                ))
+                .compact()
                 .into_any_element()
             } else {
                 self.render_entries(page, p, mono, cx)
@@ -1606,7 +1606,7 @@ impl Render for RedisTab {
         v_flex()
             .size_full()
             .bg(p.canvas)
-            .child(self.render_header(&p, cx))
+            .child(self.render_header(cx))
             .children(progress)
             .when_some(self.connect_error.clone(), |col, error| {
                 col.child(self.render_connect_error(&error, &p, cx))
@@ -1620,44 +1620,6 @@ fn empty_tree() -> KeyTree {
         groups: Vec::new(),
         scanned: 0,
         truncated: false,
-    }
-}
-
-/// A small tag in the header: "via bastion", "cluster", with a tooltip.
-fn badge(
-    id: &'static str,
-    label: String,
-    tip: String,
-    tone: gpui_kit::Hsla,
-    fill: gpui_kit::Hsla,
-) -> impl IntoElement {
-    text_2xs(div())
-        .id(id)
-        .flex_none()
-        .px(px(6.))
-        .py(px(2.))
-        .rounded_sm()
-        .bg(fill)
-        .text_color(tone)
-        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-        .child(label)
-}
-
-/// A state with nothing to do about it: no key chosen, a type with no
-/// viewer. `EmptyState` asks every state for its way out; for these the
-/// only one is the hint.
-fn notice(
-    id: &'static str,
-    icon: IconName,
-    title: &'static str,
-    hint: Option<String>,
-) -> EmptyState {
-    let state = EmptyState::steps(id, title, div())
-        .icon(Icon::new(icon))
-        .compact();
-    match hint {
-        Some(hint) => state.hint(hint),
-        None => state,
     }
 }
 

@@ -6,6 +6,8 @@ use termdrop_gpui::core_backend::{self, CoreStore};
 use termdrop_gpui::tabs::CoreContent;
 
 fn main() {
+    // Before anything spawns a thread: it sets an environment variable.
+    termdrop_gpui::ui::file_dialog::align_gtk_backend();
     init_logging();
     // `--demo` runs on fictional hosts, in-memory settings and placeholder
     // tabs: nothing reads or writes the real database, keyring or network.

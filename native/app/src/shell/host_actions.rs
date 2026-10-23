@@ -118,7 +118,7 @@ pub fn export_hosts(window: &mut Window, cx: &mut App, model: &Entity<AppModel>)
         cx,
         "Export hosts",
         &export_file_name(now),
-        Some(JSON),
+        &[JSON],
         move |path, window, cx| {
             if let Err(e) = std::fs::write(&path, json) {
                 toast(window, cx, format!("Export failed: {e}"), ToastKind::Error);
@@ -133,7 +133,7 @@ pub fn import_json(window: &mut Window, cx: &mut App, model: Entity<AppModel>) {
         window,
         cx,
         "Import hosts",
-        Some(JSON),
+        &[JSON],
         move |path, window, cx| {
             let result = (|| -> Result<_, String> {
                 let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();

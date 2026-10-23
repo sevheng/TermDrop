@@ -12,8 +12,8 @@
 //! talks to the rest of the app through [`ServiceTabContext`].
 
 pub mod common;
+mod json;
 pub mod mongo;
-mod placeholder;
 pub mod redis;
 
 use std::future::Future;
@@ -21,7 +21,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{AnyView, App, AsyncWindowContext, Context, Entity, Task, WeakEntity, Window};
+use gpui_kit::{
+    AnyView, App, AsyncWindowContext, Context, Entity, SharedString, Task, WeakEntity, Window,
+};
 use termdrop_core::{Core, CoreEvent, Events};
 
 use self::common::{MissingSecret, missing_secret};
@@ -33,6 +35,7 @@ use crate::core_backend::Services;
 use crate::panels::{EventKey, PanelLinks, PanelSubscription, subscribe_key};
 use crate::ui::dialogs::{PromptOptions, prompt};
 use crate::ui::file_dialog::{self, Filter};
+use crate::ui::notify::notify_if_unfocused;
 use crate::ui::toast::{ToastKind, toast};
 
 /// Which datastore a tab browses.
@@ -491,16 +494,31 @@ impl ServiceTabContext {
         toast(window, cx, message.into(), kind);
     }
 
-    /// Native "open file" dialog (a backup to restore).
+    /// A desktop notification, only when the window is not focused (the
+    /// toast covers the case where it is). For a finished backup or restore:
+    /// "Backup complete" / "Restore complete". Never fails.
+    pub fn notify_if_unfocused(
+        &self,
+        window: &Window,
+        cx: &App,
+        title: impl Into<SharedString>,
+        body: impl Into<SharedString>,
+    ) {
+        notify_if_unfocused(window, cx, title, body);
+    }
+
+    /// Native "open file" dialog (a backup to restore). `filters` in order,
+    /// the first selected; end with `file_dialog::ALL_FILES` to offer
+    /// everything.
     pub fn pick_file(
         &self,
         window: &Window,
         cx: &App,
         title: &str,
-        filter: Option<Filter<'_>>,
+        filters: &[Filter<'_>],
         on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static,
     ) {
-        file_dialog::pick_file(window, cx, title, filter, on_pick);
+        file_dialog::pick_file(window, cx, title, filters, on_pick);
     }
 
     /// Native "save file" dialog (a backup's destination).
@@ -510,10 +528,10 @@ impl ServiceTabContext {
         cx: &App,
         title: &str,
         file_name: &str,
-        filter: Option<Filter<'_>>,
+        filters: &[Filter<'_>],
         on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static,
     ) {
-        file_dialog::save_file(window, cx, title, file_name, filter, on_pick);
+        file_dialog::save_file(window, cx, title, file_name, filters, on_pick);
     }
 
     /// Native "choose folder" dialog (a MongoDB dump's folder).

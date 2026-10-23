@@ -37,12 +37,13 @@ use termdrop_core::mongodb::scan_restore_folder;
 use self::documents::DocumentsView;
 use self::restore::{RestoreRequest, confirm_restore};
 use self::selection::{
-    ARCHIVE_ONE_DB, DbCheck, DbEntry, Job, JobKind, Selection, archive_file_name,
+    ARCHIVE_ONE_DB, CheckState, DbEntry, Job, JobKind, Selection, archive_file_name,
     archive_restore_job, backup_jobs, backup_tooltip, folder_restore_jobs, is_cancel,
 };
-use super::common::{OpProgress, op_progress_row, text_2xs};
+use super::common::{OpProgress, completed_summary, op_progress_row, text_2xs, tri_check};
 use super::{OpSubscription, ServiceTabContext};
 use crate::ui::empty_state::EmptyState;
+use crate::ui::file_dialog::ALL_FILES;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
 use crate::ui::theme::{Palette, palette};
@@ -65,6 +66,9 @@ struct Run {
     aborting: bool,
     /// Reload the tree when the run ends (after a restore).
     refresh_after: bool,
+    /// What each job that succeeded ran on, for the one desktop notice at
+    /// the end (`notifyCompleted`).
+    done: Vec<String>,
     _sub: Option<OpSubscription>,
     _task: Option<Task<()>>,
 }
@@ -234,7 +238,7 @@ impl MongoTab {
         let Some(entry) = self.databases.iter().find(|d| d.name == db).cloned() else {
             return;
         };
-        if self.selection.db_state(&entry) == DbCheck::All {
+        if self.selection.db_state(&entry) == CheckState::All {
             self.selection.remove_db(db);
         } else if entry.loaded {
             self.selection.select_all(&entry);
@@ -308,7 +312,11 @@ impl MongoTab {
             cx,
             "Save backup archive",
             &archive_file_name(&dbs),
-            Some(("Gzip archive", &["gz"])),
+            &[
+                ("Gzip archive", &["gz"]),
+                ("BSON archive", &["archive", "bson"]),
+                ALL_FILES,
+            ],
             move |file, window, cx| {
                 let _ = view.update(cx, |this, cx| {
                     let entries = this.selection.entries();
@@ -374,7 +382,7 @@ impl MongoTab {
             window,
             cx,
             "Select backup archive",
-            Some(("MongoDB archives", &["gz", "archive", "bson"])),
+            &[("MongoDB archives", &["gz", "archive", "bson"]), ALL_FILES],
             move |file, window, cx| {
                 let _ = view.update(cx, |this, cx| {
                     this.confirm(file.to_string_lossy().into(), true, Vec::new(), window, cx)
@@ -450,6 +458,7 @@ impl MongoTab {
             progress: OpProgress::new("", ""),
             aborting: false,
             refresh_after,
+            done: Vec::new(),
             _sub: None,
             _task: None,
         });
@@ -534,6 +543,9 @@ impl MongoTab {
                     Ok(()) => {
                         this.ctx
                             .toast(window, cx, job.success.clone(), ToastKind::Success);
+                        if let Some(run) = this.run.as_mut() {
+                            run.done.push(job.done_name());
+                        }
                     }
                     Err(e) if is_cancel(&e) => {
                         this.ctx
@@ -559,7 +571,19 @@ impl MongoTab {
     }
 
     fn finish_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let refresh = self.run.take().is_some_and(|r| r.refresh_after);
+        let Some(run) = self.run.take() else {
+            return;
+        };
+        let refresh = run.refresh_after;
+        // One notice for the whole run, not one per database.
+        let (title, verb) = if refresh {
+            ("Restore complete", "Restored")
+        } else {
+            ("Backup complete", "Backed up")
+        };
+        if let Some(body) = completed_summary(verb, &run.done) {
+            self.ctx.notify_if_unfocused(window, cx, title, body);
+        }
         cx.notify();
         // Show what was just restored without reopening the tab.
         if refresh {
@@ -764,9 +788,13 @@ impl MongoTab {
                 .flex_none()
                 .text_color(p.ink_2),
             )
-            .child(db_check(
-                &name,
+            .child(tri_check(
+                SharedString::from(format!("mongo-dbcheck-{name}")),
                 state,
+                match state {
+                    CheckState::All => "Deselect every collection",
+                    _ => "Select every collection",
+                },
                 p,
                 cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
@@ -893,45 +921,6 @@ impl MongoTab {
             )
             .into_any_element()
     }
-}
-
-/// A database's three-state box: none, some (a dash) or all. GPUI Kit's
-/// `Checkbox` has no indeterminate state, so "some" is drawn here.
-fn db_check(
-    name: &str,
-    state: DbCheck,
-    p: &Palette,
-    on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let label = match state {
-        DbCheck::All => "Deselect every collection",
-        _ => "Select every collection",
-    };
-    let filled = state != DbCheck::None;
-    div()
-        .id(SharedString::from(format!("mongo-dbcheck-{name}")))
-        .flex_none()
-        .size(px(14.))
-        .rounded_sm()
-        .border_1()
-        .border_color(if filled { p.accent_solid } else { p.line })
-        .when(filled, |d| d.bg(p.accent_solid))
-        .flex()
-        .items_center()
-        .justify_center()
-        .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-        .when(filled, |d| {
-            d.child(
-                Icon::new(if state == DbCheck::All {
-                    IconName::Check
-                } else {
-                    IconName::Minus
-                })
-                .size(px(10.))
-                .text_color(gpui_kit::white()),
-            )
-        })
-        .on_click(on_click)
 }
 
 impl Render for MongoTab {

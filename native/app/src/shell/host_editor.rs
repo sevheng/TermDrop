@@ -565,7 +565,7 @@ impl HostEditor {
 
     fn browse_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        file_dialog::pick_file(window, cx, "Private key", None, move |path, window, cx| {
+        file_dialog::pick_file(window, cx, "Private key", &[], move |path, window, cx| {
             let _ = this.update(cx, |this, cx| {
                 let value = path.display().to_string();
                 this.set_input(In::KeyPath, &value, window, cx);

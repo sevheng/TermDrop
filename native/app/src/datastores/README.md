@@ -18,22 +18,21 @@ one per host and kind, as `openServiceTab` / `closeServiceTab` in
   kind as well as host id, `datastores::release_on_close`. Then the view is
   dropped. Never call either disconnect from a tab.
 
-Each tab is one folder with one entry point, already registered:
+Each tab is one folder with one entry point:
 
 ```rust
 // datastores/mongo/mod.rs, datastores/redis/mod.rs
 pub fn build(ctx: ServiceTabContext, window: &mut Window, cx: &mut App) -> AnyView
 ```
 
-Today both return `placeholder::build` (an empty state naming the host and
-its masked address). Replace that call with your view.
+Both are built: `mongo/` (tree, documents, indexes, backup and restore)
+and `redis/` (key tree, key list, value view, backup and restore). The
+placeholder they started from is gone.
 
-**Ownership, so two agents can work at once:** the MongoDB agent touches only
-`datastores/mongo/**`, the Redis agent only `datastores/redis/**`. Everything
-else here (`mod.rs`, `common.rs`, `placeholder.rs`, this file) and
-`panels/`, `ui/`, `tabs/`, `app/` are shared. If something shared is
-missing, write it in your own folder first and say so in your report, rather
-than both editing `common.rs`; the next foundation pass hoists it.
+**Ownership:** each tab's own code stays in its folder. What both use, or
+what a third tab would want, goes in `common.rs` (data shapes and drawing
+helpers) or `crate::ui` (components with no datastore in them): write it
+there rather than a private copy, and say so in the report.
 
 ## `ServiceTabContext`
 
@@ -83,10 +82,11 @@ impl ServiceTabContext {
     pub fn setting(&self, cx: &App, key: &str) -> Option<String>;
     pub fn set_setting(&self, key: &str, value: &str, cx: &mut App);
     pub fn toast(&self, window: &mut Window, cx: &mut App, message: impl Into<String>, kind: ToastKind);
-    pub fn pick_file(&self, window: &Window, cx: &App, title: &str, filter: Option<Filter>,
+    pub fn notify_if_unfocused(&self, window: &Window, cx: &App, title, body); // desktop notice
+    pub fn pick_file(&self, window: &Window, cx: &App, title: &str, filters: &[Filter],
         on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static);
     pub fn save_file(&self, window: &Window, cx: &App, title: &str, file_name: &str,
-        filter: Option<Filter>, on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static);
+        filters: &[Filter], on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static);
     pub fn pick_folder(&self, window: &Window, cx: &App, title: &str,
         on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static);
 }
@@ -96,8 +96,18 @@ impl ServiceTabContext {
 arrive on the UI thread in the order the core emitted them, only for your
 kind (a Redis op never sees MongoDB events), and a subscription whose view
 was released removes itself. Toast kinds are `ui::toast::ToastKind`
-(`Info`, `Success`, `Warning`, `Error`; errors stay until dismissed); a
-`Filter` is `("Redis backup", &["tdredis"])`.
+(`Info`, `Success`, `Warning`, `Error`; errors stay until dismissed). A
+`Filter` is `("Redis backup", &["tdredis"])`; pass them in the Vue order,
+the first being the one the dialog starts on, and end with
+`ui::file_dialog::ALL_FILES` where Vue offered "All files" (rfd makes it
+`*.*`, as the Tauri dialog plugin does).
+
+`notify_if_unfocused` is Vue's `notifyIfUnfocused`: a desktop notification
+only when the window is not focused (the toast covers the case where it
+is), posted through GPUI's system notifications and never failing — WSLg
+has no notification daemon and GPUI only logs that. Both tabs post one per
+finished run ("Backup complete" / "Restore complete"); MongoDB's body comes
+from `common::completed_summary`.
 
 ### Running calls
 
@@ -155,8 +165,9 @@ and never ask for one outside this path.
 5. Draw `common::op_progress_row(id, &progress, &palette, on_cancel)`;
    `on_cancel` calls `progress.cancelling()` and `ctx.cancel_op(&op)`.
 6. Closing the tab does not stop a running operation by itself (nor did
-   the Vue tab). Cancel it in the view's release hook
-   (`cx.on_release(|this, _| this.ctx.cancel_op(&op))`) if it should stop.
+   the Vue tab). Both tabs cancel it in the view's release hook
+   (`cx.on_release(|this, _| this.ctx.cancel_op(&op))`), so a result never
+   arrives with nothing left to show it.
 
 Pick paths with `ctx.pick_folder` / `pick_file` / `save_file`; read local
 files (`scan_restore_folder`, `redis::read_backup_header`) with
@@ -263,14 +274,20 @@ the next call reconnects with the new address; listen for
 - `datastores::common`: `format_count` ("1,234"), `count_noun`,
   `format_bytes`, `missing_secret`, `OpProgress` / `OpState` +
   `op_progress_row`, `json_lines` (pretty-print, field order kept, capped) +
-  `json_view` + `json_colour`, and the list styles from `panels::common`
-  (`list_head`, `list_row`, `list_cell`, `row_separator`, `num`,
-  `text_2xs`).
+  `json_view` + `json_colour`, `Json` (a parsed value that keeps field order
+  without serde_json's `preserve_order`, printed as `JSON.stringify` would),
+  `CheckState` + `tri_check` (a none / some / all box; GPUI Kit's `Checkbox`
+  has no indeterminate state), `completed_summary`, and the list styles from
+  `panels::common` (`list_head`, `list_row`, `list_cell`, `row_separator`,
+  `num`, `text_2xs`).
 - Virtualised lists: GPUI's `uniform_list` (the SFTP panel's file list is
   the example), or `gpui_kit::component::{table, tree}`.
 - `crate::ui`: `EmptyState` (empty / filtered / loading / error, kept
-  distinct, each with its fix), `PanelHeader`, `IconButton` (label
-  required), `dialogs::{confirm, prompt}`, `theme::{palette, mono_font}`.
+  distinct, each with its fix; and `notice` for a pane that waits on a
+  choice made beside it, "Select a key to view it"), `PanelHeader`,
+  `tag::Tag` (a header badge that is a word, toned by token, with a
+  tooltip: "via bastion", "cluster"), `IconButton` (label required),
+  `dialogs::{confirm, prompt}`, `theme::{palette, mono_font}`.
   Colours are palette tokens only (`p.mongo` / `p.redis` are the kinds'
   accents); filled controls use `accent_solid` / `bad_solid`; text sizes are
   the named tiers.
@@ -297,3 +314,14 @@ secrets for or delete hosts below that id. Use the containers in `CLAUDE.md`
 the `redis-private` + `bastion` pair for the tunnel) if they are already up;
 never `docker compose up` (two compose files share a `bastion` service and
 clobber each other).
+
+Run a **copy** of the binary (with `mongodump` / `mongorestore` copied
+beside it), or give each agent its own `CARGO_TARGET_DIR`: two agents
+sharing one target directory overwrite each other's binary mid-run. A
+`tunnel@localhost:2222` bastion has to be trusted once from an SSH tab
+before a tunnelled Redis host can use it, as in the Tauri app.
+
+GTK dialogs follow GPUI onto X11 when `WAYLAND_DISPLAY` is unset
+(`ui::file_dialog::align_gtk_backend`). Before that, a run with
+`WAYLAND_DISPLAY` unset opened every file dialog as a WSLg Wayland window
+that `xdotool` and `xwininfo` cannot see, which looked like a dead button.

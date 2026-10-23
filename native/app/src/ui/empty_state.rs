@@ -7,7 +7,9 @@
 //! that fixes it (add one, clear the search, retry), or for a fix that only
 //! the user can make outside the app, [`EmptyState::steps`] with the
 //! instructions, because an empty state that offers nothing to do is a dead
-//! end.
+//! end. The one exception is [`EmptyState::notice`], for a pane waiting on a
+//! choice made beside it ("Select a key to view it"): there the way out is
+//! already on screen, beside it.
 
 use std::rc::Rc;
 
@@ -35,6 +37,9 @@ pub enum EmptyKind {
     Loading,
     /// Finding out failed. Offers the retry, and says why in the hint.
     Error,
+    /// Nothing to show until the user picks something next to it, or a
+    /// thing that cannot be shown at all. Offers nothing; the hint says why.
+    Notice,
 }
 
 type OnAction = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -122,6 +127,15 @@ impl EmptyState {
         s
     }
 
+    /// A pane that waits on a choice made beside it on screen ("Select a
+    /// key to view it"), or that has nothing it could show ("TermDrop
+    /// cannot display this type", with the reason as the
+    /// [`hint`](Self::hint)). There is no button because the fix is not in
+    /// this pane. Not for a list that is empty: that is [`Self::empty`].
+    pub fn notice(id: impl Into<SharedString>, title: impl Into<SharedString>) -> Self {
+        Self::new(EmptyKind::Notice, id, title)
+    }
+
     /// More content under the hint and above the action.
     pub fn child(mut self, child: impl IntoElement) -> Self {
         self.content.push(child.into_any_element());
@@ -163,11 +177,12 @@ impl RenderOnce for EmptyState {
         // differently even before the words are read.
         let media = match self.kind {
             EmptyKind::Loading => EmptyMedia::new().child(Spinner::new().color(p.ink_3)),
-            EmptyKind::Empty | EmptyKind::Filtered | EmptyKind::Error => {
+            EmptyKind::Empty | EmptyKind::Filtered | EmptyKind::Error | EmptyKind::Notice => {
                 let icon = self.icon.unwrap_or_else(|| {
                     Icon::new(match self.kind {
                         EmptyKind::Filtered => IconName::SearchX,
                         EmptyKind::Error => IconName::CircleAlert,
+                        EmptyKind::Notice => IconName::Info,
                         _ => IconName::Inbox,
                     })
                 });

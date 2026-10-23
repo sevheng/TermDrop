@@ -9,7 +9,12 @@
 //! - Backup/restore progress: [`OpProgress`] folded from the core's events,
 //!   and [`op_progress_row`] to draw it with its Cancel button.
 //! - A JSON viewer that keeps field order: [`json_lines`] (pure) and
-//!   [`json_view`].
+//!   [`json_view`]; and [`Json`], a parsed value that keeps it too.
+//! - A three-state checkbox (none / some / all) for a group whose members
+//!   are ticked one by one: [`CheckState`] and [`tri_check`]. GPUI Kit's
+//!   `Checkbox` has no indeterminate state.
+//! - The desktop notice after a run: [`completed_summary`], posted with
+//!   `ServiceTabContext::notify_if_unfocused`.
 //!
 //! Lists: GPUI's `uniform_list` is the virtualised list (the SFTP panel's
 //! file list uses it); `gpui_kit::component::{table, tree}` are there too. No
@@ -17,19 +22,83 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::progress::Progress;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::{
-    App, ElementId, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled, Window,
-    div, px,
+    App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use termdrop_core::CoreEvent;
 
 use super::DatastoreKind;
+pub use super::json::{Json, js_number};
 pub use crate::panels::common::{
     format_bytes, list_cell, list_cell_muted, list_head, list_row, num, row_separator, text_2xs,
 };
 use crate::ui::icon_button::IconButton;
 use crate::ui::theme::Palette;
+
+// ---- a group's checkbox ---------------------------------------------------
+
+/// How many of a group's members are ticked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckState {
+    None,
+    /// Some but not all: drawn as a dash.
+    Some,
+    All,
+}
+
+/// A 14px three-state box: empty, a dash (some) or a tick (all). `tip` says
+/// what a click does; a click on "some" is the caller's to define (the
+/// MongoDB tree ticks the rest, as Vue's indeterminate checkbox did).
+pub fn tri_check(
+    id: impl Into<ElementId>,
+    state: CheckState,
+    tip: impl Into<SharedString>,
+    p: &Palette,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let tip: SharedString = tip.into();
+    let filled = state != CheckState::None;
+    div()
+        .id(id)
+        .flex_none()
+        .size(px(14.))
+        .rounded_sm()
+        .border_1()
+        .border_color(if filled { p.accent_solid } else { p.line })
+        .when(filled, |d| d.bg(p.accent_solid))
+        .flex()
+        .items_center()
+        .justify_center()
+        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        .when(filled, |d| {
+            d.child(
+                Icon::new(if state == CheckState::All {
+                    IconName::Check
+                } else {
+                    IconName::Minus
+                })
+                .size(px(10.))
+                .text_color(gpui_kit::white()),
+            )
+        })
+        .on_click(on_click)
+}
+
+// ---- notifications --------------------------------------------------------
+
+/// The body of the one desktop notice for a finished multi-database run
+/// (`useMongoBackup.js`'s `notifyCompleted`): `None` when nothing succeeded,
+/// since a run that failed or was cancelled has already said so.
+pub fn completed_summary(verb: &str, done: &[String]) -> Option<String> {
+    match done {
+        [] => None,
+        [one] => Some(format!("{verb} {one}")),
+        many => Some(format!("{verb} {} databases", many.len())),
+    }
+}
 
 // ---- numbers -------------------------------------------------------------
 
@@ -542,6 +611,19 @@ pub fn json_view(lines: &[JsonLine], p: &Palette, mono: SharedString) -> impl In
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_finished_run_is_summarised_once() {
+        assert_eq!(completed_summary("Backed up", &[]), None);
+        assert_eq!(
+            completed_summary("Backed up", &["shopdb".into()]).as_deref(),
+            Some("Backed up shopdb")
+        );
+        assert_eq!(
+            completed_summary("Restored", &["a".into(), "b".into()]).as_deref(),
+            Some("Restored 2 databases")
+        );
+    }
     use termdrop_core::events::{MongoProgress, RedisProgress};
 
     #[test]
