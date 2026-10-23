@@ -7,7 +7,9 @@ members = ["app", "terminal"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+# The native preview's own version line, apart from the Tauri app's
+# (src-tauri/Cargo.toml). Released by tagging native-v<this>; see RELEASING.md.
+version = "0.6.0-preview.1"
 license = "MIT"
 
 [workspace.dependencies]

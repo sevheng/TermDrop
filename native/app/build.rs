@@ -1,3 +1,6 @@
+//! Two jobs: the Windows icon and version info (`embed_windows_resources`),
+//! and the MongoDB tools (`copy_mongo_tools`, below).
+//!
 //! Copies the bundled `mongodump` / `mongorestore` next to the native binary,
 //! as `src-tauri/build.rs` does for the Tauri one, so the MongoDB tab's backup
 //! and restore find them through `termdrop_core::mongodb`'s
@@ -13,6 +16,32 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
+    embed_windows_resources();
+    copy_mongo_tools();
+}
+
+/// On Windows, the executable's icon and version details (Explorer, the
+/// taskbar, Task Manager, the Start menu shortcut the installer makes all show
+/// them). The icon is the Tauri app's generated `icon.ico`. A failure is a
+/// warning: the app still builds, with the generic icon.
+fn embed_windows_resources() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let icon = "../../src-tauri/icons/icon.ico";
+    println!("cargo:rerun-if-changed={icon}");
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(icon)
+        .set("ProductName", "TermDrop Native Preview")
+        .set("FileDescription", "TermDrop Native Preview")
+        .set("CompanyName", "TermDrop")
+        .set("LegalCopyright", "MIT License");
+    if let Err(e) = res.compile() {
+        println!("cargo:warning=Could not embed the Windows icon and version info: {e}");
+    }
+}
+
+fn copy_mongo_tools() {
     let target = env::var("TARGET").unwrap_or_default();
     let Some((platform, ext)) = platform_dir(&target) else {
         println!(
