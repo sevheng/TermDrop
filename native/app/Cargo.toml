@@ -32,3 +32,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Docker exec PTY ids (PanelContext::new_pty_session_id). In the lock through
 # termdrop-core.
 uuid = { version = "1", features = ["v4"] }
+# Decoding SFTP image previews (sftp_read_file_base64). In the lock through termdrop-core.
+base64 = "0.22"
