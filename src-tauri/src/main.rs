@@ -18,7 +18,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use termdrop_core::state::*;
 use termdrop_core::Core as AppState;
 use termdrop_core::{db, docker, hosts, local_shells, mongodb, redis};
-use termdrop_core::{redis_backup, security, sftp, sftp_ops, ssh_config_parser, system, uri, vnc};
+use termdrop_core::{redis_backup, security, sftp, sftp_ops, ssh_config_parser, system, vnc};
 
 mod bridge;
 #[cfg(debug_assertions)]
@@ -972,45 +972,9 @@ async fn vnc_connect(
     password: Option<String>,
     ssh_password: Option<String>,
 ) -> Result<vnc::VncSessionInfo, String> {
-    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
-        .ok_or_else(|| format!("host {} not found", host_id))?;
-
-    let (address, port, tunnelled) = vnc_dial_target(&state, &host, ssh_password).await?;
-
-    let vnc_password = match password {
-        Some(p) => Some(p),
-        None => load_vnc_password(host_id)?,
-    };
-    let session_id = format!("vnc-{}", uuid::Uuid::new_v4());
-    let view_only = host.vnc_view_only != 0;
-    let username = host.vnc_username.clone();
-
-    let session_id_for_thread = session_id.clone();
-    let events = bridge::events(&window);
-    let (handle, info) = tokio::task::spawn_blocking(move || {
-        vnc::start(
-            events,
-            session_id_for_thread,
-            host_id,
-            &address,
-            port,
-            vnc_password.as_deref(),
-            username.as_deref(),
-            tunnelled,
-            view_only,
-        )
-    })
-    .await
-    .map_err(|e| format!("VNC connect task panicked: {}", e))?
-    .map_err(|e| uri::redact_uris_in_text(&e))?;
-
     state
-        .vnc_sessions
-        .lock()
-        .map_err(|_| "session registry poisoned".to_string())?
-        .insert(session_id, handle);
-
-    Ok(info)
+        .vnc_connect(bridge::events(&window), host_id, password, ssh_password)
+        .await
 }
 
 /// Hand the session the channel its frames go down.
@@ -1023,28 +987,12 @@ fn vnc_open_frame_channel(
     session_id: String,
     channel: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.attach_channel(bridge::byte_sink(channel));
-        Ok(())
-    })
+    state.vnc_open_frame_channel(&session_id, bridge::byte_sink(channel))
 }
 
 #[tauri::command]
 async fn vnc_disconnect(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let host_id = {
-        let mut sessions = state
-            .vnc_sessions
-            .lock()
-            .map_err(|_| "session registry poisoned".to_string())?;
-        sessions.remove(&session_id).map(|h| {
-            h.disconnect();
-            h.host_id
-        })
-    };
-    if let Some(host_id) = host_id {
-        release_vnc_host(&state, host_id).await;
-    }
-    Ok(())
+    state.vnc_disconnect(&session_id).await
 }
 
 /// Close every session for a host. Used when the last tab for it goes away.
@@ -1061,10 +1009,7 @@ fn vnc_pointer(
     y: u16,
     button_mask: u8,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.send_input(vnc::proto::encode_pointer_event(button_mask, x, y));
-        Ok(())
-    })
+    state.vnc_pointer(&session_id, x, y, button_mask)
 }
 
 #[tauri::command]
@@ -1074,49 +1019,27 @@ fn vnc_key(
     keysym: u32,
     down: bool,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.send_input(vnc::proto::encode_key_event(down, keysym));
-        Ok(())
-    })
+    state.vnc_key(&session_id, keysym, down)
 }
 
-/// Press every keysym in order, then release them in reverse.
-///
-/// Exists for Ctrl+Alt+Delete, which no browser will ever deliver as a keydown
-/// -- Windows intercepts it and Linux window managers grab it.
+/// Press every keysym in order, then release them in reverse (Ctrl+Alt+Delete).
 #[tauri::command]
 fn vnc_key_sequence(
     state: State<'_, AppState>,
     session_id: String,
     keysyms: Vec<u32>,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        let mut bytes = Vec::new();
-        for &keysym in &keysyms {
-            bytes.extend_from_slice(&vnc::proto::encode_key_event(true, keysym));
-        }
-        for &keysym in keysyms.iter().rev() {
-            bytes.extend_from_slice(&vnc::proto::encode_key_event(false, keysym));
-        }
-        handle.send_input(bytes);
-        Ok(())
-    })
+    state.vnc_key_sequence(&session_id, &keysyms)
 }
 
 #[tauri::command]
 fn vnc_frame_ack(state: State<'_, AppState>, session_id: String, seq: u32) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.ack(seq);
-        Ok(())
-    })
+    state.vnc_frame_ack(&session_id, seq)
 }
 
 #[tauri::command]
 fn vnc_refresh(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.refresh();
-        Ok(())
-    })
+    state.vnc_refresh(&session_id)
 }
 
 /// Stop or resume requesting frames while the panel is out of sight.
@@ -1126,10 +1049,7 @@ fn vnc_set_paused(
     session_id: String,
     paused: bool,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.set_paused(paused);
-        Ok(())
-    })
+    state.vnc_set_paused(&session_id, paused)
 }
 
 #[tauri::command]
@@ -1138,31 +1058,18 @@ fn vnc_set_view_only(
     session_id: String,
     view_only: bool,
 ) -> Result<(), String> {
-    with_vnc(&state, &session_id, |handle| {
-        handle.set_view_only(view_only);
-        Ok(())
-    })
+    state.vnc_set_view_only(&session_id, view_only)
 }
 
-/// Push the local clipboard to the remote.
-///
-/// Returns whether anything was lost: the base protocol's cut text is
-/// ISO-8859-1 and has nowhere to put a character outside it, so the caller can
-/// say so once rather than silently replacing it.
+/// Push the local clipboard to the remote; returns whether anything was lost
+/// (the base protocol's cut text is ISO-8859-1).
 #[tauri::command]
 fn vnc_send_clipboard(
     state: State<'_, AppState>,
     session_id: String,
     text: String,
 ) -> Result<bool, String> {
-    with_vnc(&state, &session_id, |handle| {
-        if handle.is_view_only() {
-            return Ok(false);
-        }
-        let (bytes, lossy) = vnc::proto::encode_client_cut_text(&text);
-        handle.send_input(bytes);
-        Ok(lossy)
-    })
+    state.vnc_send_clipboard(&session_id, &text)
 }
 
 #[tauri::command]

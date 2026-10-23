@@ -37,6 +37,7 @@ pub mod state;
 pub mod system;
 pub mod uri;
 pub mod vnc;
+pub mod vnc_ops;
 
 pub use error::{CoreError, CoreResult, TrustPrompt};
 pub use events::{ByteSink, CoreEvent, EventSink, Events, PtyKind};
