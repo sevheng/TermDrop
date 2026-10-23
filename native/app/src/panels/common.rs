@@ -151,6 +151,16 @@ pub fn parent_dir(path: &str) -> String {
     }
 }
 
+/// A remote name as one line of plain text: each control character (a
+/// newline, ESC, DEL, C1) becomes `?`, as `ls` shows it. A file name may hold
+/// any of them, and drawn raw a newline breaks the row into two lines. Only
+/// for display: the real name still addresses the file.
+pub fn display_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
+
 /// `dir` joined with `name` without doubling the slash.
 pub fn join_remote(dir: &str, name: &str) -> String {
     if dir.ends_with('/') {
@@ -237,6 +247,18 @@ pub fn num<E: Styled>(e: E) -> E {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_name_keeps_one_line() {
+        assert_eq!(display_name("plain name.txt"), "plain name.txt");
+        assert_eq!(display_name("a b 'c\" d\nnew.txt"), "a b 'c\" d?new.txt");
+        assert_eq!(
+            display_name("\u{1b}[31mred\r\t\u{7f}\u{9b}"),
+            "?[31mred????"
+        );
+        assert_eq!(display_name("..\\..\\x"), "..\\..\\x");
+        assert_eq!(display_name("caf\u{e9} \u{1f600}"), "caf\u{e9} \u{1f600}");
+    }
 
     #[test]
     fn bytes_match_format_js() {

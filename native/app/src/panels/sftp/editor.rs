@@ -28,7 +28,7 @@ use termdrop_core::sftp::SftpStat;
 
 use super::run;
 use crate::panels::PanelContext;
-use crate::panels::common::text_2xs;
+use crate::panels::common::{display_name, text_2xs};
 use crate::ui::dialogs::{ConfirmOptions, confirm};
 use crate::ui::icon_button::IconButton;
 use crate::ui::theme::palette;
@@ -151,7 +151,7 @@ impl FloatingEditor {
                 "Unsaved Changes",
                 format!(
                     "You have unsaved changes in \"{}\". Discard them?",
-                    doc.name
+                    display_name(&doc.name)
                 ),
             )
             .confirm_label("Discard")
@@ -316,7 +316,7 @@ impl FloatingEditor {
                         format!(
                             "\"{}\" was modified on the server after you opened it. \
                              Overwrite those changes?",
-                            doc.name
+                            display_name(&doc.name)
                         ),
                     )
                     .confirm_label("Overwrite")
@@ -361,7 +361,7 @@ impl FloatingEditor {
                         // Typing during the save leaves the buffer dirty.
                         doc.dirty = current != saved;
                         doc.original = saved;
-                        let name = doc.name.clone();
+                        let name = display_name(&doc.name);
                         toast(window, cx, format!("Saved {name}"), ToastKind::Success);
                     }
                     Err(e) => toast(window, cx, format!("Save failed: {e}"), ToastKind::Error),
@@ -440,7 +440,11 @@ impl Render for FloatingEditor {
                     .gap_1()
                     .text_xs()
                     .text_color(p.ink)
-                    .child(div().truncate().child(SharedString::from(doc.name.clone())))
+                    .child(
+                        div()
+                            .truncate()
+                            .child(SharedString::from(display_name(&doc.name))),
+                    )
                     .when(dirty, |d| {
                         d.child(div().text_color(p.warn).child("\u{25CF}"))
                     }),

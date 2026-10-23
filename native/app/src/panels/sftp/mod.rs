@@ -43,7 +43,8 @@ use self::model::{
 };
 use self::transfers::{Finished, LINGER, Transfers};
 use super::common::{
-    format_bytes, format_file_date, format_permissions, format_speed, list_head, list_row, text_2xs,
+    display_name, format_bytes, format_file_date, format_permissions, format_speed, list_head,
+    list_row, text_2xs,
 };
 use super::{EventKey, FloatingHandle, PanelContext, PanelSubscription};
 use crate::app::AppEvent;
@@ -392,9 +393,12 @@ impl SftpPanel {
             move |this: &mut Self, result, window, cx| {
                 this.uploading = false;
                 match result {
-                    Ok(()) if toast_success => {
-                        toast(window, cx, format!("Uploaded {name}"), ToastKind::Success)
-                    }
+                    Ok(()) if toast_success => toast(
+                        window,
+                        cx,
+                        format!("Uploaded {}", display_name(&name)),
+                        ToastKind::Success,
+                    ),
                     Ok(()) => {}
                     Err(e) => {
                         tracing::error!("Upload failed: {e}");
@@ -403,7 +407,7 @@ impl SftpPanel {
                         toast(
                             window,
                             cx,
-                            format!("Upload failed for {name}: {e}"),
+                            format!("Upload failed for {}: {e}", display_name(&name)),
                             ToastKind::Error,
                         );
                     }
@@ -435,7 +439,7 @@ impl SftpPanel {
                 Ok(saved) => toast(
                     window,
                     cx,
-                    format!("Downloaded to {saved}"),
+                    format!("Downloaded to {}", display_name(&saved)),
                     ToastKind::Success,
                 ),
                 Err(e) => {
@@ -479,7 +483,7 @@ impl SftpPanel {
                     Ok(saved) => toast(
                         window,
                         cx,
-                        format!("Downloaded folder to {saved}"),
+                        format!("Downloaded folder to {}", display_name(&saved)),
                         ToastKind::Success,
                     ),
                     Err(e) => toast(
@@ -534,9 +538,9 @@ impl SftpPanel {
                 Ok(()) => {
                     this.reload(window, cx);
                     let msg = if is_dir {
-                        format!("Deleted folder \"{}\"", file.name)
+                        format!("Deleted folder \"{}\"", display_name(&file.name))
                     } else {
-                        format!("Deleted \"{}\"", file.name)
+                        format!("Deleted \"{}\"", display_name(&file.name))
                     };
                     toast(window, cx, msg, ToastKind::Success);
                 }
@@ -721,7 +725,7 @@ impl SftpPanel {
             window,
             cx,
             PromptOptions::new("Rename")
-                .message(format!("Rename \"{}\" to:", file.name))
+                .message(format!("Rename \"{}\" to:", display_name(&file.name)))
                 .placeholder("new-name")
                 .initial(file.name.clone()),
             move |name, window, cx| {
@@ -780,11 +784,13 @@ impl SftpPanel {
             return;
         }
         let panel = cx.entity().downgrade();
+        // Captured rather than read from `panel`: `open` must not touch the
+        // panel, which is mid-update whenever this runs synchronously.
+        let ctx = self.ctx.clone();
         let open = move |window: &mut Window, cx: &mut App| {
-            let Some(this) = panel.upgrade() else {
+            if panel.upgrade().is_none() {
                 return;
-            };
-            let ctx = this.read(cx).ctx.clone();
+            }
             let (p_edit, p_dl) = (panel.clone(), panel.clone());
             let (f_edit, f_dl) = (file.clone(), file.clone());
             preview::open_preview(
@@ -812,7 +818,8 @@ impl SftpPanel {
                 })
             });
         } else {
-            open(window, cx);
+            // After this update, as `request_hide` does for its callback.
+            window.defer(cx, open);
         }
     }
 
@@ -1159,7 +1166,7 @@ impl SftpPanel {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(SharedString::from(file.name.clone())),
+                            .child(SharedString::from(display_name(&file.name))),
                     )
                     .when(cols.size, |d| {
                         d.child(

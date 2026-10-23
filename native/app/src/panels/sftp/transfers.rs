@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::panels::common::base_name;
+use crate::panels::common::{base_name, display_name};
 
 /// How long a finished row stays on screen.
 pub const LINGER: Duration = Duration::from_millis(3000);
@@ -86,7 +86,7 @@ impl Transfers {
         let name = base_name(file);
         self.rows.push(Transfer {
             key: file.to_string(),
-            label: if name.is_empty() { file } else { name }.to_string(),
+            label: display_name(if name.is_empty() { file } else { name }),
             folder: false,
             bytes,
             total,
@@ -122,7 +122,7 @@ impl Transfers {
         let key = format!("folder:{path}");
         self.rows.push(Transfer {
             key: key.clone(),
-            label: name.to_string(),
+            label: display_name(name),
             folder: true,
             bytes: 0,
             total: 0,
@@ -140,7 +140,11 @@ impl Transfers {
             Some(row) => {
                 row.done = true;
                 row.failed = !ok;
-                row.label = format!("{name} {}", if ok { "(saved)" } else { "(failed)" });
+                row.label = format!(
+                    "{} {}",
+                    display_name(name),
+                    if ok { "(saved)" } else { "(failed)" }
+                );
                 Finished::Remove(key.to_string())
             }
             None => Finished::No,
@@ -216,6 +220,18 @@ mod tests {
         list.finish_folder(&k2, "x", false);
         assert_eq!(list.rows()[1].label, "x (failed)");
         assert!(list.rows()[1].failed);
+    }
+
+    #[test]
+    fn labels_keep_a_control_character_off_the_row() {
+        let mut list = Transfers::default();
+        list.progress("/t/a\nb.txt", 0, 9, Instant::now());
+        assert_eq!(list.rows()[0].label, "a?b.txt");
+        assert_eq!(list.rows()[0].key, "/t/a\nb.txt");
+        let key = list.begin_folder("/t/d\u{1b}", "d\u{1b}", Instant::now());
+        assert_eq!(list.rows()[1].label, "d?");
+        list.finish_folder(&key, "d\u{1b}", true);
+        assert_eq!(list.rows()[1].label, "d? (saved)");
     }
 
     #[test]

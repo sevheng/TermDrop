@@ -24,7 +24,7 @@ use gpui_kit::{
 use super::model::{ImageKind, PreviewKind, match_label, preview_kind};
 use super::run;
 use crate::panels::PanelContext;
-use crate::panels::common::text_2xs;
+use crate::panels::common::{display_name, text_2xs};
 use crate::ui::icon_button::IconButton;
 use crate::ui::theme::palette;
 
@@ -65,12 +65,13 @@ pub fn open_preview(
     let ctx = ctx.clone();
     let view = cx.new(|cx| FilePreview::new(&ctx, kind, path, window, cx, on_edit, on_download));
     let title = SharedString::from(format!(
-        "{} {name}",
+        "{} {}",
         match kind {
             PreviewKind::Image(_) => "Image:",
             PreviewKind::Binary => "Binary:",
             PreviewKind::Text => "Preview:",
-        }
+        },
+        display_name(&name)
     ));
     window.open_dialog(cx, move |dialog, _, _| {
         dialog.title(title.clone()).w(px(640.)).child(view.clone())

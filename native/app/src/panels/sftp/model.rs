@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use serde_json::{Map, Value};
 use termdrop_core::sftp::SftpFile;
 
-use crate::panels::common::{join_remote, parent_dir};
+use crate::panels::common::{display_name, join_remote, parent_dir};
 
 /// The setting the column choice is stored under, shared with the Tauri app
 /// (`usePrefs.js`'s `sftp-columns`, JSON).
@@ -132,7 +132,7 @@ pub fn breadcrumbs(path: &str) -> Vec<Crumb> {
         acc.push('/');
         acc.push_str(part);
         out.push(Crumb {
-            name: part.into(),
+            name: display_name(part),
             path: acc.clone(),
         });
     }
@@ -459,6 +459,7 @@ fn plural(n: usize) -> &'static str {
 
 /// The delete confirmation for one entry: (title, message).
 pub fn delete_prompt(name: &str, is_dir: bool) -> (&'static str, String) {
+    let name = display_name(name);
     if is_dir {
         (
             "Delete Folder",
@@ -605,6 +606,15 @@ mod tests {
         assert_eq!(filter_indexes(&files, ""), [0, 1]);
         assert_eq!(filter_indexes(&files, "  readme "), [0]);
         assert!(filter_indexes(&files, "zzz").is_empty());
+    }
+
+    #[test]
+    fn names_with_control_characters_display_on_one_line() {
+        let crumbs = breadcrumbs("/tmp/a\nb");
+        assert_eq!(crumbs[2].name, "a?b");
+        assert_eq!(crumbs[2].path, "/tmp/a\nb");
+        let (_, message) = delete_prompt("x\n\u{1b}[2J", false);
+        assert_eq!(message, "Delete \"x??[2J\"? This cannot be undone.");
     }
 
     #[test]
