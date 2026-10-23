@@ -5,8 +5,6 @@
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::window::Color;
 use tauri::{Manager, State, Window};
@@ -627,8 +625,7 @@ async fn mongodb_list_databases(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id).await?;
-    with_async_timeout(mongodb::list_databases_with(&client), 30).await
+    state.mongodb_list_databases(host_id).await
 }
 
 #[tauri::command]
@@ -637,8 +634,7 @@ async fn mongodb_list_collections(
     host_id: i64,
     db: String,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id).await?;
-    with_async_timeout(mongodb::list_collections_with(&client, &db), 30).await
+    state.mongodb_list_collections(host_id, db).await
 }
 
 #[tauri::command]
@@ -652,21 +648,17 @@ async fn mongodb_dump(
     output_dir: String,
     is_archive: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id)?;
-    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
-        mongodb::dump_collections(
+    state
+        .mongodb_dump(
             bridge::events(&window),
-            cancelled,
-            mongo_ops,
-            op_id.clone(),
-            &uri,
-            &db,
+            op_id,
+            host_id,
+            db,
             collections,
-            &output_dir,
+            output_dir,
             is_archive,
         )
-    })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -681,22 +673,18 @@ async fn mongodb_restore(
     is_archive: bool,
     drop_first: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id)?;
-    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
-        mongodb::restore_collections(
+    state
+        .mongodb_restore(
             bridge::events(&window),
-            cancelled,
-            mongo_ops,
-            op_id.clone(),
-            &uri,
-            &db,
+            op_id,
+            host_id,
+            db,
             collections,
-            &input_dir,
+            input_dir,
             is_archive,
             drop_first,
         )
-    })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -714,29 +702,21 @@ async fn mongodb_restore_archive(
     input_path: String,
     drop_first: bool,
 ) -> Result<(), String> {
-    let uri = load_mongo_uri(&state, host_id)?;
-    with_mongo_op(&state, &op_id, |cancelled, mongo_ops| {
-        mongodb::restore_archive(
+    state
+        .mongodb_restore_archive(
             bridge::events(&window),
-            cancelled,
-            mongo_ops,
-            op_id.clone(),
-            &uri,
+            op_id,
+            host_id,
             includes,
-            &input_path,
+            input_path,
             drop_first,
         )
-    })
-    .await
+        .await
 }
 
-/// Read a page of documents from a collection.
-///
-/// Read-only by construction: there is no aggregate command and no write
-/// command, so a pipeline stage like $out or $merge cannot reach the server
-/// from here.
+/// Read a page of documents from a collection (read-only by construction;
+/// see `Core::mongodb_find`).
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 async fn mongodb_find(
     state: State<'_, AppState>,
     host_id: i64,
@@ -748,25 +728,11 @@ async fn mongodb_find(
     skip: u64,
     limit: i64,
 ) -> Result<mongodb::FindResult, String> {
-    let client = mongo_client(&state, host_id).await?;
-    let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
-    let sort = parse_optional_doc(sort.as_deref(), "sort")?;
-    let projection = parse_optional_doc(projection.as_deref(), "projection")?;
-
-    with_async_timeout(
-        mongodb::find_documents(
-            &client,
-            &db,
-            &collection,
-            filter,
-            sort,
-            projection,
-            skip,
-            limit,
-        ),
-        60,
-    )
-    .await
+    state
+        .mongodb_find(
+            host_id, db, collection, filter, sort, projection, skip, limit,
+        )
+        .await
 }
 
 /// Count documents matching a filter.
@@ -778,13 +744,7 @@ async fn mongodb_count(
     collection: String,
     filter: Option<String>,
 ) -> Result<mongodb::CountResult, String> {
-    let client = mongo_client(&state, host_id).await?;
-    let filter = mongodb::parse_filter(filter.as_deref().unwrap_or(""))?;
-    with_async_timeout(
-        mongodb::count_documents(&client, &db, &collection, filter),
-        60,
-    )
-    .await
+    state.mongodb_count(host_id, db, collection, filter).await
 }
 
 /// A collection's indexes.
@@ -795,8 +755,7 @@ async fn mongodb_list_indexes(
     db: String,
     collection: String,
 ) -> Result<Vec<String>, String> {
-    let client = mongo_client(&state, host_id).await?;
-    with_async_timeout(mongodb::list_indexes(&client, &db, &collection), 30).await
+    state.mongodb_list_indexes(host_id, db, collection).await
 }
 
 /// A collection's storage statistics.
@@ -807,15 +766,15 @@ async fn mongodb_collection_stats(
     db: String,
     collection: String,
 ) -> Result<String, String> {
-    let client = mongo_client(&state, host_id).await?;
-    with_async_timeout(mongodb::collection_stats(&client, &db, &collection), 30).await
+    state
+        .mongodb_collection_stats(host_id, db, collection)
+        .await
 }
 
 /// Release the pooled clients for a host, called when its tab closes.
 #[tauri::command]
 async fn mongodb_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
-    forget_mongo_clients(&state, host_id).await;
-    Ok(())
+    state.mongodb_disconnect(host_id).await
 }
 
 /// Store the password for one side of a MongoDB host.
@@ -839,35 +798,15 @@ fn mongodb_clear_secret(host_id: i64) -> Result<(), String> {
     hosts::clear_mongo_secret(host_id)
 }
 
-/// Open a Redis connection and report what the server is.
-///
-/// `ssh_password` supplies the bastion's password on the prompt-and-retry path,
-/// for a tunnelled host whose SSH password is not in the keyring.
+/// Open a Redis connection and report what the server is. `ssh_password`
+/// is the bastion's password on the prompt-and-retry path.
 #[tauri::command]
 async fn redis_connect(
     state: State<'_, AppState>,
     host_id: i64,
     ssh_password: Option<String>,
 ) -> Result<redis::RedisServerInfo, String> {
-    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
-        .ok_or_else(|| format!("host {} not found", host_id))?;
-
-    let (uri, tunnelled) = redis_dial_uri(&state, &host, ssh_password).await?;
-    let db_index = redis::uri_db_index(&uri).unwrap_or(0);
-
-    let mut conn = redis::build_client(&uri, db_index).await?;
-    let info = with_async_timeout(
-        redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled),
-        30,
-    )
-    .await?;
-
-    state
-        .redis_conns
-        .lock()
-        .await
-        .insert((host_id, db_index), conn);
-    Ok(info)
+    state.redis_connect(host_id, ssh_password).await
 }
 
 /// Re-read the server's INFO, so key counts follow a backup or restore.
@@ -876,30 +815,17 @@ async fn redis_server_info(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<redis::RedisServerInfo, String> {
-    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
-        .ok_or_else(|| format!("host {} not found", host_id))?;
-    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
-    let db_index = redis::uri_db_index(&uri).unwrap_or(0);
-    let mut conn = redis_conn(&state, host_id, db_index).await?;
-    with_async_timeout(
-        redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled),
-        30,
-    )
-    .await
+    state.redis_server_info(host_id).await
 }
 
 /// Drop this host's pooled connections and close its tunnel.
 #[tauri::command]
 async fn redis_disconnect(state: State<'_, AppState>, host_id: i64) -> Result<(), String> {
-    forget_redis(&state, host_id).await;
-    Ok(())
+    state.redis_disconnect(host_id).await
 }
 
-/// One page of a database's keyspace.
-///
-/// `cursor` is a decimal string, not a number: Redis cursors are u64 and would
-/// lose precision as a JS number. `"0"` both starts and ends an iteration.
-#[allow(clippy::too_many_arguments)]
+/// One page of a database's keyspace. `cursor` is a decimal string, not a
+/// number: Redis cursors are u64 and would lose precision as a JS number.
 #[tauri::command]
 async fn redis_scan_keys(
     state: State<'_, AppState>,
@@ -912,20 +838,18 @@ async fn redis_scan_keys(
     with_memory: bool,
     supports_scan_type: bool,
 ) -> Result<redis::RedisScanPage, String> {
-    let mut conn = redis_conn(&state, host_id, db).await?;
-    with_async_timeout(
-        redis::scan_keys(
-            &mut conn,
-            &cursor,
-            pattern.as_deref().filter(|p| !p.is_empty()),
-            type_filter.as_deref().filter(|t| !t.is_empty()),
+    state
+        .redis_scan_keys(
+            host_id,
+            db,
+            cursor,
+            pattern,
+            type_filter,
             limit,
             with_memory,
             supports_scan_type,
-        ),
-        30,
-    )
-    .await
+        )
+        .await
 }
 
 /// The prefix groups of a database, from a bounded scan.
@@ -936,24 +860,10 @@ async fn redis_key_tree(
     db: i64,
     pattern: Option<String>,
 ) -> Result<redis::KeyTree, String> {
-    let mut conn = redis_conn(&state, host_id, db).await?;
-    with_async_timeout(
-        redis::key_tree(
-            &mut conn,
-            pattern.as_deref().filter(|p| !p.is_empty()),
-            redis::TREE_SCAN_CAP,
-            Duration::from_secs(3),
-        ),
-        30,
-    )
-    .await
+    state.redis_key_tree(host_id, db, pattern).await
 }
 
-/// One page of a single key's value.
-///
-/// `key_b64` carries the key's exact bytes: a key that is not valid UTF-8 has
-/// no faithful string form, and addressing it by a lossy one would fetch the
-/// wrong key or nothing at all.
+/// One page of a single key's value, the key addressed by its exact bytes.
 #[tauri::command]
 async fn redis_key_value(
     state: State<'_, AppState>,
@@ -964,36 +874,19 @@ async fn redis_key_value(
     offset: i64,
     limit: i64,
 ) -> Result<redis::RedisValuePage, String> {
-    let key = redis::decode_key(&key_b64)?;
-    let mut conn = redis_conn(&state, host_id, db).await?;
-    with_async_timeout(
-        redis::key_value(
-            &mut conn,
-            &key,
-            cursor.as_deref().unwrap_or("0"),
-            offset,
-            limit,
-        ),
-        60,
-    )
-    .await
+    state
+        .redis_key_value(host_id, db, key_b64, cursor, offset, limit)
+        .await
 }
 
 /// Ask an in-flight export or import to stop.
 #[tauri::command]
 fn redis_cancel(state: State<'_, AppState>, op_id: String) {
-    let ops = state.redis_ops.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(flag) = ops.get(&op_id) {
-        flag.store(true, Ordering::Relaxed);
-    }
+    state.redis_cancel(&op_id)
 }
 
-/// Back up a database to a `.tdredis` file.
-///
-/// Deliberately not wrapped in `with_async_timeout`: a backup of a large
-/// keyspace legitimately runs for a long time, and cancellation is the control
-/// the user has over it.
-#[allow(clippy::too_many_arguments)]
+/// Back up a database to a `.tdredis` file. Not under a timeout: a backup of
+/// a large keyspace legitimately runs for a long time.
 #[tauri::command]
 async fn redis_export(
     window: Window,
@@ -1005,33 +898,18 @@ async fn redis_export(
     output_path: String,
     max_key_bytes: Option<u64>,
 ) -> Result<redis::RedisOpSummary, String> {
-    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
-        .ok_or_else(|| format!("host {} not found", host_id))?;
-    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
-
-    let mut conn = redis_conn(&state, host_id, db).await?;
-    let info = redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled).await?;
-
-    let registry_id = op_id.clone();
-    let events = bridge::events(&window);
-    with_redis_op(&state, &registry_id, |cancelled| async move {
-        redis::export_keys(
-            &events,
-            cancelled,
-            &op_id,
-            &mut conn,
+    state
+        .redis_export(
+            bridge::events(&window),
+            op_id,
+            host_id,
             db,
-            pattern.as_deref().filter(|p| !p.is_empty()),
-            &output_path,
-            max_key_bytes.unwrap_or(redis::MAX_DUMP_KEY_BYTES),
-            &uri,
-            &info.version,
-            &info.mode,
+            pattern,
+            output_path,
+            max_key_bytes,
             env!("CARGO_PKG_VERSION"),
         )
         .await
-    })
-    .await
 }
 
 /// A backup file's header, for the restore dialog.
@@ -1041,7 +919,6 @@ fn redis_backup_info(path: String) -> Result<redis_backup::BackupHeader, String>
 }
 
 /// Restore a `.tdredis` file into a database.
-#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn redis_import(
     window: Window,
@@ -1053,30 +930,17 @@ async fn redis_import(
     replace: bool,
     flush_first: bool,
 ) -> Result<redis::RedisOpSummary, String> {
-    let host = with_db(&state, |conn| db::get_host_by_id(conn, host_id))?
-        .ok_or_else(|| format!("host {} not found", host_id))?;
-    let (uri, tunnelled) = redis_dial_uri(&state, &host, None).await?;
-
-    let mut conn = redis_conn(&state, host_id, db).await?;
-    let info = redis::server_info(&mut conn, crate::uri::redact_uri(&uri), tunnelled).await?;
-
-    let registry_id = op_id.clone();
-    let events = bridge::events(&window);
-    with_redis_op(&state, &registry_id, |cancelled| async move {
-        redis::import_keys(
-            &events,
-            cancelled,
-            &op_id,
-            &mut conn,
+    state
+        .redis_import(
+            bridge::events(&window),
+            op_id,
+            host_id,
             db,
-            &input_path,
+            input_path,
             replace,
             flush_first,
-            &info.version,
         )
         .await
-    })
-    .await
 }
 
 /// Store the password for a Redis host.
@@ -1318,10 +1182,7 @@ fn vnc_clear_secret(host_id: i64) -> Result<(), String> {
 
 #[tauri::command]
 fn mongodb_cancel(state: State<'_, AppState>, op_id: String) {
-    let ops = state.mongo_ops.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(handle) = ops.get(&op_id) {
-        handle.cancelled.store(true, Ordering::Relaxed);
-    }
+    state.mongodb_cancel(&op_id)
 }
 
 fn main() {
