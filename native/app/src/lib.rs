@@ -7,6 +7,8 @@
 //! - [`backend`]: the seams the core and terminal tracks plug into.
 //! - [`core_backend`] and [`tabs`]: those seams filled from `termdrop-core`
 //!   and `termdrop-terminal`.
+//! - [`panels`]: the right-hand panel beside an SSH tab (SFTP, Tunnels,
+//!   Docker, Security); its `README.md` is the contract for each panel.
 
 // The theme config is one `serde_json::json!` object with a key per GPUI Kit
 // colour slot, which is deeper than the macro's default recursion budget.
@@ -15,6 +17,7 @@
 pub mod app;
 pub mod backend;
 pub mod core_backend;
+pub mod panels;
 pub mod shell;
 pub mod tabs;
 pub mod ui;

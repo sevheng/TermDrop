@@ -17,10 +17,11 @@ use super::host_kind::HostKind;
 use super::host_row_state::{HostRowState, host_row_state};
 use super::prefs::{self, Prefs, ThemeChoice, ViewMode};
 use super::tab_kind::{CloseAction, TabKind, next_local_tab_name};
-use super::tabs::{Tab, Tabs};
+use super::tabs::{SftpLink, Tab, Tabs};
 use crate::backend::{
     HostRecord, HostStore, HostSummary, ImportEntry, ImportSummary, SecretKind, SshConfigEntry,
 };
+use crate::panels::PanelKind;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEvent {
@@ -49,6 +50,7 @@ pub struct AppModel {
     connecting_host_id: Option<i64>,
     prefs: Prefs,
     right_panel_open: bool,
+    right_panel_tab: PanelKind,
     tab_seq: u64,
     local_shells: Vec<LocalShellChoice>,
 }
@@ -78,6 +80,7 @@ impl AppModel {
             connecting_host_id: None,
             prefs,
             right_panel_open: true,
+            right_panel_tab: PanelKind::default(),
             tab_seq: 0,
             local_shells: Vec::new(),
         };
@@ -485,6 +488,16 @@ impl AppModel {
         }
     }
 
+    /// The tab's SFTP connection opened, failed, or is being retried.
+    pub fn set_tab_sftp(&mut self, id: &str, sftp: SftpLink, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(id)
+            && tab.sftp != sftp
+        {
+            tab.sftp = sftp;
+            cx.notify();
+        }
+    }
+
     // ---- layout preferences -------------------------------------------
 
     pub fn prefs(&self) -> &Prefs {
@@ -526,6 +539,34 @@ impl AppModel {
     pub fn toggle_right_panel(&mut self, cx: &mut Context<Self>) {
         self.right_panel_open = !self.right_panel_open;
         cx.notify();
+    }
+
+    /// Which of the right panel's tabs is selected. One choice for every SSH
+    /// tab, in memory, starting at SFTP: `rightPanelTab` in `MainWindow.vue`.
+    pub fn right_panel_tab(&self) -> PanelKind {
+        self.right_panel_tab
+    }
+
+    pub fn set_right_panel_tab(&mut self, kind: PanelKind, cx: &mut Context<Self>) {
+        if self.right_panel_tab != kind {
+            self.right_panel_tab = kind;
+            cx.notify();
+        }
+    }
+
+    /// Whether panel `kind` for `host_id` is on screen: the panel is open,
+    /// `kind` is selected, and the active tab is an SSH tab on that host
+    /// (and, for a per-tab panel, is `tab_id`). A panel that polls (Docker)
+    /// stops while this is false, as the Vue panels did on deactivation.
+    pub fn panel_shown(&self, kind: PanelKind, host_id: i64, tab_id: Option<&str>) -> bool {
+        crate::panels::panel_visible(
+            self.right_panel_open,
+            self.right_panel_tab,
+            self.active_tab(),
+            kind,
+            host_id,
+            tab_id,
+        )
     }
 
     pub fn view_mode(&self) -> ViewMode {

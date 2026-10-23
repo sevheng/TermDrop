@@ -79,7 +79,8 @@ Read from the code on this branch, not from the plan.
 | SSH terminal | Yes | Through `termdrop-core`: host-key trust dialog (per hop, jump hosts), password prompt on a keyring miss, reconnect. |
 | Terminal element (`termdrop-terminal`) | Yes | `alacritty_terminal` grid painted by GPUI: colours, selection, scrollback (1000 lines), mouse reporting, bracketed and chunked paste, URL open, OSC 52, title, bell. No ligatures. |
 | Terminal search, WebGL/DOM renderer split | n/a / No | No search yet. GPUI always renders on the GPU. |
-| SFTP, Docker, Security audit, port forwards (right panel) | **No** | The pane is there with a "Phase 5" note. |
+| Right panel frame | Yes | SFTP / Tunnels / Docker / Security strip beside SSH tabs, resizable, panels built on first show and kept per tab (SFTP) or per host. Each SSH tab opens its SFTP connection in the background, keeps it across a reconnect and closes it with the tab. Contract for the panels: `app/src/panels/README.md`. |
+| SFTP, Docker, Security audit, port forwards | **No** | Each panel is a placeholder; Tunnels says it is not ported. |
 | MongoDB, Redis | **No** | The tab opens with a notice pointing to the Tauri app. |
 | VNC | **No** | Same notice. |
 | Updater, packaging, tray/notifications, single instance | **No** | Phase 8. |

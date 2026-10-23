@@ -13,8 +13,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, div, px,
+    AnyView, App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement,
+    Render, SharedString, Styled, Subscription, Task, Window, div, px,
 };
 use termdrop_core::CoreEvent;
 use termdrop_terminal::{Palette as TermPalette, TerminalEvent, TerminalOptions, TerminalView};
@@ -55,11 +55,18 @@ pub(super) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn term_palette(theme: ThemeChoice) -> TermPalette {
+pub(crate) fn term_palette(theme: ThemeChoice) -> TermPalette {
     match theme {
         ThemeChoice::Dark => TermPalette::dark(),
         ThemeChoice::Light => TermPalette::light(),
     }
+}
+
+/// A tab's SFTP session id, and whether the tab has closed.
+#[derive(Debug, Default)]
+pub(super) struct SftpSlot {
+    pub closed: bool,
+    pub id: Option<String>,
 }
 
 pub struct TerminalTab {
@@ -80,6 +87,15 @@ pub struct TerminalTab {
     /// whatever it produces instead of adopting it.
     pub(super) closed: bool,
     pub(super) pending: Option<Task<()>>,
+    /// The SFTP session the file panel uses, once `sftp_connect` returned.
+    /// Passed to `ssh_reconnect` (which replaces it under the same id) and
+    /// disconnected with the tab. Shared with the connect task, so a tab
+    /// closed while it runs still has its session disconnected.
+    pub(super) sftp: Arc<Mutex<SftpSlot>>,
+    pub(super) sftp_task: Option<Task<()>>,
+    /// A panel's pane under the terminal: the Docker panel's logs or exec
+    /// view. Owned here, so it goes with the tab.
+    bottom_pane: Option<AnyView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -162,13 +178,35 @@ impl TerminalTab {
                 status: Status::Connecting,
                 closed: false,
                 pending: None,
+                sftp: Arc::default(),
+                sftp_task: None,
+                bottom_pane: None,
                 _subscriptions: subscriptions,
             }
         })
     }
 
-    pub(super) fn session_id(&self) -> Option<String> {
+    /// The core session id, once connected.
+    pub(crate) fn session_id(&self) -> Option<String> {
         lock(&self.session).clone()
+    }
+
+    /// Type `text` at the prompt and focus the terminal so Enter goes to the
+    /// shell. The panels' `insert_command` has already checked it; nothing
+    /// here adds a newline.
+    pub(crate) fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.session_id()
+            && let Err(e) = self.services.core.ssh_write(&id, text.to_string())
+        {
+            tracing::warn!("Could not type into the terminal: {e}");
+        }
+        window.focus(&self.terminal.focus_handle(cx), cx);
+    }
+
+    /// Put a panel's view under the terminal, or remove it with `None`.
+    pub(crate) fn set_bottom_pane(&mut self, pane: Option<AnyView>, cx: &mut Context<Self>) {
+        self.bottom_pane = pane;
+        cx.notify();
     }
 
     fn connect_fresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -261,6 +299,16 @@ impl TerminalTab {
         {
             self.model
                 .update(cx, |m, cx| m.set_connecting_host(None, cx));
+        }
+        self.sftp_task = None;
+        self.bottom_pane = None;
+        let sftp_id = {
+            let mut slot = lock(&self.sftp);
+            slot.closed = true;
+            slot.id.take()
+        };
+        if let Some(sftp_id) = sftp_id {
+            self.disconnect_sftp(sftp_id);
         }
         if let Some(id) = lock(&self.session).take() {
             self.disconnect(id);
@@ -360,5 +408,15 @@ impl Render for TerminalTab {
                 )
             })
             .child(div().flex_1().min_h_0().child(self.terminal.clone()))
+            .when_some(self.bottom_pane.clone(), |col, pane| {
+                // The pane sizes itself (its own height and resize edge).
+                col.child(
+                    div()
+                        .flex_none()
+                        .border_t_1()
+                        .border_color(p.line)
+                        .child(pane),
+                )
+            })
     }
 }

@@ -1518,14 +1518,17 @@ impl Core {
     }
 
     pub fn exec_pty_write(&self, pty_session_id: &str, data: String) -> Result<(), String> {
+        self.exec_pty_write_bytes(pty_session_id, data.into_bytes())
+    }
+
+    /// `exec_pty_write` for raw input, as `ssh_write_bytes` is for a shell: a
+    /// terminal's mouse reports are not always valid UTF-8.
+    pub fn exec_pty_write_bytes(&self, pty_session_id: &str, data: Vec<u8>) -> Result<(), String> {
         let sessions = self.exec_pty_sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions
             .get(pty_session_id)
             .ok_or("PTY session not found")?;
-        session
-            .write_tx
-            .send(data.into_bytes())
-            .map_err(|e| e.to_string())?;
+        session.write_tx.send(data).map_err(|e| e.to_string())?;
         Ok(())
     }
 

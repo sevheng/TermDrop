@@ -23,12 +23,13 @@ use super::host_sidebar::HostSidebar;
 use super::settings::open_settings;
 use crate::app::host_form::EditorKind;
 use crate::app::tab_kind::{TabKind, has_right_panel};
+use crate::app::tabs::SftpLink;
 use crate::app::{AppEvent, AppModel, LocalShellChoice};
 use crate::backend::TabContentFactory;
+use crate::panels::PanelKind;
 use crate::ui::dialogs::{ConfirmOptions, confirm};
 use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
-use crate::ui::panel_header::PanelHeader;
 use crate::ui::theme::{self, palette};
 use crate::ui::toast::{ToastKind, toast};
 
@@ -138,8 +139,12 @@ impl MainWindow {
                     self.contents.insert(id.clone(), view);
                 }
             }
-            AppEvent::TabClosed { tab, .. } => {
-                self.factory.tab_closed(tab, cx);
+            AppEvent::TabClosed {
+                tab,
+                last_of_kind_for_host,
+                ..
+            } => {
+                self.factory.tab_closed(tab, *last_of_kind_for_host, cx);
                 self.contents.remove(&tab.id);
             }
             AppEvent::ThemeChanged(choice) => theme::install(*choice, cx),
@@ -380,26 +385,113 @@ impl MainWindow {
             .into_any_element()
     }
 
-    fn render_right_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The strip of panel tabs, as `MainWindow.vue`'s `PANEL_TABS`, with the
+    /// hide button at its end.
+    fn render_panel_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *palette(cx);
         let m = self.model.clone();
-        v_flex()
-            .size_full()
-            .bg(p.canvas)
-            .child(
-                PanelHeader::new("SFTP · Docker · Security · Tunnels").action(
-                    IconButton::new("hide-right-panel", IconName::X, "Hide side panel")
-                        .on_click(move |_, _, cx| m.update(cx, |m, cx| m.toggle_right_panel(cx))),
-                ),
-            )
-            .child(
+        let current = self.model.read(cx).right_panel_tab();
+        let mut strip = h_flex()
+            .h(px(32.))
+            .flex_none()
+            .border_b_1()
+            .border_color(p.line);
+        for kind in PanelKind::ALL {
+            let selected = kind == current;
+            strip = strip.child(
                 div()
+                    .id(SharedString::from(format!("panel-tab-{}", kind.label())))
+                    .relative()
                     .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .when(selected, |d| d.text_color(p.accent))
+                    .when(!selected, |d| {
+                        d.text_color(p.ink_2).hover(|s| s.text_color(p.ink))
+                    })
+                    .child(kind.label())
+                    .when(selected, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left_2()
+                                .right_2()
+                                .h(px(2.))
+                                .rounded_full()
+                                .bg(p.accent),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.model
+                            .update(cx, |m, cx| m.set_right_panel_tab(kind, cx));
+                    })),
+            );
+        }
+        strip.child(
+            div().flex_none().px_0p5().child(
+                IconButton::new("hide-right-panel", IconName::X, "Hide side panel")
+                    .on_click(move |_, _, cx| m.update(cx, |m, cx| m.toggle_right_panel(cx))),
+            ),
+        )
+    }
+
+    fn render_right_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *palette(cx);
+        let tab = self.model.read(cx).active_tab().cloned();
+        let kind = self.model.read(cx).right_panel_tab();
+        let body: AnyElement = match tab {
+            None => Empty.into_any_element(),
+            // The SFTP panel waits for the tab's SFTP session, as the Vue
+            // panel showed "Connecting SFTP..." until it had one.
+            Some(tab) if kind == PanelKind::Sftp && tab.sftp.session_id().is_none() => {
+                match tab.sftp.clone() {
+                    SftpLink::Failed(error) => {
+                        let factory = self.factory.clone();
+                        let model = self.model.clone();
+                        let tab_id = tab.id.clone();
+                        EmptyState::empty(
+                            "sftp-failed",
+                            "SFTP is not available",
+                            "Retry",
+                            move |_, window, cx| {
+                                if let Some(tab) = model.read(cx).tab(&tab_id).cloned() {
+                                    factory.retry_sftp(&tab, window, cx);
+                                }
+                            },
+                        )
+                        .icon(Icon::new(IconName::FolderOpen))
+                        .hint(error)
+                        .compact()
+                        .into_any_element()
+                    }
+                    _ => EmptyState::loading("sftp-connecting", "Connecting SFTP...")
+                        .compact()
+                        .into_any_element(),
+                }
+            }
+            Some(tab) => match self.factory.right_panel(&tab, kind, window, cx) {
+                Some(view) => view.into_any_element(),
+                None => div()
                     .p_3()
                     .text_xs()
                     .text_color(p.ink_2)
-                    .child("The SSH tab's panels arrive with Phase 5."),
-            )
+                    .child("This panel is not available here.")
+                    .into_any_element(),
+            },
+        };
+        v_flex()
+            .size_full()
+            .bg(p.canvas)
+            .border_l_1()
+            .border_color(p.line)
+            .child(self.render_panel_strip(cx))
+            .child(div().flex_1().min_h_0().overflow_hidden().child(body))
     }
 }
 
@@ -574,7 +666,7 @@ impl Render for MainWindow {
                                 .h_full()
                                 .flex_none()
                                 .w(px(right_w))
-                                .child(self.render_right_panel(cx))
+                                .child(self.render_right_panel(window, cx))
                                 .child(
                                     resize_handle::<ResizeRightPanel, ResizeRightPanel>(
                                         "right-panel-edge",

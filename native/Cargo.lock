@@ -7616,6 +7616,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "chrono",
  "gpui-kit",
  "rfd",
  "serde",
@@ -7625,6 +7626,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

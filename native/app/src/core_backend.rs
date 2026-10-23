@@ -262,16 +262,81 @@ pub struct Bridge {
 /// How many detached session ids are remembered.
 const CLOSED_REMEMBERED: usize = 64;
 
+/// One kind of PTY's slots: shells and docker exec PTYs are kept apart, as
+/// their ids come from different places (the core's uuids; the caller's own
+/// choice for an exec PTY).
 #[derive(Default)]
-struct Slots {
+struct SlotTable {
     by_id: HashMap<String, Slot>,
-    /// Terminals detached recently. The PTY thread keeps running until the
+    /// PTYs detached recently. The PTY thread keeps running until the
     /// disconnect lands, and output it sends meanwhile arrives as `PtyData`
     /// (a tab closed mid-connect never had a sink). Without this, that
     /// output would open a `Pending` slot nothing ever detaches again. Kept
     /// to a bounded window, since a session that had already ended sends
     /// nothing after its detach to say it is done.
     closed: VecDeque<String>,
+}
+
+impl SlotTable {
+    /// Replay what arrived early into `feed` and route later output to it.
+    fn attach(&mut self, id: &str, feed: &TerminalFeed) {
+        // A reattach (reconnect) brings a detached id back to life.
+        self.closed.retain(|c| c != id);
+        if let Some(Slot::Pending(early)) = self.by_id.remove(id) {
+            feed.feed(&early);
+        }
+        self.by_id
+            .insert(id.to_string(), Slot::Attached(feed.clone()));
+    }
+
+    fn detach(&mut self, id: &str) {
+        self.by_id.remove(id);
+        if !self.closed.iter().any(|c| c == id) {
+            if self.closed.len() == CLOSED_REMEMBERED {
+                self.closed.pop_front();
+            }
+            self.closed.push_back(id.to_string());
+        }
+    }
+
+    /// Output that came as an event: into the attached feed, or held.
+    fn data(&mut self, id: &str, data: &[u8]) {
+        if self.closed.iter().any(|c| c == id) {
+            // The view is gone; this is the PTY's last words before the
+            // disconnect lands.
+            return;
+        }
+        match self
+            .by_id
+            .entry(id.to_string())
+            .or_insert_with(|| Slot::Pending(Vec::new()))
+        {
+            Slot::Pending(buf) => buf.extend_from_slice(data),
+            Slot::Attached(feed) => feed.feed(data),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Slots {
+    shell: SlotTable,
+    exec: SlotTable,
+}
+
+impl Slots {
+    fn table(&mut self, kind: PtyKind) -> &mut SlotTable {
+        match kind {
+            PtyKind::Shell => &mut self.shell,
+            PtyKind::ExecPty => &mut self.exec,
+        }
+    }
+}
+
+fn feed_sink(feed: TerminalFeed) -> Box<FnSink<impl FnMut(Vec<u8>) -> bool + Send + 'static>> {
+    Box::new(FnSink(move |bytes: Vec<u8>| {
+        feed.feed(&bytes);
+        true
+    }))
 }
 
 impl Bridge {
@@ -300,58 +365,43 @@ impl Bridge {
     /// to the event.
     pub fn attach(&self, core: &Core, session_id: &str, feed: TerminalFeed) -> Result<(), String> {
         let mut slots = self.slots();
-        // A reattach (reconnect) brings a detached id back to life.
-        slots.closed.retain(|id| id != session_id);
-        if let Some(Slot::Pending(early)) = slots.by_id.remove(session_id) {
-            feed.feed(&early);
-        }
-        slots
-            .by_id
-            .insert(session_id.to_string(), Slot::Attached(feed.clone()));
-        core.attach_terminal_sink(
-            session_id,
-            Box::new(FnSink(move |bytes: Vec<u8>| {
-                feed.feed(&bytes);
-                true
-            })),
-        )
+        slots.shell.attach(session_id, &feed);
+        core.attach_terminal_sink(session_id, feed_sink(feed))
     }
 
     /// Forget a terminal: its early output and its feed.
     pub fn detach(&self, session_id: &str) {
+        self.slots().shell.detach(session_id);
+    }
+
+    /// [`Self::attach`] for a docker exec PTY (`Core::exec_pty_connect`):
+    /// call it once the connect has returned, with the pane's terminal feed.
+    /// Output from before the call is replayed first, so none is lost.
+    pub fn attach_exec_pty(
+        &self,
+        core: &Core,
+        pty_session_id: &str,
+        feed: TerminalFeed,
+    ) -> Result<(), String> {
         let mut slots = self.slots();
-        slots.by_id.remove(session_id);
-        if !slots.closed.iter().any(|id| id == session_id) {
-            if slots.closed.len() == CLOSED_REMEMBERED {
-                slots.closed.pop_front();
-            }
-            slots.closed.push_back(session_id.to_string());
-        }
+        slots.exec.attach(pty_session_id, &feed);
+        core.attach_exec_pty_sink(pty_session_id, feed_sink(feed))
+    }
+
+    /// [`Self::detach`] for a docker exec PTY. Call it with
+    /// `Core::exec_pty_disconnect` when the pane closes.
+    pub fn detach_exec_pty(&self, pty_session_id: &str) {
+        self.slots().exec.detach(pty_session_id);
     }
 }
 
 impl EventSink for Bridge {
     fn emit(&self, event: CoreEvent) {
-        if let CoreEvent::PtyData {
-            kind: PtyKind::Shell,
-            id,
-            data,
-        } = &event
-        {
-            let mut slots = self.slots();
-            if slots.closed.iter().any(|c| c == id) {
-                // The tab is gone; this is the PTY's last words before the
-                // disconnect lands.
-                return;
-            }
-            match slots
-                .by_id
-                .entry(id.clone())
-                .or_insert_with(|| Slot::Pending(Vec::new()))
-            {
-                Slot::Pending(buf) => buf.extend_from_slice(data.as_bytes()),
-                Slot::Attached(feed) => feed.feed(data.as_bytes()),
-            }
+        // PTY output never goes through the queue: it is fed straight into
+        // the terminal on this thread (see the type's comment), for shells
+        // and docker exec panes alike.
+        if let CoreEvent::PtyData { kind, id, data } = &event {
+            self.slots().table(*kind).data(id, data.as_bytes());
             return;
         }
         // Unbounded, so this never blocks; it fails only once the UI is gone.
@@ -519,7 +569,7 @@ mod tests {
             kind: PtyKind::Shell,
             id: "s".into(),
         });
-        match bridge.slots().by_id.get("s") {
+        match bridge.slots().shell.by_id.get("s") {
             Some(Slot::Pending(buf)) => assert_eq!(buf, b"hello world"),
             _ => panic!("early output was not held"),
         }
@@ -529,7 +579,7 @@ mod tests {
             "output must not go through the queue"
         );
         bridge.detach("s");
-        assert!(bridge.slots().by_id.is_empty());
+        assert!(bridge.slots().shell.by_id.is_empty());
     }
 
     #[test]
@@ -541,11 +591,51 @@ mod tests {
             id: "s".into(),
             data: "late".into(),
         });
-        assert!(bridge.slots().by_id.is_empty(), "late output leaked a slot");
+        assert!(
+            bridge.slots().shell.by_id.is_empty(),
+            "late output leaked a slot"
+        );
         // The remembered ids stay bounded however many tabs close.
         for i in 0..1000 {
             bridge.detach(&format!("t{i}"));
         }
-        assert_eq!(bridge.slots().closed.len(), CLOSED_REMEMBERED);
+        assert_eq!(bridge.slots().shell.closed.len(), CLOSED_REMEMBERED);
+    }
+
+    #[test]
+    fn exec_pty_output_is_held_apart_from_shells_and_never_queued() {
+        let (bridge, rx) = Bridge::new();
+        bridge.emit(CoreEvent::PtyData {
+            kind: PtyKind::ExecPty,
+            id: "s".into(),
+            data: "logs".into(),
+        });
+        bridge.emit(CoreEvent::PtyConnected {
+            kind: PtyKind::ExecPty,
+            id: "s".into(),
+        });
+        match bridge.slots().exec.by_id.get("s") {
+            Some(Slot::Pending(buf)) => assert_eq!(buf, b"logs"),
+            _ => panic!("early exec output was not held"),
+        }
+        assert!(
+            bridge.slots().shell.by_id.is_empty(),
+            "a shell id was opened"
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(CoreEvent::PtyConnected {
+                kind: PtyKind::ExecPty,
+                ..
+            })
+        ));
+        assert!(rx.try_recv().is_err());
+        bridge.detach_exec_pty("s");
+        bridge.emit(CoreEvent::PtyData {
+            kind: PtyKind::ExecPty,
+            id: "s".into(),
+            data: "late".into(),
+        });
+        assert!(bridge.slots().exec.by_id.is_empty());
     }
 }

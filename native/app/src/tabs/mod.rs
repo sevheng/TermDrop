@@ -3,8 +3,9 @@
 //! Phase 4 of docs/gpui-migration-plan.md.
 //!
 //! [`CoreContent`] is the shell's `TabContentFactory`. It owns the routing of
-//! core events to the terminal they belong to, and tears each session down
-//! when its tab closes.
+//! core events to the terminal (or right-hand panel) they belong to, builds
+//! and keeps the right panel's views, and tears each session down when its
+//! tab closes.
 
 mod local;
 mod ssh;
@@ -24,7 +25,16 @@ use crate::app::tabs::Tab;
 use crate::app::{AppModel, LocalShellChoice};
 use crate::backend::TabContentFactory;
 use crate::core_backend::Services;
-use terminal::{Target, TerminalTab};
+use crate::panels::{
+    DefaultPanels, EventKey, PanelCache, PanelContext, PanelKind, PanelLinks, PanelRoutes,
+    dispatch_to_panels,
+};
+use terminal::Target;
+pub(crate) use terminal::{TerminalTab, term_palette};
+
+/// The open terminal views by tab id, shared with the panels so they can
+/// type into the active one or put a pane under it.
+pub(crate) type Terminals = Rc<RefCell<HashMap<String, WeakEntity<TerminalTab>>>>;
 
 /// How many events to hold for a session that has no view yet. A session
 /// sends a handful before its view registers (connected, maybe an error), so
@@ -37,10 +47,15 @@ const MAX_ORPHANS: usize = 16;
 /// started, so its first events can reach the UI thread before the view
 /// knows its own id. Those are held as orphans and handed over on
 /// [`Hub::register`].
+///
+/// Panel events (SFTP progress, docker exec PTYs) go to the panels that
+/// subscribed through `PanelContext::subscribe`; their ids are known before
+/// anything is emitted, so they need no orphans.
 #[derive(Default)]
 pub(crate) struct Hub {
     routes: HashMap<String, WeakEntity<TerminalTab>>,
     orphans: HashMap<String, Vec<CoreEvent>>,
+    pub(crate) panels: PanelRoutes,
 }
 
 pub(crate) type SharedHub = Rc<RefCell<Hub>>;
@@ -64,7 +79,7 @@ impl Hub {
 }
 
 /// The terminal session an event is about, if it is one a tab handles.
-/// Docker exec PTYs are routed by the panel that will own them (Phase 5).
+/// Docker exec PTYs and SFTP progress go to panels instead (`EventKey::of`).
 fn session_of(event: &CoreEvent) -> Option<&str> {
     match event {
         CoreEvent::PtyConnected {
@@ -86,6 +101,10 @@ fn session_of(event: &CoreEvent) -> Option<&str> {
 }
 
 fn dispatch(hub: &SharedHub, event: CoreEvent, cx: &mut App) {
+    if let Some(key) = EventKey::of(&event) {
+        dispatch_to_panels(hub, key, &event, cx);
+        return;
+    }
     let Some(id) = session_of(&event).map(str::to_string) else {
         return;
     };
@@ -117,18 +136,31 @@ pub struct CoreContent {
     events: RefCell<Option<async_channel::Receiver<CoreEvent>>>,
     hub: SharedHub,
     model: RefCell<Option<WeakEntity<AppModel>>>,
-    terminals: RefCell<HashMap<String, WeakEntity<TerminalTab>>>,
+    terminals: Terminals,
+    panels: RefCell<PanelCache>,
+    links: Rc<PanelLinks>,
 }
 
 impl CoreContent {
     pub fn new(services: Arc<Services>, events: async_channel::Receiver<CoreEvent>) -> Self {
+        let hub = SharedHub::default();
+        let terminals = Terminals::default();
         Self {
             services,
             events: RefCell::new(Some(events)),
-            hub: SharedHub::default(),
+            links: PanelLinks::new(hub.clone(), terminals.clone()),
+            hub,
             model: RefCell::new(None),
-            terminals: RefCell::new(HashMap::new()),
+            terminals,
+            panels: RefCell::new(PanelCache::new(Box::new(DefaultPanels))),
         }
+    }
+
+    fn terminal(&self, tab_id: &str) -> Option<Entity<TerminalTab>> {
+        self.terminals
+            .borrow()
+            .get(tab_id)
+            .and_then(WeakEntity::upgrade)
     }
 }
 
@@ -210,10 +242,61 @@ impl TabContentFactory for CoreContent {
         }
     }
 
-    fn tab_closed(&self, tab: &Tab, cx: &mut App) {
+    fn tab_closed(&self, tab: &Tab, last_of_kind_for_host: bool, cx: &mut App) {
         let view = self.terminals.borrow_mut().remove(&tab.id);
         if let Some(view) = view.and_then(|v| v.upgrade()) {
             view.update(cx, |view, cx| view.shutdown(cx));
+        }
+        if tab.kind.has_right_panel()
+            && let Some(host_id) = tab.host_id
+        {
+            self.panels
+                .borrow_mut()
+                .tab_closed(&tab.id, host_id, last_of_kind_for_host);
+        }
+    }
+
+    fn right_panel(
+        &self,
+        tab: &Tab,
+        kind: PanelKind,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyView> {
+        let host_id = tab.host_id.filter(|_| tab.kind.has_right_panel())?;
+        let sftp_session_id = tab.sftp.session_id().map(str::to_string);
+        // The SFTP panel needs its session; the frame shows the connecting or
+        // failed state until there is one.
+        if kind == PanelKind::Sftp && sftp_session_id.is_none() {
+            return None;
+        }
+        let model = self.model.borrow().as_ref().and_then(WeakEntity::upgrade)?;
+        let make_ctx = || {
+            let per_tab = kind.scope() == crate::panels::PanelScope::PerTab;
+            PanelContext::new(
+                kind,
+                host_id,
+                per_tab.then(|| tab.id.clone()),
+                if kind == PanelKind::Sftp {
+                    sftp_session_id.clone()
+                } else {
+                    None
+                },
+                self.services.clone(),
+                model,
+                self.links.clone(),
+            )
+        };
+        Some(
+            self.panels
+                .borrow_mut()
+                .get_or_build(kind, &tab.id, host_id, make_ctx, window, cx),
+        )
+    }
+
+    fn retry_sftp(&self, tab: &Tab, window: &mut Window, cx: &mut App) {
+        if let Some(view) = self.terminal(&tab.id) {
+            view.update(cx, |view, cx| view.retry_sftp(window, cx));
         }
     }
 }

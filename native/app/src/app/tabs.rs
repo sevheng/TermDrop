@@ -22,6 +22,34 @@ pub struct Tab {
     /// For a local tab, the detected shell it was opened with (an id from
     /// `local_shells`, never a program path); `None` is the default shell.
     pub shell_id: Option<String>,
+    /// The tab's SFTP connection, which the file panel uses. Only an SSH tab
+    /// has one; it is opened in the background once the shell is up.
+    pub sftp: SftpLink,
+}
+
+/// Where a tab's SFTP connection stands: the Vue tab's `sftpSessionId`, plus
+/// the failure the Vue app only toasted (and then left the panel spinning).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SftpLink {
+    /// Not an SSH tab: no file panel.
+    #[default]
+    None,
+    /// Waiting for the shell, or for `sftp_connect`.
+    Pending,
+    /// The core's SFTP session id. Stable for the tab's life: a reconnect
+    /// replaces the session under the same id.
+    Ready(String),
+    /// `sftp_connect` failed; the shell is unaffected.
+    Failed(String),
+}
+
+impl SftpLink {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Ready(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 impl Tab {
@@ -39,6 +67,11 @@ impl Tab {
             connected: !kind.is_terminal(),
             connecting: false,
             shell_id: None,
+            sftp: if kind.has_right_panel() {
+                SftpLink::Pending
+            } else {
+                SftpLink::None
+            },
         }
     }
 }

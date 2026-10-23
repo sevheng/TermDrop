@@ -19,6 +19,7 @@ use crate::app::AppModel;
 use crate::app::display::{mongo_display_uri, redis_display_uri, vnc_display_target};
 use crate::app::host_kind::{HostKind, KindFields, has_vnc};
 use crate::app::tabs::Tab;
+use crate::panels::PanelKind;
 
 /// One row of the host list, already safe to display.
 ///
@@ -256,8 +257,27 @@ pub trait TabContentFactory: 'static {
 
     /// The tab left the strip, after the user confirmed. Where a session is
     /// torn down: the view is dropped right after, and a dropped view cannot
-    /// be relied on to say goodbye.
-    fn tab_closed(&self, _tab: &Tab, _cx: &mut App) {}
+    /// be relied on to say goodbye. `last_of_kind_for_host` is true when no
+    /// other tab of the same kind is open on the host, which is when the
+    /// host's shared panels go.
+    fn tab_closed(&self, _tab: &Tab, _last_of_kind_for_host: bool, _cx: &mut App) {}
+
+    /// The right panel's `kind` beside `tab`, built on first call and kept.
+    /// `None` when this factory has no panels (the demo), or for the SFTP
+    /// panel while the tab's SFTP session is not ready; the window then
+    /// draws the state itself.
+    fn right_panel(
+        &self,
+        _tab: &Tab,
+        _kind: PanelKind,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<AnyView> {
+        None
+    }
+
+    /// Try the tab's SFTP connection again after it failed.
+    fn retry_sftp(&self, _tab: &Tab, _window: &mut Window, _cx: &mut App) {}
 }
 
 /// The default factory: a labelled placeholder per tab kind.

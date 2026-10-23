@@ -26,3 +26,9 @@ serde_json = "1"
 # Native file dialogs (export/import, key file). GTK on Linux, as the Tauri
 # dialog plugin uses, rather than the XDG portal, which WSLg lacks.
 rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
+# Local time for the panels' dates (panels/common.rs). Already in the lock
+# through GPUI Kit.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Docker exec PTY ids (PanelContext::new_pty_session_id). In the lock through
+# termdrop-core.
+uuid = { version = "1", features = ["v4"] }

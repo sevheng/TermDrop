@@ -14,11 +14,13 @@ use termdrop_core::{CoreError, TrustPrompt, crypto, db, state};
 
 use gpui_kit::{Context, Window};
 
-use super::terminal::{Status, TerminalTab};
+use super::terminal::{Status, Target, TerminalTab, lock};
+use crate::app::tabs::SftpLink;
 use crate::ui::dialogs::{PromptOptions, prompt};
 use crate::ui::host_key_dialog::{
     Hop, HostKeyPrompt, HostKeyResponse, HostKeyVerdict, open_host_key_dialog,
 };
+use crate::ui::toast::{ToastKind, toast};
 
 /// What one connect attempt carries: the answers the user has given so far.
 #[derive(Debug, Clone, Default)]
@@ -112,7 +114,7 @@ impl TerminalTab {
         self.set_status(Status::Connecting, cx);
         self.model
             .update(cx, |m, cx| m.set_connecting_host(Some(host_id), cx));
-        let (cols, rows) = *super::terminal::lock(&self.size);
+        let (cols, rows) = *lock(&self.size);
         let services = self.services.clone();
         let a = attempt.clone();
         let task = self.services.rt.spawn(async move {
@@ -158,9 +160,21 @@ impl TerminalTab {
             }
             return;
         }
+        let key_auth = self
+            .services
+            .core
+            .get_host(host_id)
+            .ok()
+            .flatten()
+            .is_some_and(|h| h.auth_type == "key");
         let err = match result {
             Ok(id) => {
                 self.adopt_session(id, cx);
+                // The file panel's connection, in the background: the shell
+                // is usable meanwhile, and a failure only warns. A password
+                // the user just typed is passed on, as the Vue store did.
+                let password = attempt.password.clone().filter(|_| !key_auth);
+                self.connect_sftp(host_id, password, window, cx);
                 // The sidebar's "connected 2m ago". A failure here is not the
                 // user's problem: the session is up.
                 if let Err(e) = state::with_db(&self.services.core, |conn| {
@@ -173,13 +187,6 @@ impl TerminalTab {
             }
             Err(e) => e,
         };
-        let key_auth = self
-            .services
-            .core
-            .get_host(host_id)
-            .ok()
-            .flatten()
-            .is_some_and(|h| h.auth_type == "key");
         match (next_step(&err, &attempt, key_auth), err) {
             (Next::AskTrust { accept }, CoreError::Trust(p)) => {
                 self.ask_trust(host_id, attempt, *p, accept, window, cx)
@@ -268,6 +275,96 @@ impl TerminalTab {
         );
     }
 
+    /// Open the tab's SFTP connection (`attachSftp` in the Vue store). The
+    /// tab's `sftp` link goes Pending -> Ready(id) or Failed(error).
+    pub(super) fn connect_sftp(
+        &mut self,
+        host_id: i64,
+        password: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.closed || self.sftp_task.is_some() || lock(&self.sftp).id.is_some() {
+            return;
+        }
+        self.set_sftp(SftpLink::Pending, cx);
+        let core = self.services.core.clone();
+        let slot = self.sftp.clone();
+        // The id is filed (or, if the tab closed meanwhile, disconnected) on
+        // the runtime, under the slot's lock: the view may be gone by the
+        // time the UI side runs, and dropping its task cancels that side.
+        let task = self.services.rt.spawn(async move {
+            let result = core.sftp_connect(host_id, password).await;
+            let Ok(id) = &result else {
+                return result;
+            };
+            let closed = {
+                let mut slot = lock(&slot);
+                if !slot.closed {
+                    slot.id = Some(id.clone());
+                }
+                slot.closed
+            };
+            if closed {
+                let id = id.clone();
+                let _ = tokio::task::spawn_blocking(move || core.sftp_disconnect(&id)).await;
+                return Err(CoreError::Other("tab closed".into()));
+            }
+            result
+        });
+        self.sftp_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = task
+                .await
+                .unwrap_or_else(|e| Err(CoreError::Other(format!("sftp task failed: {e}"))));
+            let _ = cx.update(|window, cx| {
+                this.update(cx, |this, cx| this.sftp_result(result, window, cx))
+            });
+        }));
+    }
+
+    fn sftp_result(
+        &mut self,
+        result: Result<String, CoreError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sftp_task = None;
+        if self.closed {
+            return;
+        }
+        match result {
+            Ok(id) => self.set_sftp(SftpLink::Ready(id), cx),
+            Err(e) => {
+                let message = format!("SFTP connection failed: {e}");
+                toast(window, cx, message.clone(), ToastKind::Warning);
+                self.set_sftp(SftpLink::Failed(message), cx);
+            }
+        }
+    }
+
+    /// The file panel's Retry, after `sftp_connect` failed.
+    pub(crate) fn retry_sftp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Target::Ssh { host_id } = self.target {
+            self.connect_sftp(host_id, None, window, cx);
+        }
+    }
+
+    fn set_sftp(&mut self, link: SftpLink, cx: &mut Context<Self>) {
+        let id = self.tab_id.clone();
+        self.model.update(cx, |m, cx| m.set_tab_sftp(&id, link, cx));
+    }
+
+    /// `sftp_disconnect` only drops a map entry, but dropping the last
+    /// handle closes an `ssh2::Session`, which talks to the server.
+    pub(super) fn disconnect_sftp(&self, sftp_id: String) {
+        let core = self.services.core.clone();
+        self.services.rt.spawn_blocking(move || {
+            if let Err(e) = core.sftp_disconnect(&sftp_id) {
+                tracing::warn!("SFTP disconnect failed: {e}");
+            }
+        });
+    }
+
     /// Restart an ended session under the same id, SSH or local. A host key
     /// that changed since the tab opened fails the reconnect rather than
     /// asking again; that is the core's rule.
@@ -291,10 +388,13 @@ impl TerminalTab {
         let services = self.services.clone();
         let id = session_id.clone();
         let pw = password.clone();
+        // The SFTP handle died with the connection; the core replaces it
+        // under the same id, so the file panel keeps working.
+        let sftp_id = lock(&self.sftp).id.clone();
         let task = self.services.rt.spawn(async move {
             services
                 .core
-                .ssh_reconnect(services.events(), &id, None, pw)
+                .ssh_reconnect(services.events(), &id, sftp_id, pw)
                 .await
         });
         self.pending = Some(cx.spawn_in(window, async move |this, cx| {
