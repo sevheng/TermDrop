@@ -10,6 +10,8 @@
 
 mod local;
 mod ssh;
+mod status_bar;
+mod system_panel;
 mod terminal;
 mod unsupported;
 

@@ -70,6 +70,9 @@ struct CursorLayout {
 pub(crate) struct LayoutState {
     background: Hsla,
     rects: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The find bar's matches on screen, drawn over the cell backgrounds and
+    /// under the text.
+    matches: Vec<(Bounds<Pixels>, Hsla)>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<CursorLayout>,
     link_underline: Option<(Bounds<Pixels>, Hsla)>,
@@ -173,7 +176,7 @@ impl Element for TerminalElement {
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, layout.background));
-            for (rect, color) in layout.rects.drain(..) {
+            for (rect, color) in layout.rects.drain(..).chain(layout.matches.drain(..)) {
                 window.paint_quad(fill(rect, color));
             }
             for (origin, line) in &layout.lines {
@@ -258,6 +261,21 @@ impl TerminalView {
         let cursor = content.cursor;
         let screen_lines = term.screen_lines();
         let bytes_shown = self.feed().stats().bytes_fed;
+        // Yellow at a third, so the selection (the current match) and the
+        // text under both stay readable.
+        let match_color = hsla(rgb(palette.ansi[3])).opacity(0.35);
+        let matches: Vec<(Bounds<Pixels>, Hsla)> = match self.search.as_mut() {
+            Some(active) => crate::search::visible_matches(term, &mut active.regex)
+                .into_iter()
+                .map(|(row, first, last)| {
+                    (
+                        cell_bounds(origin, m, first, row, last + 1 - first),
+                        match_color,
+                    )
+                })
+                .collect(),
+            None => Vec::new(),
+        };
 
         let default_bg = rgb(palette.background);
         let background = hsla(colors[NamedColor::Background].unwrap_or(default_bg));
@@ -526,6 +544,7 @@ impl TerminalView {
         LayoutState {
             background,
             rects,
+            matches,
             lines,
             cursor: cursor_layout,
             link_underline,
