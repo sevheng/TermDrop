@@ -3,9 +3,8 @@
 //! remote-desktop note about Ctrl+Alt+Shift. Opened from the tab bar's
 //! keyboard button and by Ctrl+Shift+?.
 //!
-//! It lists what this app actually binds, which is not quite the Vue list:
-//! the terminal has no Select all, find bar or right-click menu yet, so those
-//! rows are left out until they exist, and the native-only chords (Ctrl+,
+//! It lists what this app actually binds: every Vue row, in Vue's order,
+//! plus the native-only chords (Ctrl+,
 //! Ctrl+Alt+B, Ctrl+PageUp/PageDown, Shift+PageUp/PageDown/Home/End in the
 //! scrollback, Ctrl-click on a link, paste) are listed where they belong.
 
@@ -56,6 +55,10 @@ pub fn sections(mac: bool) -> Vec<Section> {
             title: "Terminal",
             shortcuts: vec![
                 s(copy, "Copy selection"),
+                s("Ctrl + Shift + A", "Select all"),
+                s("Ctrl + F", "Find in terminal"),
+                s("Esc", "Close the find bar"),
+                s("Right-click", "Copy, paste and terminal actions"),
                 s(paste, "Paste"),
                 s("Shift + PageUp / PageDown", "Scroll back a page"),
                 s("Shift + Home / End", "Top / bottom of the scrollback"),
@@ -215,6 +218,10 @@ mod tests {
             .collect();
         for (keys, label) in [
             ("Ctrl + Shift + C", "Copy selection"),
+            ("Ctrl + Shift + A", "Select all"),
+            ("Ctrl + F", "Find in terminal"),
+            ("Esc", "Close the find bar"),
+            ("Right-click", "Copy, paste and terminal actions"),
             ("Ctrl + Tab", "Next tab"),
             ("Ctrl + Shift + Tab", "Previous tab"),
             ("Ctrl + W", "Close active tab"),
@@ -236,21 +243,32 @@ mod tests {
     }
 
     #[test]
-    fn nothing_unbound_is_advertised() {
-        // No find bar, select-all or terminal context menu yet.
-        let terminal = &sections(false)[0];
-        for keys in ["Ctrl + F", "Ctrl + Shift + A", "Esc", "Right-click"] {
-            assert!(
-                terminal.shortcuts.iter().all(|s| s.keys != keys),
-                "{keys} is listed but not bound"
-            );
-        }
+    fn the_terminal_rows_start_in_the_vue_order() {
+        let keys: Vec<_> = sections(false)[0]
+            .shortcuts
+            .iter()
+            .take(5)
+            .map(|s| s.keys)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "Ctrl + Shift + C",
+                "Ctrl + Shift + A",
+                "Ctrl + F",
+                "Esc",
+                "Right-click"
+            ]
+        );
     }
 
     #[test]
     fn mac_uses_cmd_in_the_terminal() {
         let terminal = &sections(true)[0];
         assert_eq!(terminal.shortcuts[0], s("Cmd + C", "Copy selection"));
-        assert_eq!(terminal.shortcuts[4], s("Cmd + Click", "Open a link"));
+        assert_eq!(
+            terminal.shortcuts.last(),
+            Some(&s("Cmd + Click", "Open a link"))
+        );
     }
 }

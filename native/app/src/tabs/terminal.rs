@@ -556,12 +556,12 @@ impl TerminalTab {
     /// port. While the program takes the mouse the click is reported to it
     /// instead and no menu opens, unless Shift is held.
     fn context_menu(this: &WeakEntity<Self>, menu: PopupMenu, cx: &mut App) -> PopupMenu {
-        let Ok((terminal, host_id)) = this.read_with(cx, |tab, _| {
+        let Ok((terminal, host_id, services)) = this.read_with(cx, |tab, _| {
             let host_id = match tab.target {
                 Target::Ssh { host_id } => Some(host_id),
                 Target::Local { .. } => None,
             };
-            (tab.terminal.clone(), host_id)
+            (tab.terminal.clone(), host_id, tab.services.clone())
         }) else {
             return menu;
         };
@@ -577,7 +577,7 @@ impl TerminalTab {
             .item(PopupMenuItem::new("Select All").on_click(move |_, _, cx| {
                 all.update(cx, |t, cx| t.select_all(cx));
             }));
-        match host_id.and_then(|host_id| forward_menu_item(host_id, &selection)) {
+        match host_id.and_then(|host_id| forward_menu_item(services, host_id, &selection)) {
             Some(item) => menu.separator().item(item),
             None => menu,
         }
@@ -594,13 +594,27 @@ impl TerminalTab {
 }
 
 /// The "Forward ..." item for the terminal's selection (TUN-4), on an SSH
-/// tab. A hook for the port-forward work: until it lands there is no
-/// forward editor to open, so there is no item. Wire it as
-/// `detect_forward(selection)` -> a `PopupMenuItem` with its label, whose
-/// click opens the forward editor for `host_id` prefilled as
-/// `createForwardFromSelection` did.
-fn forward_menu_item(_host_id: i64, _selection: &str) -> Option<PopupMenuItem> {
-    None
+/// tab: `detectForwardInfo(selection)` names a port, and the click opens
+/// the forward editor for this tab's host prefilled as
+/// `createForwardFromSelection` did. No item when nothing is detected.
+fn forward_menu_item(
+    services: Arc<Services>,
+    host_id: i64,
+    selection: &str,
+) -> Option<PopupMenuItem> {
+    let hint = crate::panels::tunnels::detect_forward(selection)?;
+    let prefill = hint.prefill();
+    Some(
+        PopupMenuItem::new(hint.label).on_click(move |_, window, cx| {
+            crate::panels::tunnels::open_forward_editor(
+                window,
+                cx,
+                services.clone(),
+                host_id,
+                Some(prefill.clone()),
+            );
+        }),
+    )
 }
 
 impl Render for TerminalTab {

@@ -405,7 +405,7 @@ impl StatusBar {
             let os: SharedString = s.os.clone().into();
             let tip = os.clone();
             out.push(
-                Self::item(IconName::Monitor, p.accent, p)
+                Self::item(IconName::Monitor, p.syn_teal, p)
                     .id("status-os")
                     .max_w(px(140.))
                     .min_w_0()
@@ -416,15 +416,13 @@ impl StatusBar {
                     .into_any_element(),
             );
         }
-        // Tints: Vue's syn-teal / syn-blue / syn-purple have no token in the
-        // native palette yet; accent stands in for all three.
         if !s.load.is_empty() {
             let value = if s.cores.is_empty() {
                 s.load.clone()
             } else {
                 format!("{} / {} cores", s.load, s.cores)
             };
-            out.push(Self::labelled(IconName::Cpu, p.accent, "CPU:", value, p));
+            out.push(Self::labelled(IconName::Cpu, p.syn_blue, "CPU:", value, p));
         }
         if !s.ram.is_empty() {
             out.push(Self::labelled(
@@ -447,7 +445,7 @@ impl StatusBar {
         if !s.uptime.is_empty() {
             out.push(Self::labelled(
                 IconName::Clock,
-                p.accent,
+                p.syn_purple,
                 "Up:",
                 s.uptime.clone(),
                 p,
@@ -466,7 +464,7 @@ impl StatusBar {
                 .into_any_element(),
         );
         out.push(
-            Self::item(IconName::ArrowUp, p.accent, p)
+            Self::item(IconName::ArrowUp, p.syn_blue, p)
                 .child(dash(&s.net_up))
                 .into_any_element(),
         );

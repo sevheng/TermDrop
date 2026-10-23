@@ -218,7 +218,8 @@ bodies), all synchronous, so through `ctx.spawn_blocking`:
 SSH session, host key checked and failing closed), `stop_port_forward(id)`,
 `port_forward_status(id)`.
 
-For the terminal's context menu (`TerminalTab.vue`'s "Forward <port>"):
+For the terminal's context menu (`TerminalTab.vue`'s "Forward <port>"),
+which `forward_menu_item` in `tabs/terminal.rs` does:
 
 ```rust
 use crate::panels::tunnels::{detect_forward, open_forward_editor};
