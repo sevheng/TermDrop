@@ -18,6 +18,10 @@ on:
   push:
     tags:
       - 'native-v*'
+    # A push to this branch packages like workflow_dispatch (artifacts only):
+    # dispatch needs the workflow on master, and this one stays off master.
+    branches:
+      - 'native/package-test'
   workflow_dispatch:
 
 permissions:

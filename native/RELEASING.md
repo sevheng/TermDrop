@@ -87,8 +87,12 @@ ubuntu-22.04:
 
 ## Testing the packaging without a release
 
-Actions → **Native Preview Release** → *Run workflow* on any branch. It runs
-the same build, package and checks, uploads the packages as artifacts named
+Push the commit to test to the branch `native/package-test`
+(`git push -f origin HEAD:native/package-test`). While this workflow is not on
+master, GitHub offers no *Run workflow* button for it, so that push is the way
+in; once it is on master, Actions → **Native Preview Release** → *Run workflow*
+on any branch does the same. Either way it runs the same build, package and
+checks, uploads the packages as artifacts named
 `termdrop-native-preview-<version>-<platform>`, and creates no release (the
 release job runs only for `native-v*` tags).
 
