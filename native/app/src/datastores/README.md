@@ -281,7 +281,9 @@ Redis:
 Events (`subscribe_session`): `VncBell`, `VncClipboard`, `VncResize`,
 `VncDisconnected`, `VncError`. A missing VNC password is not a keyring
 error: the server rejects the empty one, and `run_with_secret` asks ("VNC
-password required") only when none is stored. A tunnel's missing SSH
+password required") only when none is stored. An answer the server rejects
+too is forgotten again (`common::forget_rejected_answer`), so Reconnect asks
+again rather than repeating a typo. A tunnel's missing SSH
 password is a keyring error, asked for as for Redis. The render path is
 described in `vnc/renderer.rs` and `vnc/mod.rs`.
 

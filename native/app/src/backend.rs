@@ -230,6 +230,9 @@ pub trait HostStore: Send + Sync {
     fn store_secret(&self, kind: SecretKind, host_id: i64, secret: &str) -> Result<()>;
     /// Whether a secret is stored, so an editor can say so without showing it.
     fn has_secret(&self, kind: SecretKind, host_id: i64) -> bool;
+    /// Forget a stored secret. Only VNC has a use for it (a password typed
+    /// at its prompt that the server rejected); the others are a no-op.
+    fn clear_secret(&self, kind: SecretKind, host_id: i64) -> Result<()>;
     /// Every host as the JSON array an export file holds.
     fn export_hosts(&self) -> Result<String>;
     fn import_hosts(&self, entries: Vec<ImportEntry>) -> Result<ImportSummary>;
@@ -435,6 +438,14 @@ impl HostStore for FakeBackend {
         self.secrets
             .lock()
             .is_ok_and(|s| s.contains(&(kind, host_id)))
+    }
+
+    fn clear_secret(&self, kind: SecretKind, host_id: i64) -> Result<()> {
+        self.secrets
+            .lock()
+            .map_err(|_| anyhow!("secrets poisoned"))?
+            .remove(&(kind, host_id));
+        Ok(())
     }
 
     fn export_hosts(&self) -> Result<String> {

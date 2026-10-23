@@ -173,6 +173,12 @@ impl AppModel {
         self.store.has_secret(kind, host_id)
     }
 
+    pub fn clear_secret(&self, kind: SecretKind, host_id: i64) -> Result<(), String> {
+        self.store
+            .clear_secret(kind, host_id)
+            .map_err(|e| e.to_string())
+    }
+
     /// Delete a host after the user confirmed. Every tab for it closes first,
     /// each the way its own kind closes, as the Vue sidebar's `deleteHost`
     /// did: the row's sessions must not outlive it.

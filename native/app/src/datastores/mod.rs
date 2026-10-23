@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use termdrop_core::{Core, CoreEvent, Events};
 
-use self::common::{MissingSecret, next_secret_prompt};
+use self::common::{MissingSecret, forget_rejected_answer, next_secret_prompt};
 use crate::app::AppModel;
 use crate::app::display::{mongo_display_uri, redis_display_uri, vnc_display_target};
 use crate::app::tab_kind::TabKind;
@@ -340,6 +340,18 @@ impl ServiceTabContext {
                     .spawn(call(ctx.core().clone(), ssh_password.clone()))
                     .await
                     .unwrap_or_else(|e| Err(task_failed(e)));
+            }
+            if let Err(err) = &result
+                && forget_rejected_answer(ctx.kind, &asked, err)
+            {
+                let cleared = cx.update(|_, cx| {
+                    ctx.model
+                        .read(cx)
+                        .clear_secret(ctx.kind.secret_kind(), ctx.host_id)
+                });
+                if let Ok(Err(e)) = cleared {
+                    tracing::warn!("Could not forget the rejected password: {e}");
+                }
             }
             deliver(this, cx, result, done);
         })

@@ -192,6 +192,17 @@ pub fn next_secret_prompt(
     missing_secret(kind, err).filter(|need| !asked.contains(need))
 }
 
+/// Whether a VNC password typed at the prompt was rejected too, and must
+/// be forgotten. The prompt stores what it is given before the retry, and
+/// a stored password is never asked for again (a wrong stored one is the
+/// host editor's to fix): keeping a mistyped answer turned Reconnect into
+/// a button that could only fail, with no prompt left to correct it.
+pub fn forget_rejected_answer(kind: DatastoreKind, asked: &[MissingSecret], err: &str) -> bool {
+    kind == DatastoreKind::Vnc
+        && asked.contains(&MissingSecret::Datastore)
+        && missing_secret(kind, err) == Some(MissingSecret::Datastore)
+}
+
 // ---- operation progress --------------------------------------------------
 
 /// Where a backup or restore stands.
@@ -701,6 +712,29 @@ mod tests {
         );
         // Any other error is shown as it is.
         assert_eq!(next_secret_prompt(Mongo, "connection refused", &[]), None);
+    }
+
+    #[test]
+    fn only_a_rejected_vnc_answer_is_forgotten() {
+        use DatastoreKind::*;
+        use MissingSecret::*;
+        let rejected = "the VNC password was rejected: Authentication failure";
+        assert!(forget_rejected_answer(Vnc, &[Datastore], rejected));
+        // Nothing was typed: what is stored came from the editor.
+        assert!(!forget_rejected_answer(Vnc, &[], rejected));
+        assert!(!forget_rejected_answer(Vnc, &[Bastion], rejected));
+        // The answer got past authentication; something else failed.
+        assert!(!forget_rejected_answer(
+            Vnc,
+            &[Datastore],
+            "could not connect to x:5901"
+        ));
+        // MongoDB and Redis report a missing secret, not a wrong one.
+        assert!(!forget_rejected_answer(
+            Redis,
+            &[Datastore],
+            "keyring retrieve failed for Redis: x"
+        ));
     }
 
     #[test]

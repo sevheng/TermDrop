@@ -212,6 +212,13 @@ impl HostStore for CoreStore {
         }
     }
 
+    fn clear_secret(&self, kind: SecretKind, host_id: i64) -> Result<()> {
+        match kind {
+            SecretKind::Vnc => hosts::clear_vnc_secret(host_id).map_err(|e| anyhow!(e)),
+            SecretKind::SshPassword | SecretKind::Mongo | SecretKind::Redis => Ok(()),
+        }
+    }
+
     fn export_hosts(&self) -> Result<String> {
         self.core.export_hosts().map_err(|e| anyhow!(e))
     }
