@@ -60,6 +60,8 @@ use crate::ui::toast::ToastKind;
 const ROW_H: f32 = 24.;
 const TREE_W: f32 = 256.;
 const VALUE_W: f32 = 384.;
+/// One row of a string value.
+const VALUE_LINE_H: f32 = 16.;
 const TTL_W: f32 = 112.;
 const TYPE_W: f32 = 96.;
 const SIZE_W: f32 = 96.;
@@ -580,7 +582,7 @@ impl RedisTab {
                 )
                 .await
             },
-            move |this, result, _, cx| {
+            move |this, result, window, cx| {
                 if seq != this.value_seq {
                     return;
                 }
@@ -594,7 +596,7 @@ impl RedisTab {
                         this.value_lines = if page.kind == "string" {
                             page.entries
                                 .first()
-                                .map(|e| display_lines(&e.value.text))
+                                .map(|e| display_lines(&e.value.text, string_cols(window, cx)))
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(SharedString::from)
@@ -1462,6 +1464,28 @@ impl RedisTab {
             .into_any_element()
     }
 
+    fn render_value_lines(
+        &mut self,
+        range: std::ops::Range<usize>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        range
+            .filter_map(|i| self.value_lines.get(i).cloned())
+            .map(|line| {
+                // Already cut to fit, and never wrapped again: every row is
+                // the same height. An empty line still takes its row.
+                div()
+                    .w_full()
+                    .h(px(VALUE_LINE_H))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .child(line)
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     /// A string's lines, or a table of elements; the note sits above, never
     /// under, what it describes.
     fn render_entries(
@@ -1469,7 +1493,7 @@ impl RedisTab {
         page: &RedisValuePage,
         p: &Palette,
         mono: SharedString,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let note = truncated_note(page).map(|note| {
             text_2xs(div())
@@ -1490,14 +1514,24 @@ impl RedisTab {
             .font_family(mono.clone())
             .text_xs();
         let content: AnyElement = if page.kind == "string" {
-            scroll
+            // One row per display line, cut to the pane's width when the
+            // value loaded, so only the rows on screen are laid out.
+            div()
+                .flex_1()
+                .min_h_0()
                 .px_3()
                 .py_2()
+                .font_family(mono.clone())
+                .text_xs()
                 .text_color(p.ink)
-                .children(self.value_lines.iter().map(|line| {
-                    // An empty line still takes its height.
-                    div().min_h(px(16.)).child(line.clone())
-                }))
+                .child(
+                    uniform_list(
+                        "redis-value-lines",
+                        self.value_lines.len(),
+                        cx.processor(Self::render_value_lines),
+                    )
+                    .size_full(),
+                )
                 .into_any_element()
         } else {
             let field = field_header(&page.kind);
@@ -1615,6 +1649,23 @@ impl Render for RedisTab {
             })
             .child(div().flex_1().min_h_0().flex().flex_col().child(body))
     }
+}
+
+/// How many monospace columns a string value's row holds: the value pane's
+/// width, less its padding and the scrollbar, over the mono font's advance.
+fn string_cols(window: &Window, cx: &App) -> usize {
+    let font_size = window.rem_size() * 0.75; // text_xs
+    let text = window.text_system();
+    let font_id = text.resolve_font(&gpui_kit::font(mono_font(cx)));
+    let advance = text
+        .advance(font_id, font_size, 'm')
+        .map(|s| s.width)
+        .unwrap_or(font_size * 0.6);
+    let width = VALUE_W - 24. - 12.;
+    if advance <= px(0.) {
+        return 1;
+    }
+    ((width / f32::from(advance)).floor() as usize).max(1)
 }
 
 fn empty_tree() -> KeyTree {

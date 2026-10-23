@@ -34,3 +34,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 uuid = { version = "1", features = ["v4"] }
 # Decoding SFTP image previews (sftp_read_file_base64). In the lock through termdrop-core.
 base64 = "0.22"
+# Display columns of a Redis string value cut into rows (datastores/redis).
+# In the lock through GPUI Kit.
+unicode-width = "0.2"

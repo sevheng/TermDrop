@@ -24,9 +24,8 @@ pub const RESTORE_DB_COUNT: i64 = 16;
 /// says how much it left out.
 pub const MAX_CELL_BYTES: usize = 16 * 1024;
 
-/// A string value is drawn a line at a time, and a line longer than this is
-/// drawn as several, so one 256 KB line of JSON is not one text run.
-pub const MAX_LINE_BYTES: usize = 2048;
+/// The columns a tab takes when a string value is cut into display lines.
+pub const TAB_COLS: usize = 4;
 
 // ---- patterns --------------------------------------------------------------
 
@@ -363,28 +362,43 @@ pub fn clip_cell(text: &str) -> (&str, usize) {
 }
 
 /// A string value split into the lines it is drawn as: at each newline, and
-/// a line over [`MAX_LINE_BYTES`] into pieces of at most that (on character
-/// boundaries). Joined back with newlines at the original breaks, the
-/// pieces are the whole text.
-pub fn display_lines(text: &str) -> Vec<String> {
+/// a line wider than `cols` monospace columns into pieces that fit (on
+/// character boundaries; a wide character takes two columns, a combining
+/// mark none). Joined back with newlines at the original breaks, the pieces
+/// are the whole text.
+///
+/// The view wraps here rather than letting the text element wrap, as Vue's
+/// `whitespace-pre-wrap break-all` did: every piece is then one row of the
+/// same height, which is what lets a 256 KB preview be a virtualised list.
+/// Left to GPUI, a column of long wrapping lines in a scroll container was
+/// laid out one row high each and painted on top of one another.
+pub fn display_lines(text: &str, cols: usize) -> Vec<String> {
+    let cols = cols.max(1);
     let mut out = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.len() <= MAX_LINE_BYTES {
-            out.push(line.to_string());
-            continue;
-        }
-        let mut rest = line;
-        while !rest.is_empty() {
-            let mut end = MAX_LINE_BYTES.min(rest.len());
-            while !rest.is_char_boundary(end) {
-                end -= 1;
+        let mut start = 0;
+        let mut used = 0;
+        for (at, ch) in line.char_indices() {
+            let width = char_cols(ch);
+            if used + width > cols && at > start {
+                out.push(line[start..at].to_string());
+                start = at;
+                used = 0;
             }
-            out.push(rest[..end].to_string());
-            rest = &rest[end..];
+            used += width;
         }
+        out.push(line[start..].to_string());
     }
     out
+}
+
+/// The monospace columns one character takes.
+fn char_cols(ch: char) -> usize {
+    if ch == '\t' {
+        return TAB_COLS;
+    }
+    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1)
 }
 
 // ---- databases and the tree ------------------------------------------------
@@ -809,12 +823,39 @@ mod tests {
         assert_eq!(shown.len() + hidden, long.len());
         assert!(shown.len() <= MAX_CELL_BYTES);
 
-        assert_eq!(display_lines("a\r\nb\n\nc"), ["a", "b", "", "c"]);
-        let line = "\u{e9}".repeat(MAX_LINE_BYTES);
-        let pieces = display_lines(&line);
-        assert_eq!(pieces.len(), 2);
+        assert_eq!(display_lines("a\r\nb\n\nc", 80), ["a", "b", "", "c"]);
+        assert_eq!(display_lines("", 80), [""]);
+    }
+
+    #[test]
+    fn a_long_line_is_cut_to_the_columns_and_nothing_is_lost() {
+        // The 256 KB preview of a 5 MB string: one line, thousands of rows.
+        let line = "x".repeat(256 * 1024);
+        let pieces = display_lines(&line, 48);
+        assert_eq!(pieces.len(), (256 * 1024usize).div_ceil(48));
+        assert!(pieces.iter().all(|p| p.len() <= 48));
         assert_eq!(pieces.concat(), line);
-        assert!(pieces.iter().all(|p| p.len() <= MAX_LINE_BYTES));
+
+        // Two bytes each, one column each: cut by columns, not bytes.
+        let accents = "\u{e9}".repeat(10);
+        assert_eq!(
+            display_lines(&accents, 4),
+            ["\u{e9}".repeat(4), "\u{e9}".repeat(4), "\u{e9}".repeat(2)]
+        );
+
+        // A wide character takes two columns and is never split.
+        assert_eq!(
+            display_lines("\u{4e2d}\u{6587}ab", 3),
+            ["\u{4e2d}", "\u{6587}a", "b"]
+        );
+        // A combining mark stays with its letter.
+        assert_eq!(display_lines("ae\u{301}b", 2), ["ae\u{301}", "b"]);
+        // A character wider than the row still gets a row of its own.
+        assert_eq!(display_lines("\u{4e2d}", 1), ["\u{4e2d}"]);
+        assert_eq!(display_lines("a\tb", 4), ["a", "\t", "b"]);
+
+        let text = "first line\n".to_string() + &"y".repeat(100) + "\nlast";
+        assert_eq!(display_lines(&text, 30).concat(), text.replace('\n', ""));
     }
 
     fn db(index: i64, keys: u64) -> RedisDbInfo {
