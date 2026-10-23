@@ -1,6 +1,6 @@
 //! What fills a tab when the app runs on the real backend: a terminal for
-//! SSH and local tabs, the datastore views (`crate::datastores`) for MongoDB
-//! and Redis tabs, and for VNC, not ported yet, a notice saying so.
+//! SSH and local tabs, and the service views (`crate::datastores`) for
+//! MongoDB, Redis and remote-desktop (VNC) tabs.
 //! Phase 4 of docs/gpui-migration-plan.md.
 //!
 //! [`CoreContent`] is the shell's `TabContentFactory`. It owns the routing of

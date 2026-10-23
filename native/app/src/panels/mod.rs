@@ -122,6 +122,11 @@ pub enum EventKey {
     /// `CoreEvent::RedisProgress` / `RedisCancelled` of the Redis backup or
     /// restore with this op id (the Redis tab, `datastores::redis`).
     RedisOp(String),
+    /// `CoreEvent::VncBell` / `VncClipboard` / `VncResize` /
+    /// `VncDisconnected` / `VncError` of the remote-desktop session with this
+    /// id (`datastores::vnc`). Held until subscribed: the id is known only
+    /// once `vnc_connect` returns, and the session may already have ended.
+    VncSession(String),
 }
 
 impl EventKey {
@@ -154,6 +159,11 @@ impl EventKey {
             CoreEvent::MongoCancelled { op_id, .. } => Some(Self::MongoOp(op_id.clone())),
             CoreEvent::RedisProgress(p) => Some(Self::RedisOp(p.op_id.clone())),
             CoreEvent::RedisCancelled { op_id, .. } => Some(Self::RedisOp(op_id.clone())),
+            CoreEvent::VncBell { session_id }
+            | CoreEvent::VncClipboard { session_id, .. }
+            | CoreEvent::VncResize { session_id, .. }
+            | CoreEvent::VncDisconnected { session_id }
+            | CoreEvent::VncError { session_id, .. } => Some(Self::VncSession(session_id.clone())),
             _ => None,
         }
     }
@@ -169,7 +179,15 @@ type Callback = Rc<dyn Fn(&CoreEvent, &mut App) -> bool>;
 pub(crate) struct PanelRoutes {
     next: u64,
     subs: HashMap<EventKey, Vec<(u64, Callback)>>,
+    /// Events for a key nobody has subscribed to yet, for the keys whose id
+    /// is learned only after the core starts emitting ([`EventKey::VncSession`]).
+    held: HashMap<EventKey, Vec<CoreEvent>>,
 }
+
+/// How many events to hold per key, and how many keys, before giving up on
+/// a subscriber that never came.
+const MAX_HELD_PER_KEY: usize = 16;
+const MAX_HELD_KEYS: usize = 64;
 
 impl PanelRoutes {
     fn add(&mut self, key: EventKey, callback: Callback) -> u64 {
@@ -196,6 +214,25 @@ impl PanelRoutes {
         self.subs.get(key).cloned().unwrap_or_default()
     }
 
+    /// Keep `event` for the first subscriber to `key`, when the key is one
+    /// whose events can arrive before anyone could subscribe.
+    fn hold(&mut self, key: &EventKey, event: &CoreEvent) {
+        if !matches!(key, EventKey::VncSession(_)) {
+            return;
+        }
+        if self.held.len() >= MAX_HELD_KEYS && !self.held.contains_key(key) {
+            self.held.clear();
+        }
+        let held = self.held.entry(key.clone()).or_default();
+        if held.len() < MAX_HELD_PER_KEY {
+            held.push(event.clone());
+        }
+    }
+
+    fn take_held(&mut self, key: &EventKey) -> Vec<CoreEvent> {
+        self.held.remove(key).unwrap_or_default()
+    }
+
     pub(crate) fn remove_dead(&mut self, key: &EventKey, dead: &[u64]) {
         for token in dead {
             self.remove(key, *token);
@@ -216,6 +253,10 @@ pub(crate) fn dispatch_to_panels(
     cx: &mut App,
 ) {
     let callbacks = hub.borrow().panels.callbacks(&key);
+    if callbacks.is_empty() {
+        hub.borrow_mut().panels.hold(&key, event);
+        return;
+    }
     let dead: Vec<u64> = callbacks
         .into_iter()
         .filter(|(_, f)| !f(event, cx))
@@ -242,6 +283,19 @@ pub(crate) fn subscribe_key<V: 'static>(
         key,
         token,
     }
+}
+
+/// [`subscribe_key`], also returning what arrived for `key` before it was
+/// subscribed, for the caller to apply in order (it is inside its own
+/// update, so it cannot be called back here).
+pub(crate) fn subscribe_key_with_held<V: 'static>(
+    links: &PanelLinks,
+    key: EventKey,
+    view: WeakEntity<V>,
+    handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static,
+) -> (PanelSubscription, Vec<CoreEvent>) {
+    let held = links.hub.borrow_mut().panels.take_held(&key);
+    (subscribe_key(links, key, view, handler), held)
 }
 
 /// Keeps a subscription alive; dropping it unsubscribes. Store it in the

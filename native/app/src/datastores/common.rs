@@ -150,10 +150,18 @@ pub enum MissingSecret {
 /// a bastion's password as the Redis one; the native tabs tell them apart.
 pub fn missing_secret(kind: DatastoreKind, err: &str) -> Option<MissingSecret> {
     let own = match kind {
-        DatastoreKind::Mongo => "keyring retrieve failed for MongoDB",
-        DatastoreKind::Redis => "keyring retrieve failed for Redis",
+        DatastoreKind::Mongo => err.contains("keyring retrieve failed for MongoDB"),
+        DatastoreKind::Redis => err.contains("keyring retrieve failed for Redis"),
+        // A VNC password that is not stored is not a keyring error: the
+        // handshake runs with an empty one and the server rejects it
+        // (`vnc::conn::failure_reason`). `run_with_secret` asks only when
+        // none is stored.
+        DatastoreKind::Vnc => {
+            err.starts_with("the VNC password was rejected")
+                || err.starts_with("the user name or password was rejected")
+        }
     };
-    if err.contains(own) {
+    if own {
         return Some(MissingSecret::Datastore);
     }
     if !(err.contains("keyring retrieve failed") || err.contains("No matching entry")) {
@@ -163,7 +171,9 @@ pub fn missing_secret(kind: DatastoreKind, err: &str) -> Option<MissingSecret> {
         // A MongoDB host has no tunnel: any keyring miss is its own secret,
         // as the Vue tab assumed.
         DatastoreKind::Mongo => MissingSecret::Datastore,
-        DatastoreKind::Redis => MissingSecret::Bastion,
+        // Redis and VNC keep their own secrets out of the plain keyring
+        // error, so a bare one is the tunnel's SSH host.
+        DatastoreKind::Redis | DatastoreKind::Vnc => MissingSecret::Bastion,
     })
 }
 
@@ -711,6 +721,18 @@ mod tests {
         assert_eq!(missing_secret(Mongo, ssh), Some(Datastore));
         assert_eq!(missing_secret(Redis, "connection refused"), None);
         assert_eq!(missing_secret(Mongo, "cancelled"), None);
+        // A remote desktop: its own password is a rejection, the tunnel's a
+        // keyring miss.
+        assert_eq!(
+            missing_secret(Vnc, "the VNC password was rejected"),
+            Some(Datastore)
+        );
+        assert_eq!(
+            missing_secret(Vnc, "the user name or password was rejected: locked"),
+            Some(Datastore)
+        );
+        assert_eq!(missing_secret(Vnc, ssh), Some(Bastion));
+        assert_eq!(missing_secret(Vnc, "could not connect to x:5901"), None);
     }
 
     fn mongo(op: &str, stage: &str, percent: u64, detail: Option<&str>) -> CoreEvent {

@@ -9,8 +9,8 @@
 //!   and `termdrop-terminal`.
 //! - [`panels`]: the right-hand panel beside an SSH tab (SFTP, Tunnels,
 //!   Docker, Security); its `README.md` is the contract for each panel.
-//! - [`datastores`]: the MongoDB and Redis tabs; its `README.md` is the
-//!   contract for each.
+//! - [`datastores`]: the MongoDB, Redis and remote-desktop (VNC) tabs; its
+//!   `README.md` is the contract for each.
 
 // The theme config is one `serde_json::json!` object with a key per GPUI Kit
 // colour slot, which is deeper than the macro's default recursion budget.
@@ -47,6 +47,9 @@ pub fn run(store: Arc<dyn HostStore>, factory: Rc<dyn TabContentFactory>) {
             // rebinds them in its own context so they reach the program.
             termdrop_terminal::init(cx);
             bind_keys(cx);
+            // Last: it copies every chord bound so far into the remote
+            // screen's context, so they reach the remote instead.
+            datastores::vnc::init(cx);
             let model = cx.new(|cx| AppModel::new(store, cx));
             factory.start(&model, cx);
             // Before the window opens, so the first frame is in the saved theme.

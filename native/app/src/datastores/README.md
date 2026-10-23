@@ -1,7 +1,7 @@
 # Datastore tab contract
 
-A MongoDB-only or Redis-only host opens as a **tab** (not a right panel),
-one per host and kind, as `openServiceTab` / `closeServiceTab` in
+A MongoDB-only or Redis-only host, and any host's remote desktop (VNC),
+opens as a **tab** (not a right panel), one per host and kind, as `openServiceTab` / `closeServiceTab` in
 `src/stores/connection.js` do. The frame is done:
 
 - **Opening**: double-clicking the row (or its menu) calls
@@ -13,21 +13,24 @@ one per host and kind, as `openServiceTab` / `closeServiceTab` in
   (switching tabs keeps its state).
 - **Closing**: Ctrl+W / the tab's x asks first, then `AppModel::close_tab`.
   `CoreContent::tab_closed` calls `mongodb_disconnect` / `redis_disconnect`
-  (in the core: drop the host's pooled client, or its pooled connections and
-  its SSH tunnel) **only when that was the host's last tab of that kind** —
-  kind as well as host id, `datastores::release_on_close`. Then the view is
-  dropped. Never call either disconnect from a tab.
+  / `vnc_disconnect_host` (in the core: drop the host's pooled client, or
+  its pooled connections and its SSH tunnel, or its VNC sessions and
+  tunnel) **only when that was the host's last tab of that kind** — kind as
+  well as host id, `datastores::release_on_close` (a VNC tab sits beside the
+  shell on an SSH host). Then the view is dropped. Never call these from a
+  tab; a VNC tab closes only its own session (`vnc_disconnect`).
 
 Each tab is one folder with one entry point:
 
 ```rust
-// datastores/mongo/mod.rs, datastores/redis/mod.rs
+// datastores/mongo/mod.rs, datastores/redis/mod.rs, datastores/vnc/mod.rs
 pub fn build(ctx: ServiceTabContext, window: &mut Window, cx: &mut App) -> AnyView
 ```
 
-Both are built: `mongo/` (tree, documents, indexes, backup and restore)
-and `redis/` (key tree, key list, value view, backup and restore). The
-placeholder they started from is gone.
+All three are built: `mongo/` (tree, documents, indexes, backup and
+restore), `redis/` (key tree, key list, value view, backup and restore) and
+`vnc/` (the remote screen; see "Remote desktop" below). The placeholder
+they started from is gone.
 
 **Ownership:** each tab's own code stays in its folder. What both use, or
 what a third tab would want, goes in `common.rs` (data shapes and drawing
@@ -39,8 +42,8 @@ there rather than a private copy, and say so in the report.
 ```rust
 #[derive(Clone)]
 pub struct ServiceTabContext {
-    pub kind: DatastoreKind,          // Mongo | Redis
-    pub tab_id: String,               // "mongo-3", "redis-4"
+    pub kind: DatastoreKind,          // Mongo | Redis | Vnc
+    pub tab_id: String,               // "mongo-3", "redis-4", "vnc-5"
     pub host_id: i64,                 // the MongoDB- or Redis-only host
     pub services: Arc<Services>,      // .core: Arc<Core>, .rt: tokio Runtime, .bridge
     pub model: Entity<AppModel>,      // hosts, tabs, theme, settings
@@ -67,6 +70,10 @@ impl ServiceTabContext {
     pub fn new_op_id(&self) -> String;                 // "mongo-op-<uuid>" / "redis-op-<uuid>"
     pub fn subscribe_op<V: 'static>(&self, op_id: &str, view: WeakEntity<V>,
         handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static) -> OpSubscription;
+    // A VNC session's events, plus what it emitted before the view could listen.
+    pub fn subscribe_session<V: 'static>(&self, session_id: &str, view: WeakEntity<V>,
+        handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static)
+        -> (OpSubscription, Vec<CoreEvent>);
     pub fn cancel_op(&self, op_id: &str);              // mongodb_cancel / redis_cancel
     pub fn app_version(&self) -> &'static str;         // for redis_export's header
 
@@ -259,6 +266,25 @@ Redis:
 - Backup files are validated before allocating (`redis_backup.rs`); show
   the error, which names an offset, rather than retrying.
 
+### Remote desktop (`termdrop_core::vnc_ops`, types in `termdrop_core::vnc`)
+
+| Call | Returns | Notes |
+|---|---|---|
+| `vnc_connect(events, host_id, password, ssh_password)` | `VncSessionInfo { session_id, width, height, desktop_name, tunnelled, security, view_only }` | Opens the host's tunnel when it has one (its own SSH session; an SSH host tunnels through itself), handshakes, starts the session thread. `password: None` reads the keyring. Wrap in `run_with_secret`. |
+| `vnc_open_frame_channel(&session_id, sink)` | `()` | The `ByteSink` frames go to. No frame is requested before it, and attaching one forces a full update. |
+| `vnc_frame_ack(&session_id, seq)` | `()` | After the frame is applied: the flow control. |
+| `vnc_set_paused(&session_id, paused)` | `()` | While the tab or window is hidden. |
+| `vnc_pointer` / `vnc_key` / `vnc_key_sequence` | `()` | Dropped by the core in view-only mode. |
+| `vnc_refresh`, `vnc_set_view_only`, `vnc_send_clipboard` (`-> lossy`) | | |
+| `vnc_disconnect(&session_id)` | `()` | The tab's own session (on release). The frame calls `vnc_disconnect_host` for the host's last tab. |
+
+Events (`subscribe_session`): `VncBell`, `VncClipboard`, `VncResize`,
+`VncDisconnected`, `VncError`. A missing VNC password is not a keyring
+error: the server rejects the empty one, and `run_with_secret` asks ("VNC
+password required") only when none is stored. A tunnel's missing SSH
+password is a keyring error, asked for as for Redis. The render path is
+described in `vnc/renderer.rs` and `vnc/mod.rs`.
+
 ## Lifetimes
 
 | What | Keyed by | Built | Dropped |
@@ -267,6 +293,8 @@ Redis:
 | The core's pooled MongoDB client | host | first call | host's last MongoDB tab closes, or the host is edited/deleted |
 | The core's Redis connections | `(host, db)` | `redis_connect` / first call on a db | host's last Redis tab closes, or the host is edited/deleted |
 | The Redis tunnel | host | first `redis_connect` | as the Redis connections |
+| A VNC session | the tab | `vnc_connect` | the tab closes, or the session ends |
+| The VNC tunnel | host | first `vnc_connect` | the host's last session closes (`release_vnc_host`) |
 
 A host edited while its tab is open drops the pool (`Core::update_host`), so
 the next call reconnects with the new address; listen for

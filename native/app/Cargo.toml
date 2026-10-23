@@ -37,3 +37,7 @@ base64 = "0.22"
 # Display columns of a Redis string value cut into rows (datastores/redis).
 # In the lock through GPUI Kit.
 unicode-width = "0.2"
+# Decoding the Tight JPEG rectangles a VNC session passes through, and the
+# frames GPUI's RenderImage is built from (datastores/vnc). In the lock
+# through GPUI, with the same features.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }

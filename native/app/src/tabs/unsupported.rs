@@ -1,6 +1,6 @@
-//! A tab whose kind the native app cannot open yet: VNC (Phase 7). MongoDB
-//! and Redis tabs are built by `crate::datastores`; their notices here are
-//! reached only if the model is gone. It says so, and why, rather than showing a
+//! A tab the native app cannot fill. MongoDB, Redis and VNC tabs are built
+//! by `crate::datastores`; their notices here are reached only if the model
+//! is gone. It says so, and why, rather than showing a
 //! blank pane or a view that pretends to work.
 
 use gpui_kit::assets::IconName;

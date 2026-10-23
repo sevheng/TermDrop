@@ -1,5 +1,5 @@
-//! The MongoDB and Redis tabs: one tab per (host, kind), each filled by its
-//! own folder's `build`. See `README.md` in this folder for the contract
+//! The MongoDB, Redis and remote-desktop (VNC) tabs: one tab per (host,
+//! kind), each filled by its own folder's `build`. See `README.md` in this folder for the contract
 //! each tab is built against.
 //!
 //! The frame lives here and in `tabs::CoreContent`: building a tab's view
@@ -7,7 +7,8 @@
 //! `SERVICE_TABS` lifecycle of `src/stores/connection.js` (opening a host's
 //! tab again activates the one there, `AppModel::open_service`; closing the
 //! last tab of a kind on a host releases the host's pooled connections with
-//! `mongodb_disconnect` / `redis_disconnect`, [`release_on_close`]). A tab
+//! `mongodb_disconnect` / `redis_disconnect` / `vnc_disconnect_host`,
+//! [`release_on_close`]). A tab
 //! implements only `build(ctx, window, cx) -> AnyView` in its own folder and
 //! talks to the rest of the app through [`ServiceTabContext`].
 
@@ -15,6 +16,7 @@ pub mod common;
 mod json;
 pub mod mongo;
 pub mod redis;
+pub mod vnc;
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -28,21 +30,26 @@ use termdrop_core::{Core, CoreEvent, Events};
 
 use self::common::{MissingSecret, next_secret_prompt};
 use crate::app::AppModel;
-use crate::app::display::{mongo_display_uri, redis_display_uri};
+use crate::app::display::{mongo_display_uri, redis_display_uri, vnc_display_target};
 use crate::app::tab_kind::TabKind;
 use crate::backend::{HostRecord, HostSummary, SecretKind};
 use crate::core_backend::Services;
-use crate::panels::{EventKey, PanelLinks, PanelSubscription, subscribe_key};
+use crate::panels::{
+    EventKey, PanelLinks, PanelSubscription, subscribe_key, subscribe_key_with_held,
+};
 use crate::ui::dialogs::{PromptOptions, prompt};
 use crate::ui::file_dialog::{self, Filter};
 use crate::ui::notify::notify_if_unfocused;
 use crate::ui::toast::{ToastKind, toast};
 
-/// Which datastore a tab browses.
+/// Which service a tab shows. A remote desktop is not a datastore, but its
+/// tab has the same shape (one per host, opened from the row, released with
+/// the host's last tab of its kind), so it shares the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DatastoreKind {
     Mongo,
     Redis,
+    Vnc,
 }
 
 impl DatastoreKind {
@@ -51,7 +58,8 @@ impl DatastoreKind {
         match kind {
             TabKind::Mongodb => Some(Self::Mongo),
             TabKind::Redis => Some(Self::Redis),
-            TabKind::Ssh | TabKind::Local | TabKind::Vnc => None,
+            TabKind::Vnc => Some(Self::Vnc),
+            TabKind::Ssh | TabKind::Local => None,
         }
     }
 
@@ -59,6 +67,7 @@ impl DatastoreKind {
         match self {
             Self::Mongo => TabKind::Mongodb,
             Self::Redis => TabKind::Redis,
+            Self::Vnc => TabKind::Vnc,
         }
     }
 
@@ -66,6 +75,7 @@ impl DatastoreKind {
         match self {
             Self::Mongo => "MongoDB",
             Self::Redis => "Redis",
+            Self::Vnc => "Remote desktop",
         }
     }
 
@@ -74,6 +84,7 @@ impl DatastoreKind {
         match self {
             Self::Mongo => SecretKind::Mongo,
             Self::Redis => SecretKind::Redis,
+            Self::Vnc => SecretKind::Vnc,
         }
     }
 
@@ -83,11 +94,16 @@ impl DatastoreKind {
         match self {
             Self::Mongo => "mongodb_disconnect",
             Self::Redis => "redis_disconnect",
+            // Not `vnc_disconnect`, which takes a session id: the tab closes
+            // its own session. This one ends every session for the host and
+            // releases its tunnel.
+            Self::Vnc => "vnc_disconnect_host",
         }
     }
 
     /// The prompt shown when the datastore's password is not stored: the
-    /// Vue `withMongoSecret` / `withRedisSecret` wording.
+    /// Vue `withMongoSecret` / `withRedisSecret` wording. (The Vue VNC panel
+    /// never asked; it showed the rejection with Reconnect.)
     fn secret_prompt(self) -> (&'static str, &'static str) {
         match self {
             Self::Mongo => (
@@ -97,6 +113,10 @@ impl DatastoreKind {
             Self::Redis => (
                 "Redis password required",
                 "No stored password for this Redis connection. Enter it to continue:",
+            ),
+            Self::Vnc => (
+                "VNC password required",
+                "No stored password for this remote desktop. Enter it to continue:",
             ),
         }
     }
@@ -119,6 +139,7 @@ pub(crate) fn release_host(services: &Services, kind: DatastoreKind, host_id: i6
         let _ = match kind {
             DatastoreKind::Mongo => core.mongodb_disconnect(host_id).await,
             DatastoreKind::Redis => core.redis_disconnect(host_id).await,
+            DatastoreKind::Vnc => core.vnc_disconnect_host(host_id).await,
         };
     });
 }
@@ -148,6 +169,7 @@ impl DatastoreFactory for DefaultDatastores {
         match kind {
             DatastoreKind::Mongo => mongo::build(ctx, window, cx),
             DatastoreKind::Redis => redis::build(ctx, window, cx),
+            DatastoreKind::Vnc => vnc::build(ctx, window, cx),
         }
     }
 }
@@ -294,6 +316,17 @@ impl ServiceTabContext {
                 let Some(need) = next_secret_prompt(ctx.kind, err, &asked) else {
                     break;
                 };
+                // A rejected VNC password is asked for only when none is
+                // stored: a wrong stored one is the user's to fix in the
+                // host's settings, not to be overwritten on a guess.
+                if ctx.kind == DatastoreKind::Vnc
+                    && need == MissingSecret::Datastore
+                    && cx
+                        .update(|_, cx| ctx.model.read(cx).has_secret(SecretKind::Vnc, ctx.host_id))
+                        .unwrap_or(true)
+                {
+                    break;
+                }
                 asked.push(need);
                 let Some(answer) = ctx.ask_secret(need, cx).await else {
                     break;
@@ -322,12 +355,19 @@ impl ServiceTabContext {
         let bastion = match need {
             MissingSecret::Datastore => None,
             MissingSecret::Bastion => {
-                let via = cx
+                let record = cx
                     .update(|_, cx| self.host_record(cx))
                     .ok()?
                     .ok()
-                    .flatten()?
-                    .redis_tunnel_host_id?;
+                    .flatten()?;
+                let via = match self.kind {
+                    // An SSH host's own VNC server tunnels through itself
+                    // unless told otherwise (`vnc_dial_target`).
+                    DatastoreKind::Vnc => record
+                        .vnc_tunnel_host_id
+                        .or_else(|| (!record.host.trim().is_empty()).then_some(self.host_id)),
+                    _ => record.redis_tunnel_host_id,
+                }?;
                 let name = cx
                     .update(|_, cx| self.model.read(cx).host(via).map(|h| h.name.clone()))
                     .ok()
@@ -342,8 +382,12 @@ impl ServiceTabContext {
                 PromptOptions::new(title).message(message)
             }
             Some((_, name)) => PromptOptions::new("SSH password required").message(format!(
-                "This Redis connection tunnels through {name}, and its password is not \
-                 stored. Enter it to continue:"
+                "This {} tunnels through {name}, and its password is not stored. Enter it to \
+                 continue:",
+                match self.kind {
+                    DatastoreKind::Vnc => "remote desktop",
+                    _ => "Redis connection",
+                }
             )),
         }
         .password()
@@ -391,8 +435,28 @@ impl ServiceTabContext {
         let key = match self.kind {
             DatastoreKind::Mongo => EventKey::MongoOp(op_id.to_string()),
             DatastoreKind::Redis => EventKey::RedisOp(op_id.to_string()),
+            DatastoreKind::Vnc => EventKey::VncSession(op_id.to_string()),
         };
         subscribe_key(&self.links, key, view, handler)
+    }
+
+    /// Call `handler` on `view` for every event of the remote-desktop
+    /// session `session_id` (bell, clipboard, resize, disconnected, error).
+    /// Returns the subscription and whatever the session emitted before it
+    /// (it starts emitting before `vnc_connect` returns its id), for the
+    /// view to apply first, in order.
+    pub fn subscribe_session<V: 'static>(
+        &self,
+        session_id: &str,
+        view: WeakEntity<V>,
+        handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static,
+    ) -> (OpSubscription, Vec<CoreEvent>) {
+        subscribe_key_with_held(
+            &self.links,
+            EventKey::VncSession(session_id.to_string()),
+            view,
+            handler,
+        )
     }
 
     /// A fresh op id for a backup or restore (`mongo-op-<uuid>`,
@@ -401,6 +465,7 @@ impl ServiceTabContext {
         let prefix = match self.kind {
             DatastoreKind::Mongo => "mongo-op",
             DatastoreKind::Redis => "redis-op",
+            DatastoreKind::Vnc => "vnc-op",
         };
         format!("{prefix}-{}", uuid::Uuid::new_v4())
     }
@@ -412,6 +477,8 @@ impl ServiceTabContext {
         match self.kind {
             DatastoreKind::Mongo => self.core().mongodb_cancel(op_id),
             DatastoreKind::Redis => self.core().redis_cancel(op_id),
+            // A remote desktop has no backup or restore to cancel.
+            DatastoreKind::Vnc => {}
         }
     }
 
@@ -461,6 +528,7 @@ impl ServiceTabContext {
                 .as_deref()
                 .map(redis_display_uri)
                 .unwrap_or_default(),
+            DatastoreKind::Vnc => vnc_display_target(record.vnc_host.as_deref(), record.vnc_port),
         }
     }
 
@@ -585,8 +653,12 @@ mod tests {
             Some(DatastoreKind::Redis)
         );
         assert_eq!(release_on_close(TabKind::Redis, false), None);
-        // Shells and VNC have their own teardown.
-        for kind in [TabKind::Ssh, TabKind::Local, TabKind::Vnc] {
+        assert_eq!(
+            release_on_close(TabKind::Vnc, true),
+            Some(DatastoreKind::Vnc)
+        );
+        // Shells have their own teardown.
+        for kind in [TabKind::Ssh, TabKind::Local] {
             assert_eq!(release_on_close(kind, true), None);
         }
     }
@@ -601,12 +673,21 @@ mod tests {
             DatastoreKind::Redis.disconnect_command(),
             "redis_disconnect"
         );
-        for kind in [DatastoreKind::Mongo, DatastoreKind::Redis] {
+        assert_eq!(
+            DatastoreKind::Vnc.disconnect_command(),
+            "vnc_disconnect_host"
+        );
+        for kind in [
+            DatastoreKind::Mongo,
+            DatastoreKind::Redis,
+            DatastoreKind::Vnc,
+        ] {
             assert_eq!(DatastoreKind::of(kind.tab_kind()), Some(kind));
         }
-        assert_eq!(DatastoreKind::of(TabKind::Vnc), None);
+        assert_eq!(DatastoreKind::of(TabKind::Ssh), None);
         assert_eq!(DatastoreKind::Mongo.secret_kind(), SecretKind::Mongo);
         assert_eq!(DatastoreKind::Redis.secret_kind(), SecretKind::Redis);
+        assert_eq!(DatastoreKind::Vnc.secret_kind(), SecretKind::Vnc);
     }
 
     #[test]
@@ -621,6 +702,15 @@ mod tests {
         assert_eq!(
             release_on_close(TabKind::Redis, last),
             Some(DatastoreKind::Redis)
+        );
+        // Nor a remote desktop's session and tunnel: an SSH host's VNC tab
+        // sits beside its shell.
+        tabs.open(Tab::new("v", Some(7), TabKind::Vnc, "v"));
+        tabs.close("v");
+        let last = !tabs.host_has_tab_of_kind(7, TabKind::Vnc);
+        assert_eq!(
+            release_on_close(TabKind::Vnc, last),
+            Some(DatastoreKind::Vnc)
         );
     }
 

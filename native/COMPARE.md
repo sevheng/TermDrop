@@ -86,12 +86,12 @@ Read from the code on this branch, not from the plan.
 | Port forwards (Tunnels) | **No** | The panel says it is not ported. |
 | MongoDB tab | Yes | One tab per host (opening again activates it; closing the host's last MongoDB tab drops its pooled client). Database tree with lazy collections, three-state database ticks and the "N selected · clear" line; documents with filter/sort checked as you type, Run, count-then-page (25/50/100/200), Table (`_id` first, the common fields, 12 columns) and JSON views, expandable rows with ObjectId/ISODate/Binary written out as Vue did, Copy, and the stats line; an Indexes view (`mongodb_list_indexes`, which Vue never showed). Backup to a folder or an archive and restore from a folder or an archive, through the bundled `mongodump`/`mongorestore`, with the Vue confirms, wording, file filters (Gzip archive, BSON archive, All files) and per-run progress with Cancel. Differs from Vue: closing the tab cancels a running backup or restore (Vue's carried on with nothing to show it), open databases reload their collections after a refresh, a database whose ticks are all removed leaves the selection, error states have Retry. Tested live (read-only): tree, documents, JSON, Indexes, ticking, an archive backup of two collections. Restore not run against a server (it writes); its confirm and job planning are unit tested. |
 | Redis tab | Yes | One tab per host (the last tab's close drops the host's pooled connections and its tunnel). Connect with the Redis and the tunnel's SSH password prompts, error banner with Reconnect, "via <bastion>" and "cluster" badges; database tree with prefix groups; key list by `SCAN` pages (pattern, type filter, Sizes, prev/next by cursor, pages never trimmed, keys addressed by `key_b64`, binary keys marked); value view for string (256 KB preview), hash, list, set, sorted set and stream with Load more; backup to `.tdredis` and restore with the Vue dialog (db picker, Overwrite, Empty first). Differs from Vue: Load more stops at a list's or sorted set's total, long cells and string lines are drawn in parts (the page is never trimmed), a string has Copy value, an empty finished scan offers Clear filter / Refresh, closing the tab cancels a running backup or restore. Tested live (read-only): `redis-local` and the tunnelled `redis-private`, an empty backup written and its header read back by the restore dialog, a truncated file refused with its offset. Both servers were empty, so the key list and value view with data are unit tested only. |
-| VNC | **No** | Same notice. |
+| Remote desktop (VNC) | Yes | One tab per host, for a VNC-only host or "Open remote desktop" on an SSH host (its last VNC tab's close runs `vnc_disconnect_host`, compared by kind as well as host, so the shell beside it does not hold the tunnel open). Through `termdrop-core` (`vnc_ops.rs`, the Tauri commands' own bodies): tunnel through the host's own or another SSH host, the Vue header (address, size, "tunnelled", "view only", the `vnc.showStats` readout), Refresh, View only, Fit / Actual size (the shared `vnc.fitMode`), Ctrl+Alt+Delete, Send clipboard (with the Latin-1 warning), remote clipboard and bell only from the tab in front, error banner with Reconnect. Frames are parsed, JPEG-decoded and applied on a thread per tab into a BGRA framebuffer and drawn as 128-pixel GPU tiles, only the changed ones rebuilt; each frame is acknowledged once applied, a hidden tab or window pauses the stream and withholds the ack, and showing it again resumes with a full refresh. Every app shortcut (Tab, Ctrl+W, Ctrl+Tab, Ctrl+C...) goes to the remote while the screen has focus; Ctrl+Alt+Shift hands the keyboard back; held keys are released on blur and when the window loses focus. Differs from Vue: a missing VNC password (none stored and the server rejects the empty one) and a tunnel's missing SSH password are asked for and stored (Vue showed the error), a cleanly ended session shows Disconnected with Reconnect (Vue went blank), 1:1 mode pans with the pointer instead of showing scrollbars, the remote cursor shape is not shown (GPUI cannot set an image cursor; the local arrow stays), modifiers are sent as left-hand keys and the keypad as the main row (GPUI reports neither side nor keypad), a symbol typed with Shift and a composed character are sent as a press and release at once (their release cannot be matched to the press), input-method text is typed a character at a time. Tested live: TigerVNC (`:5901`, password prompt), LibVNCServer (`:5902`), no-auth (`:5903`), and `vnc-private` through the `:2223` bastion (SSH and VNC password prompts, the fail-closed untrusted-key error, then trust from an SSH tab); drawing, scaling, 1:1 panning, clicks, typing with Shift symbols, Tab completion, Ctrl+C and Ctrl+W reaching the remote, Ctrl+Alt+Shift, bell toasts, Tight JPEG rectangles. Not run: ARD (needs a Mac), window minimise, clipboard both ways. |
 | Desktop notifications | Partly | A finished MongoDB or Redis backup or restore posts one notification when the window is not focused, as Vue's `notifyIfUnfocused` does (GPUI's system notifications; on a desktop with no notification daemon, WSLg among them, it only logs). Nothing else notifies yet. |
 | Updater, packaging, tray, single instance | **No** | Phase 8. |
 
 So the fair comparison today is **terminal tabs, the SSH right panel**
-(SFTP, Docker, Security) **and the MongoDB and Redis tabs**. `--demo` has no backend, so
+(SFTP, Docker, Security) **and the MongoDB, Redis and remote-desktop tabs**. `--demo` has no backend, so
 its tabs are placeholders and the right panel shows its frame only; run
 against a scratch database (`XDG_DATA_HOME`, `HOME`) and a test host to see
 the panels.
@@ -179,6 +179,23 @@ Release builds of both, same machine, same font size, window maximised:
 | Binary / bundle size (MB) | | | |
 
 ## Measured on WSL2 (dev machine)
+
+### Remote desktop
+
+2026-10-23, release build, `RUST_LOG=termdrop::vnc=debug` (the core's `VNC
+frame timing` beside the native `VNC native render` line, once a second).
+Same WSLg caveat as below.
+
+| Server | Desktop | Steady state | Apply (parse + JPEG + framebuffer + tiles, off the UI thread) |
+|---|---|---|---|
+| no-auth `:5903` | 800x600, 1:1 | idle after the first second | 0.26 ms/frame over a 358-frame burst of 2 KB updates |
+| TigerVNC `:5901` | 1280x800 fit | idle; ~260 updates/s for ~2 s after login | 0.33-0.39 ms/frame, 2-3 KB/frame |
+| `vnc-private` via bastion | 1024x768 fit | 50 updates/s for a few seconds after waking, one Tight JPEG each | 0.18-0.38 ms/frame |
+
+With 256-pixel tiles the login burst rebuilt ~3 tiles (750 KB of copying)
+per 2 KB update; the tiles are now 128 pixels (64 KB each). Only the tiles
+current at paint time are uploaded, so a burst faster than the display
+uploads at most one set per frame. CPU with a connected idle desktop: 1-1.5%.
 
 2026-10-22, branch `gpui-kit`, release builds. Windows 11 host, WSL2 Ubuntu,
 16 threads, AMD Radeon integrated graphics.
