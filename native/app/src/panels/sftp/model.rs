@@ -414,6 +414,33 @@ pub fn preview_kind(file_name: &str) -> PreviewKind {
     }
 }
 
+/// The directory to go back to if a navigation's listing fails.
+///
+/// It lives on the panel rather than in the listing's callback because a
+/// reload (after a delete, an upload, ...) replaces the listing task in
+/// flight, and with it any callback: the path bar would then stay on a
+/// directory that could not be listed. Vue's `navigateTo` awaited its own
+/// `loadFiles` and always restored. Whichever listing settles next settles
+/// it, since every listing reads the current path.
+#[derive(Debug, Default)]
+pub struct PendingRestore(Option<String>);
+
+impl PendingRestore {
+    /// A navigation away from `previous` started. While an earlier one is
+    /// still unconfirmed its directory is the last one that listed, so it
+    /// is kept.
+    pub fn navigating(&mut self, previous: String) {
+        self.0.get_or_insert(previous);
+    }
+
+    /// A listing finished: the directory to go back to, if it failed while a
+    /// navigation was pending. A failed reload with nothing pending stays put.
+    pub fn settle(&mut self, ok: bool) -> Option<String> {
+        let pending = self.0.take();
+        if ok { None } else { pending }
+    }
+}
+
 /// A preview search's counter: "2/5", or "0/0" when nothing matched.
 pub fn match_label(current: usize, count: usize) -> String {
     if count == 0 {
@@ -481,6 +508,24 @@ pub fn empty_hint(total: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_navigation_goes_back_even_after_a_reload_replaced_it() {
+        // navigate /home -> /root; a reload replaces that listing and fails.
+        let mut r = PendingRestore::default();
+        r.navigating("/home".into());
+        assert_eq!(r.settle(false).as_deref(), Some("/home"));
+        // Nothing pending: a failed reload stays where it is.
+        assert_eq!(r.settle(false), None);
+        // A success confirms the new directory.
+        r.navigating("/home".into());
+        assert_eq!(r.settle(true), None);
+        assert_eq!(r.settle(false), None);
+        // Two navigations before either settles go back to the first's origin.
+        r.navigating("/home".into());
+        r.navigating("/root".into());
+        assert_eq!(r.settle(false).as_deref(), Some("/home"));
+    }
 
     fn file(name: &str, is_dir: bool, size: u64, modified: Option<u64>) -> SftpFile {
         SftpFile {

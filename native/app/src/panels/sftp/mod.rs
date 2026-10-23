@@ -37,9 +37,9 @@ use termdrop_core::sftp::SftpFile;
 
 use self::editor::FloatingEditor;
 use self::model::{
-    ClickMods, Column, ColumnsPref, Selection, Sort, SortKey, breadcrumbs, bulk_delete_prompt,
-    bulk_delete_result, bulk_download_result, child_path, delete_prompt, empty_hint,
-    filter_indexes, local_file_name, renamed_path, sort_files, up_dir,
+    ClickMods, Column, ColumnsPref, PendingRestore, Selection, Sort, SortKey, breadcrumbs,
+    bulk_delete_prompt, bulk_delete_result, bulk_download_result, child_path, delete_prompt,
+    empty_hint, filter_indexes, local_file_name, renamed_path, sort_files, up_dir,
 };
 use self::transfers::{Finished, LINGER, Transfers};
 use super::common::{
@@ -78,7 +78,9 @@ pub(super) fn run<V: 'static, T: Send + 'static>(
 }
 
 /// One upload waiting its turn: (name, local path, remote path).
-type Upload = (String, String, String);
+/// `(name, local, remote, toast_success)`: the toast flag travels with the
+/// file, since a drop and the Upload button share the queue.
+type Upload = (String, String, String, bool);
 
 pub struct SftpPanel {
     ctx: PanelContext,
@@ -97,6 +99,7 @@ pub struct SftpPanel {
     editor: Entity<FloatingEditor>,
     /// The listing in flight; replacing it drops the stale one's result.
     list_task: Option<Task<()>>,
+    restore: PendingRestore,
     /// Uploads run one at a time, as the Vue loop awaited each.
     upload_queue: VecDeque<Upload>,
     uploading: bool,
@@ -165,6 +168,7 @@ impl SftpPanel {
             transfers: Transfers::default(),
             editor,
             list_task: None,
+            restore: PendingRestore::default(),
             upload_queue: VecDeque::new(),
             uploading: false,
             _floating: floating,
@@ -194,18 +198,14 @@ impl SftpPanel {
                         "/".into()
                     }
                 };
-                this.load(window, cx, |_, _, _, _| {});
+                this.load(window, cx);
             },
         ));
     }
 
-    /// List the current directory; `after(ok)` once it is in. `loadFiles`.
-    fn load(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        after: impl FnOnce(&mut Self, bool, &mut Window, &mut Context<Self>) + 'static,
-    ) {
+    /// List the current directory, going back if a pending navigation's
+    /// listing fails (see [`PendingRestore`]). `loadFiles`.
+    fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.loading = true;
         let core = self.ctx.core().clone();
         let id = self.id.clone();
@@ -215,24 +215,24 @@ impl SftpPanel {
             async move { core.sftp_list(&id, path).await },
             window,
             cx,
-            move |this: &mut Self, result, window, cx| {
+            move |this: &mut Self, result, _, cx| {
                 this.loading = false;
-                let ok = match result {
+                if let Some(previous) = this.restore.settle(result.is_ok()) {
+                    this.path = previous;
+                }
+                match result {
                     Ok(mut files) => {
                         sort_files(&mut files, this.sort);
                         this.files = files;
                         this.list_error = None;
-                        true
                     }
                     Err(e) => {
                         // Swallowing this made a dead session look like a
                         // panel that had stopped responding.
                         tracing::error!("sftp_list failed: {e}");
                         this.list_error = Some(e);
-                        false
                     }
-                };
-                after(this, ok, window, cx);
+                }
                 cx.notify();
             },
         ));
@@ -240,21 +240,18 @@ impl SftpPanel {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.load(window, cx, |_, _, _, _| {});
+        self.load(window, cx);
     }
 
     /// Move to `path`, going back if the listing fails so the path bar never
     /// names a directory other than the one listed. `navigateTo`.
     fn navigate(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         let previous = std::mem::replace(&mut self.path, path);
+        self.restore.navigating(previous);
         self.selection.clear();
         self.query.clear();
         self.filter.update(cx, |s, cx| s.set_value("", window, cx));
-        self.load(window, cx, move |this, ok, _, _| {
-            if !ok {
-                this.path = previous;
-            }
-        });
+        self.load(window, cx);
     }
 
     fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -369,16 +366,17 @@ impl SftpPanel {
                 continue;
             };
             let remote = child_path(&self.path, &name);
-            self.upload_queue.push_back((name, local, remote));
+            self.upload_queue
+                .push_back((name, local, remote, toast_success));
         }
-        self.next_upload(toast_success, window, cx);
+        self.next_upload(window, cx);
     }
 
-    fn next_upload(&mut self, toast_success: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn next_upload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.uploading {
             return;
         }
-        let Some((name, local, remote)) = self.upload_queue.pop_front() else {
+        let Some((name, local, remote, toast_success)) = self.upload_queue.pop_front() else {
             return;
         };
         self.uploading = true;
@@ -413,7 +411,7 @@ impl SftpPanel {
                 if this.upload_queue.is_empty() {
                     this.reload(window, cx);
                 } else {
-                    this.next_upload(toast_success, window, cx);
+                    this.next_upload(window, cx);
                 }
             },
         )

@@ -46,6 +46,55 @@ fn file_name_or(remote_path: &str, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
+/// Make a remote file name safe to join onto a local directory: one plain
+/// path component that cannot climb out of it or name another root.
+///
+/// The name comes from the server, so it is untrusted. On Unix `file_name`
+/// already yields a single component, and this returns it unchanged. On
+/// Windows a `:` makes `C:x` a drive-relative path that `PathBuf::join`
+/// would put in place of the whole base (and `a:b` an NTFS alternate data
+/// stream), and `\` is a separator, so both become `_` there. `windows` is a
+/// parameter so both rules are tested on every platform.
+fn local_component(name: &str, fallback: &str, windows: bool) -> String {
+    let unsafe_char = |c: char| c == '/' || c == '\0' || (windows && (c == ':' || c == '\\'));
+    let cleaned: String = name
+        .chars()
+        .map(|c| if unsafe_char(c) { '_' } else { c })
+        .collect();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// `dir` joined with the remote path's file name, made safe by
+/// [`local_component`]. Errors if the result is somehow not directly inside
+/// `dir`, rather than writing anywhere else.
+fn local_target(dir: &Path, remote_path: &str, fallback: &str) -> Result<PathBuf, String> {
+    let name = local_component(
+        &file_name_or(remote_path, fallback),
+        fallback,
+        cfg!(windows),
+    );
+    let target = dir.join(&name);
+    if target.parent() != Some(dir) {
+        return Err(format!("refusing unsafe file name: {}", name));
+    }
+    Ok(target)
+}
+
+/// The remote archive command for a folder download. `--` ends tar's
+/// options, so a folder named like `--remove-files` is read as a name.
+fn tar_command(archive: &str, parent: &str, name: &str) -> String {
+    format!(
+        "tar -czf {} -C {} -- {}",
+        shell_escape(archive),
+        shell_escape(parent),
+        shell_escape(name)
+    )
+}
+
 /// Write `content` to a local file the user chose (the editor's "save a
 /// copy"). Not an SFTP call: it never touches the remote.
 pub fn write_file(path: &str, content: &str) -> Result<(), String> {
@@ -88,7 +137,7 @@ impl Core {
         sftp_session_id: &str,
         remote_path: String,
     ) -> Result<String, String> {
-        let local_path = download_dir().join(file_name_or(&remote_path, "download"));
+        let local_path = local_target(&download_dir(), &remote_path, "download")?;
         let local_path = local_path.to_string_lossy().to_string();
         self.sftp_download_to(events, sftp_session_id, remote_path, local_path.clone())
             .await?;
@@ -127,6 +176,10 @@ impl Core {
         // Get exec session for tar command
         let exec_session = exec_session(self, host_id, "No exec session for this host")?;
 
+        // Resolved before anything runs on the host, so an unsafe name costs
+        // no remote work.
+        let download_dir = download_dir();
+        let extract_dir = local_target(&download_dir, &remote_path, "archive")?;
         let folder_name = file_name_or(&remote_path, "archive");
         let parent_path = Path::new(&remote_path)
             .parent()
@@ -141,12 +194,7 @@ impl Core {
         tokio::task::spawn_blocking(move || {
             let session = exec_session.lock().map_err(|e| e.to_string())?;
             let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-            let cmd = format!(
-                "tar -czf {} -C {} {}",
-                shell_escape(&remote_temp_clone),
-                shell_escape(&parent_path),
-                shell_escape(&folder_name_clone)
-            );
+            let cmd = tar_command(&remote_temp_clone, &parent_path, &folder_name_clone);
             channel.exec(&cmd).map_err(|e| e.to_string())?;
             let mut stdout = String::new();
             use std::io::Read;
@@ -171,9 +219,12 @@ impl Core {
         .await
         .map_err(|e| e.to_string())??;
 
-        // Download the archive (blocking I/O off the async thread)
-        let download_dir = download_dir();
-        let local_archive = download_dir.join(format!("{}.tar.gz", folder_name));
+        // Download the archive (blocking I/O off the async thread). It goes
+        // to a name of its own in the temp dir: `Downloads/<folder>.tar.gz`
+        // may be the user's file, which this would overwrite and then delete,
+        // and two downloads of same-named folders would share it.
+        let local_archive =
+            std::env::temp_dir().join(format!("termdrop-{}.tar.gz", uuid::Uuid::new_v4()));
         let local_archive_str = local_archive.to_string_lossy().to_string();
         let remote_temp_clone = remote_temp.clone();
         let handle_clone = handle.clone();
@@ -187,7 +238,6 @@ impl Core {
         .map_err(|e| format!("download failed: {}", e))?;
 
         // Extract locally
-        let extract_dir = download_dir.join(&folder_name);
         let extract_dir_str = extract_dir.to_string_lossy().to_string();
         let extract_dir_str_clone = extract_dir_str.clone();
         tokio::task::spawn_blocking(move || {
@@ -353,6 +403,64 @@ mod tests {
     fn file_name_falls_back_for_a_root_path() {
         assert_eq!(file_name_or("/srv/data", "archive"), "data");
         assert_eq!(file_name_or("/", "archive"), "archive");
+    }
+
+    #[test]
+    fn local_component_keeps_plain_names_and_defuses_the_rest() {
+        // Unix: names come through as they are, ':' and '\\' included.
+        assert_eq!(local_component("report.txt", "d", false), "report.txt");
+        assert_eq!(local_component("a:b\\c", "d", false), "a:b\\c");
+        assert_eq!(local_component("..", "d", false), "d");
+        assert_eq!(local_component(".", "d", false), "d");
+        assert_eq!(local_component("", "d", false), "d");
+        // Windows: a drive prefix, a stream name or a separator cannot survive.
+        assert_eq!(local_component("C:version.dll", "d", true), "C_version.dll");
+        assert_eq!(local_component("a\\..\\x", "d", true), "a_.._x");
+        assert_eq!(local_component("report.txt", "d", true), "report.txt");
+    }
+
+    #[test]
+    fn local_target_stays_in_the_directory() {
+        let dir = std::env::temp_dir().join("td-dl");
+        for remote in [
+            "/srv/C:version.dll",
+            "/srv/a\\..\\..\\x",
+            "/srv/..",
+            "/",
+            "/srv/ok",
+        ] {
+            let target = local_target(&dir, remote, "download").unwrap();
+            assert_eq!(target.parent(), Some(dir.as_path()), "{remote}");
+        }
+        assert_eq!(
+            local_target(&dir, "/srv/data.bin", "download").unwrap(),
+            dir.join("data.bin")
+        );
+    }
+
+    #[test]
+    fn tar_command_reads_a_dash_name_as_a_name() {
+        assert_eq!(
+            tar_command("/tmp/t.tar.gz", "/srv", "www"),
+            "tar -czf /tmp/t.tar.gz -C /srv -- www"
+        );
+        // Run it against the local tar: without `--` GNU tar takes this
+        // folder for an option and refuses to create an empty archive.
+        let root = std::env::temp_dir().join(format!("td-tar-{}", uuid::Uuid::new_v4()));
+        let name = "--checkpoint-action=exec=touch PWNED";
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::fs::write(root.join(name).join("f"), "x").unwrap();
+        let archive = root.join("out.tar.gz");
+        let cmd = tar_command(archive.to_str().unwrap(), root.to_str().unwrap(), name);
+        let status = std::process::Command::new("sh")
+            .args(["-c", &cmd])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(archive.exists());
+        assert!(!root.join("PWNED").exists());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
