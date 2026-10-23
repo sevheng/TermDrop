@@ -38,7 +38,7 @@ mod renderer;
 mod screen;
 
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui_kit::assets::IconName;
@@ -122,6 +122,41 @@ struct Session {
     _frames: Task<()>,
 }
 
+/// A connect between its start and its delivery to the view.
+#[derive(Debug, Default)]
+struct PendingConnect {
+    /// The tab went before the result could be delivered.
+    abandoned: bool,
+    /// The session the core opened, until the view takes it.
+    session: Option<String>,
+}
+
+impl PendingConnect {
+    /// The core opened `session_id`. False when the tab has already gone,
+    /// so the caller must close it.
+    fn connected(this: &Mutex<Self>, session_id: &str) -> bool {
+        let mut p = this.lock().unwrap_or_else(|e| e.into_inner());
+        if p.abandoned {
+            return false;
+        }
+        p.session = Some(session_id.to_string());
+        true
+    }
+
+    /// The view took the result.
+    fn claim(this: &Mutex<Self>) {
+        this.lock().unwrap_or_else(|e| e.into_inner()).session = None;
+    }
+
+    /// The tab is going. Returns a session opened but not yet taken, which
+    /// the caller must close; one still connecting will close itself.
+    fn abandon(this: &Mutex<Self>) -> Option<String> {
+        let mut p = this.lock().unwrap_or_else(|e| e.into_inner());
+        p.abandoned = true;
+        p.session.take()
+    }
+}
+
 /// The once-a-second readout behind `vnc.showStats`.
 #[derive(Default)]
 struct Stats {
@@ -187,12 +222,21 @@ pub(crate) struct VncTab {
     connected: bool,
     error: Option<String>,
     connect_task: Option<Task<()>>,
+    /// The connect in flight, shared with its core future so a session that
+    /// connects after the tab has gone is closed rather than left open.
+    pending: Option<Arc<Mutex<PendingConnect>>>,
 
     view_only: bool,
     fit: FitMode,
     /// The desktop's size, from the handshake, a resize event, or the last
-    /// applied frame.
+    /// applied frame. For the header.
     size: (u16, u16),
+    /// The size of the framebuffer the tiles were built for, which is what
+    /// the screen lays them out by. A resize event arrives before the
+    /// render thread has applied the frame that rebuilds the grid; laying
+    /// the old tiles out at the new size drew a stretched copy of the old
+    /// screen until it landed.
+    drawn_size: (u16, u16),
     /// The screen as tiles: [`framebuffer::TILE`]-pixel images, row-major,
     /// `grid.0` across. `None` until a frame has drawn it.
     grid: (usize, usize),
@@ -262,6 +306,7 @@ impl VncTab {
             // frame then runs `vnc_disconnect_host` if it was the host's last
             // remote-desktop tab.
             cx.on_release(|this, cx| {
+                this.abandon_connect();
                 this.disconnect_session();
                 // The tiles' textures stay in the window's atlas until they
                 // are dropped from it; the view has no window here.
@@ -305,9 +350,11 @@ impl VncTab {
             connected: false,
             error: None,
             connect_task: None,
+            pending: None,
             view_only: false,
             fit,
             size: (0, 0),
+            drawn_size: (0, 0),
             grid: (0, 0),
             tiles: Vec::new(),
             withheld_ack: None,
@@ -356,15 +403,42 @@ impl VncTab {
         self.set_connected(false, cx);
         let host_id = self.ctx.host_id;
         let events = self.ctx.events();
+        let pending = Arc::new(Mutex::new(PendingConnect::default()));
+        self.pending = Some(pending.clone());
         self.connect_task = Some(self.ctx.run_with_secret(
             window,
             cx,
             move |core, ssh_password| {
-                let events = events.clone();
-                async move { core.vnc_connect(events, host_id, None, ssh_password).await }
+                let (events, pending) = (events.clone(), pending.clone());
+                async move {
+                    let info = core
+                        .vnc_connect(events, host_id, None, ssh_password)
+                        .await?;
+                    if PendingConnect::connected(&pending, &info.session_id) {
+                        Ok(info)
+                    } else {
+                        // The tab went while this was connecting: nothing
+                        // will ever take the session, so close it (and its
+                        // tunnel, if it was the host's last).
+                        let _ = core.vnc_disconnect(&info.session_id).await;
+                        Err("cancelled".into())
+                    }
+                }
             },
             |this, result, window, cx| this.connected(result, window, cx),
         ));
+    }
+
+    /// The tab is going: close a session that has connected but not yet
+    /// been delivered, and have one still connecting close itself.
+    fn abandon_connect(&mut self) {
+        if let Some(pending) = self.pending.take()
+            && let Some(id) = PendingConnect::abandon(&pending)
+        {
+            let core = self.ctx.core().clone();
+            self.ctx
+                .spawn(async move { core.vnc_disconnect(&id).await });
+        }
     }
 
     fn connected(
@@ -374,6 +448,10 @@ impl VncTab {
         cx: &mut Context<Self>,
     ) {
         self.connecting = false;
+        // Delivered: the session is this view's to close from here on.
+        if let Some(pending) = self.pending.take() {
+            PendingConnect::claim(&pending);
+        }
         let info = match result {
             Ok(info) => info,
             Err(e) => {
@@ -391,24 +469,38 @@ impl VncTab {
 
         // The sink goes in before any frame is requested: the session asks
         // for none until it has one, and attaching it forces a full update.
-        let (sink, frames) = renderer::start(info.width, info.height);
-        if let Err(e) = self.ctx.core().vnc_open_frame_channel(&id, sink) {
-            self.error = Some(e);
-            self.set_connected(false, cx);
-            return;
-        }
+        // A session this view could not take is closed, not left open.
+        let attached = renderer::start(info.width, info.height).and_then(|(sink, frames)| {
+            self.ctx.core().vnc_open_frame_channel(&id, sink)?;
+            Ok(frames)
+        });
+        let frames = match attached {
+            Ok(frames) => frames,
+            Err(e) => {
+                let core = self.ctx.core().clone();
+                self.ctx
+                    .spawn(async move { core.vnc_disconnect(&id).await });
+                self.error = Some(e);
+                self.set_connected(false, cx);
+                return;
+            }
+        };
         let frames_task = cx.spawn_in(window, async move |this, cx| {
             while let Ok(message) = frames.recv().await {
                 if this
                     .update_in(cx, |this, window, cx| this.frame(message, window, cx))
                     .is_err()
                 {
-                    break;
+                    return;
                 }
             }
+            // The render thread is gone. Normally because the session
+            // dropped its sink, which its own event reports; a thread that
+            // died says so with `Message::Stopped` first.
         });
 
         self.size = (info.width, info.height);
+        self.drawn_size = self.size;
         self.view_only = info.view_only;
         self.input = Input::new(info.view_only);
         self.drop_tiles(window);
@@ -506,6 +598,12 @@ impl VncTab {
                 self.set_connected(false, cx);
                 return;
             }
+            Message::Stopped => {
+                self.error = Some(renderer::STOPPED.into());
+                self.disconnect_session();
+                self.set_connected(false, cx);
+                return;
+            }
         };
         if update.reset || update.grid != self.grid {
             self.drop_tiles(window);
@@ -513,6 +611,7 @@ impl VncTab {
             self.tiles = vec![None; update.grid.0 * update.grid.1];
         }
         self.size = update.size;
+        self.drawn_size = update.size;
         for (index, image) in &update.tiles {
             if let Some(slot) = self.tiles.get_mut(*index)
                 && let Some(old) = slot.replace(image.clone())
@@ -1036,7 +1135,27 @@ impl EntityInputHandler for VncTab {
 
 #[cfg(test)]
 mod tests {
-    use super::Stats;
+    use super::{Mutex, PendingConnect, Stats};
+
+    #[test]
+    fn a_session_that_connects_after_the_tab_closed_is_closed() {
+        // Closed while connecting: the connect closes its own session.
+        let p = Mutex::new(PendingConnect::default());
+        assert_eq!(PendingConnect::abandon(&p), None);
+        assert!(!PendingConnect::connected(&p, "vnc-1"));
+
+        // Closed after connecting, before delivery: the tab closes it.
+        let p = Mutex::new(PendingConnect::default());
+        assert!(PendingConnect::connected(&p, "vnc-2"));
+        assert_eq!(PendingConnect::abandon(&p).as_deref(), Some("vnc-2"));
+
+        // Delivered: the session is the view's, and closing the tab does
+        // not close it a second time.
+        let p = Mutex::new(PendingConnect::default());
+        assert!(PendingConnect::connected(&p, "vnc-3"));
+        PendingConnect::claim(&p);
+        assert_eq!(PendingConnect::abandon(&p), None);
+    }
     use super::renderer::Update;
     use std::time::Duration;
 

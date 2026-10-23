@@ -48,22 +48,45 @@ pub enum Message {
     /// The frame could not be parsed: the stream is out of step and the
     /// session must end (`Corrupt frame from the server: ...`).
     Corrupt(String),
+    /// The thread panicked: no further frame will be applied or acked, so
+    /// the session must end rather than sit frozen.
+    Stopped,
 }
+
+/// The error a tab shows for [`Message::Stopped`].
+pub const STOPPED: &str = "The screen renderer stopped unexpectedly";
 
 /// Start the thread for a `width` x `height` desktop. Returns the sink to
 /// attach with `vnc_open_frame_channel` and the stream of applied frames.
 /// The thread ends when the session drops the sink or the UI drops the
 /// stream.
-pub fn start(width: u16, height: u16) -> (Box<dyn ByteSink>, async_channel::Receiver<Message>) {
+pub fn start(
+    width: u16,
+    height: u16,
+) -> Result<(Box<dyn ByteSink>, async_channel::Receiver<Message>), String> {
     let (frames_tx, frames_rx) = std::sync::mpsc::channel::<Vec<u8>>();
     let (out_tx, out_rx) = async_channel::unbounded();
-    let spawned = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("vnc-render".into())
-        .spawn(move || run(width, height, frames_rx, out_tx));
-    if let Err(e) = spawned {
-        tracing::error!("could not start the VNC render thread: {e}");
+        .spawn(move || run(width, height, frames_rx, out_tx))
+        .map_err(|e| {
+            tracing::error!("could not start the VNC render thread: {e}");
+            format!("Could not start the screen renderer: {e}")
+        })?;
+    Ok((Box::new(frames_tx), out_rx))
+}
+
+/// Says [`Message::Stopped`] if the thread unwinds; a channel that merely
+/// closed would leave the tab frozen and "connected" with no error.
+struct StopGuard(async_channel::Sender<Message>);
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::error!(target: "termdrop::vnc", "the VNC render thread panicked");
+            let _ = self.0.try_send(Message::Stopped);
+        }
     }
-    (Box::new(frames_tx), out_rx)
 }
 
 fn run(
@@ -72,6 +95,7 @@ fn run(
     frames: std::sync::mpsc::Receiver<Vec<u8>>,
     out: async_channel::Sender<Message>,
 ) {
+    let _guard = StopGuard(out.clone());
     let mut fb = Framebuffer::new(width, height);
     let mut first = true;
     let mut stats = Stats::default();
@@ -172,7 +196,11 @@ pub fn apply(fb: &mut Framebuffer, bytes: &[u8]) -> Result<Applied, String> {
 type Decoded = (usize, Option<(usize, usize, Vec<u8>)>);
 
 /// Decode a frame's JPEG rectangles, in parallel when there are several
-/// (the Vue panel started every `createImageBitmap` at once).
+/// (the Vue panel started every `createImageBitmap` at once), on at most
+/// one thread per core: a 4K full refresh can carry a hundred or more
+/// rectangles, and a thread for each was both waste and, under pressure, a
+/// spawn that failed. A worker that cannot be started leaves its share to
+/// this thread.
 fn decode_jpegs(rects: &[super::frame::Rect<'_>]) -> Vec<Decoded> {
     let jobs: Vec<(usize, &[u8])> = rects
         .iter()
@@ -180,17 +208,39 @@ fn decode_jpegs(rects: &[super::frame::Rect<'_>]) -> Vec<Decoded> {
         .filter(|(_, r)| r.op == Op::Jpeg)
         .map(|(i, r)| (i, r.payload))
         .collect();
-    if jobs.len() <= 1 {
-        return jobs.into_iter().map(|(i, p)| (i, decode_jpeg(p))).collect();
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    decode_jobs(&jobs, cores)
+}
+
+fn decode_jobs(jobs: &[(usize, &[u8])], workers: usize) -> Vec<Decoded> {
+    let decode_all = |chunk: &[(usize, &[u8])]| -> Vec<Decoded> {
+        chunk.iter().map(|&(i, p)| (i, decode_jpeg(p))).collect()
+    };
+    let workers = workers.clamp(1, jobs.len().max(1));
+    if workers == 1 {
+        return decode_all(jobs);
     }
+    let per = jobs.len().div_ceil(workers);
     std::thread::scope(|scope| {
         let handles: Vec<_> = jobs
-            .into_iter()
-            .map(|(i, p)| (i, scope.spawn(move || decode_jpeg(p))))
+            .chunks(per)
+            .map(|chunk| {
+                let spawned = std::thread::Builder::new()
+                    .name("vnc-jpeg".into())
+                    .spawn_scoped(scope, move || decode_all(chunk));
+                (chunk, spawned)
+            })
             .collect();
         handles
             .into_iter()
-            .map(|(i, h)| (i, h.join().ok().flatten()))
+            .flat_map(|(chunk, spawned)| match spawned {
+                // A worker that panicked decoded nothing; its rectangles
+                // are skipped like any JPEG that will not decode.
+                Ok(h) => h
+                    .join()
+                    .unwrap_or_else(|_| chunk.iter().map(|&(i, _)| (i, None)).collect()),
+                Err(_) => decode_all(chunk),
+            })
             .collect()
     })
 }
@@ -346,6 +396,52 @@ mod tests {
     }
 
     #[test]
+    fn many_jpegs_decode_on_a_bounded_pool_and_each_lands_in_place() {
+        let encode = |v: u8| {
+            let mut out = Vec::new();
+            let img = image::RgbImage::from_pixel(2, 2, image::Rgb([v, v, v]));
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 100)
+                .encode_image(&img)
+                .unwrap();
+            out
+        };
+        let payloads: Vec<Vec<u8>> = (0..40u8).map(|i| encode(i * 6)).collect();
+        let mut jobs: Vec<(usize, &[u8])> = payloads
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i * 3, p.as_slice()))
+            .collect();
+        jobs.push((999, &[0xff, 0xd8, 0x00]));
+        for workers in [1, 3, 8, 1000] {
+            let out = decode_jobs(&jobs, workers);
+            assert_eq!(out.len(), jobs.len());
+            for (n, (index, decoded)) in out.iter().enumerate().take(40) {
+                assert_eq!(*index, n * 3);
+                let (_, _, rgb) = decoded.as_ref().expect("a good JPEG decodes");
+                assert!(rgb[0].abs_diff(n as u8 * 6) < 8);
+            }
+            assert_eq!(out[40], (999, None));
+        }
+        assert!(decode_jobs(&[], 4).is_empty());
+    }
+
+    #[test]
+    fn a_render_thread_that_panics_says_so() {
+        let (tx, rx) = async_channel::unbounded();
+        let joined = std::thread::spawn(move || {
+            let _guard = StopGuard(tx);
+            panic!("boom");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(matches!(rx.recv_blocking(), Ok(Message::Stopped)));
+        // And one that ends normally does not.
+        let (tx, rx) = async_channel::unbounded::<Message>();
+        drop(StopGuard(tx));
+        assert!(rx.recv_blocking().is_err());
+    }
+
+    #[test]
     fn a_corrupt_frame_is_an_error() {
         let mut fb = Framebuffer::new(1, 1);
         assert_eq!(
@@ -356,7 +452,7 @@ mod tests {
 
     #[test]
     fn the_thread_reports_the_first_frame_as_a_reset_then_only_changes() {
-        let (mut sink, rx) = start(span(1), span(1));
+        let (mut sink, rx) = start(span(1), span(1)).unwrap();
         let mut b = FrameBuilder::new(1);
         b.push_fill(0, 0, 1, 1, [1, 2, 3]);
         assert!(sink.send(b.finish()));

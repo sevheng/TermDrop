@@ -120,8 +120,13 @@ pub fn pointer_to_framebuffer(
 
 /// Pixels of scroll that make up one wheel click on the remote.
 const TICK_PX: f32 = 50.0;
-/// Line deltas: the assumed line height.
-const LINE_PX: f32 = 16.0;
+/// Lines GPUI reports for one notch of a wheel. X11, Wayland and Windows
+/// report a notch as three lines (`SCROLL_LINES`, and Windows' default
+/// `wheel_scroll_lines`); macOS reports a line-based wheel's own delta,
+/// about one per notch. The browser gave the Vue panel pixels for a notch;
+/// converting lines at a 16px line height made a notch 48px, under one
+/// [`TICK_PX`], so a single notch never scrolled the remote.
+pub const LINES_PER_NOTCH: f32 = if cfg!(target_os = "macos") { 1.0 } else { 3.0 };
 
 /// A wheel delta, in the units the platform gave it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -136,7 +141,8 @@ pub enum WheelDelta {
 pub fn wheel_ticks(accum: f32, delta: WheelDelta) -> (i32, f32) {
     let px = match delta {
         WheelDelta::Pixels(p) => p,
-        WheelDelta::Lines(l) => l * LINE_PX,
+        // One notch is one click, whatever the platform counts it as.
+        WheelDelta::Lines(l) => l / LINES_PER_NOTCH * TICK_PX,
     };
     let total = accum + px;
     let ticks = (total / TICK_PX).trunc();
@@ -288,9 +294,18 @@ mod tests {
     }
 
     #[test]
-    fn wheel_converts_lines_to_pixels() {
-        assert_eq!(wheel_ticks(0., WheelDelta::Lines(3.)).0, 0);
-        assert_eq!(wheel_ticks(0., WheelDelta::Lines(12.)).0, 3);
+    fn one_wheel_notch_is_one_click() {
+        let (t, r) = wheel_ticks(0., WheelDelta::Lines(LINES_PER_NOTCH));
+        assert_eq!((t, r), (1, 0.));
+        assert_eq!(wheel_ticks(0., WheelDelta::Lines(-LINES_PER_NOTCH)).0, -1);
+        assert_eq!(
+            wheel_ticks(0., WheelDelta::Lines(4. * LINES_PER_NOTCH)).0,
+            4
+        );
+        // A fractional line delta (macOS acceleration) still adds up.
+        let (t, r) = wheel_ticks(0., WheelDelta::Lines(LINES_PER_NOTCH / 2.));
+        assert_eq!(t, 0);
+        assert_eq!(wheel_ticks(r, WheelDelta::Lines(LINES_PER_NOTCH / 2.)).0, 1);
     }
 
     #[test]

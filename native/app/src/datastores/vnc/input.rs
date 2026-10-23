@@ -70,6 +70,9 @@ pub struct Input {
     modifiers_down: Vec<u32>,
     modifiers: Modifiers,
     capslock: Option<bool>,
+    /// A Windows dead key went by unhandled; the key that completes it is
+    /// left to the platform too, which types the composed character.
+    dead_key: bool,
 }
 
 impl Input {
@@ -207,6 +210,28 @@ impl Input {
         if self.view_only {
             return out;
         }
+        // A dead key on Windows: GPUI reports it as its spacing accent with
+        // `prefer_character_input`, which no other press without Ctrl, Alt
+        // or the platform key carries. Sending the accent would type "´e"
+        // for é. Leave it, and the key that completes it, unhandled: the
+        // platform's TranslateMessage then composes, and the character
+        // arrives as text through the input handler ([`Self::text`]).
+        // Linux composes through the input method and never sets the flag.
+        let m = &ks.modifiers;
+        let plain = !m.control && !m.alt && !m.platform;
+        if plain && prefer_character_input {
+            self.dead_key = true;
+            out.handled = false;
+            return out;
+        }
+        if std::mem::take(&mut self.dead_key)
+            && plain
+            && (ks.key == "space"
+                || keystroke_keysym(ks).is_some_and(|(_, s)| s != KeySource::Named))
+        {
+            out.handled = false;
+            return out;
+        }
         if is_altgr_text(ks, prefer_character_input) {
             // That Ctrl+Alt was AltGr. Both have already gone out, so take
             // them back rather than send Ctrl+Alt+@; the character already
@@ -235,8 +260,13 @@ impl Input {
             && ks.key.chars().count() == 1
             && !ks.key.chars().any(char::is_alphabetic);
         let composed = source == KeySource::Typed && ks.key.chars().count() > 1;
+        // A key named after anything but a plain letter or digit may come
+        // up under another name: under X11, AltGr+Q on a German layout goes
+        // down as `@`, and if AltGr is let go first comes up as `q`.
+        let level_dependent = source == KeySource::Typed
+            && !(ks.key.chars().count() == 1 && ks.key.chars().all(|c| c.is_ascii_alphanumeric()));
         out.sends.push(Send::Key { keysym, down: true });
-        if shifted_symbol || composed {
+        if shifted_symbol || composed || level_dependent {
             out.sends.push(Send::Key {
                 keysym,
                 down: false,
@@ -496,10 +526,77 @@ mod tests {
         // A composed character too.
         let out = input.key_down(&key("eacute", Some("é")), false);
         assert_eq!(out.sends.len(), 2);
+        // An X11 AltGr character: AltGr is no modifier GPUI reports, and
+        // the release comes up as the base key.
+        input.modifiers_changed(Modifiers::default(), false);
+        let out = input.key_down(&key("@", Some("@")), false);
+        assert_eq!(
+            out.sends,
+            vec![
+                Send::Key {
+                    keysym: 0x40,
+                    down: true
+                },
+                Send::Key {
+                    keysym: 0x40,
+                    down: false
+                }
+            ]
+        );
+        assert!(input.key_up("q").is_empty());
+        let ups = input.release_all();
+        assert!(
+            !ups.iter()
+                .any(|s| matches!(s, Send::Key { keysym: 0x40, .. }))
+        );
+        input.modifiers_changed(shift, false);
         // But a shifted letter is held: its name does not change.
         let out = input.key_down(&key("a", Some("A")), false);
         assert_eq!(out.sends.len(), 1);
         assert_eq!(input.key_up("a").len(), 1);
+    }
+
+    #[test]
+    fn a_windows_dead_key_is_left_to_the_platform_to_compose() {
+        let mut input = Input::new(false);
+        // ´ (dead), then e: neither is sent nor handled; the platform's
+        // WM_CHAR then brings "é" as text.
+        let out = input.key_down(&key("´", Some("´")), true);
+        assert!(!out.handled && out.sends.is_empty());
+        let out = input.key_down(&key("e", Some("e")), false);
+        assert!(!out.handled && out.sends.is_empty());
+        assert!(input.key_up("´").is_empty() && input.key_up("e").is_empty());
+        assert_eq!(input.text("é").len(), 2);
+        // The next key is the remote's again.
+        let out = input.key_down(&key("e", Some("e")), false);
+        assert!(out.handled);
+        assert_eq!(out.sends.len(), 1);
+        // A dead key then a named key: the named key still goes out.
+        input.key_down(&key("´", Some("´")), true);
+        let out = input.key_down(&key("enter", None), false);
+        assert!(out.handled);
+        assert_eq!(out.sends.len(), 1);
+        // AltGr characters on Windows carry the flag with Ctrl+Alt held:
+        // they are not dead keys.
+        let ctrl_alt = Modifiers {
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        input.modifiers_changed(ctrl_alt, false);
+        let out = input.key_down(
+            &Keystroke {
+                modifiers: ctrl_alt,
+                key: "q".into(),
+                key_char: Some("@".into()),
+            },
+            true,
+        );
+        assert!(out.handled);
+        assert!(out.sends.contains(&Send::Key {
+            keysym: 0x40,
+            down: true
+        }));
     }
 
     #[test]

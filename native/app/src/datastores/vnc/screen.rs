@@ -39,6 +39,8 @@ pub(super) struct Geometry {
     /// The image's rectangle; may be larger than the viewport at 1:1.
     pub image: Bounds<Pixels>,
     pub fb: (u16, u16),
+    fit: FitMode,
+    scale_factor: f32,
 }
 
 impl Geometry {
@@ -64,25 +66,48 @@ impl Geometry {
         self.image.size.width > self.viewport.size.width
             || self.image.size.height > self.viewport.size.height
     }
+
+    /// This geometry with the pointer at `pointer`: where the image will be
+    /// drawn once the pointer is there. At 1:1 on a desktop larger than the
+    /// viewport the image pans with the pointer, so an event must be mapped
+    /// through the pan for its own position, not the one the last paint
+    /// read; otherwise every move lands off by the distance moved since.
+    pub fn at(self, pointer: Point<Pixels>) -> Self {
+        match self.fit {
+            FitMode::Fit => self,
+            FitMode::Actual => {
+                geometry_at(self.viewport, self.fb, self.fit, self.scale_factor, pointer)
+            }
+        }
+    }
+
+    /// Whether a press or wheel at `pointer` belongs to the remote: on the
+    /// image, not in the letterbox around it. The Vue canvas was only the
+    /// image's size, so the bars took no input; clamping a click in a bar
+    /// to the edge pixel would press whatever sits on the remote's edge.
+    pub fn takes(self, pointer: Point<Pixels>) -> bool {
+        self.viewport.contains(&pointer) && self.image.contains(&pointer)
+    }
 }
 
-pub(super) fn geometry(
+/// The geometry for a pointer at `pointer` (only 1:1 panning reads it).
+pub(super) fn geometry_at(
     viewport: Bounds<Pixels>,
     fb: (u16, u16),
     fit: FitMode,
-    window: &Window,
+    scale_factor: f32,
+    pointer: Point<Pixels>,
 ) -> Geometry {
     let (vw, vh) = (
         f32::from(viewport.size.width),
         f32::from(viewport.size.height),
     );
-    let l = layout(fb.0 as f32, fb.1 as f32, vw, vh, fit, window.scale_factor());
+    let l = layout(fb.0 as f32, fb.1 as f32, vw, vh, fit, scale_factor);
     let (ox, oy) = match fit {
         FitMode::Fit => ((vw - l.width) / 2.0, (vh - l.height) / 2.0),
         FitMode::Actual => {
-            let m = window.mouse_position();
-            let fx = f32::from(m.x - viewport.origin.x) / vw.max(1.0);
-            let fy = f32::from(m.y - viewport.origin.y) / vh.max(1.0);
+            let fx = f32::from(pointer.x - viewport.origin.x) / vw.max(1.0);
+            let fy = f32::from(pointer.y - viewport.origin.y) / vh.max(1.0);
             (
                 actual_offset(l.width, vw, fx),
                 actual_offset(l.height, vh, fy),
@@ -96,7 +121,24 @@ pub(super) fn geometry(
             size(px(l.width), px(l.height)),
         ),
         fb,
+        fit,
+        scale_factor,
     }
+}
+
+pub(super) fn geometry(
+    viewport: Bounds<Pixels>,
+    fb: (u16, u16),
+    fit: FitMode,
+    window: &Window,
+) -> Geometry {
+    geometry_at(
+        viewport,
+        fb,
+        fit,
+        window.scale_factor(),
+        window.mouse_position(),
+    )
 }
 
 pub(super) struct Prepaint {
@@ -143,7 +185,10 @@ impl Element for VncScreen {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let view = self.view.read(cx);
-        let geometry = geometry(bounds, view.size, view.fit, window);
+        // The size of the framebuffer the tiles were built for, not the
+        // latest resize event's: until the frame that rebuilds the grid has
+        // been applied, the old tiles must keep their old layout.
+        let geometry = geometry(bounds, view.drawn_size, view.fit, window);
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         Prepaint { geometry, hitbox }
     }
@@ -216,7 +261,11 @@ impl Element for VncScreen {
         window.on_mouse_event({
             let (view, hitbox) = (view.clone(), hitbox.clone());
             move |e: &MouseDownEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                let geo = geo.at(e.position);
+                if phase != DispatchPhase::Bubble
+                    || !hitbox.is_hovered(window)
+                    || !geo.takes(e.position)
+                {
                     return;
                 }
                 view.update(cx, |v, cx| {
@@ -231,6 +280,7 @@ impl Element for VncScreen {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
+                let geo = geo.at(e.position);
                 view.update(cx, |v, cx| {
                     v.mouse_button(e.button, false, e.position, geo, window, cx)
                 });
@@ -242,16 +292,88 @@ impl Element for VncScreen {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-                let hovered = hitbox.is_hovered(window);
+                let geo = geo.at(e.position);
+                let hovered = hitbox.is_hovered(window) && geo.takes(e.position);
                 view.update(cx, |v, cx| v.mouse_move(e.position, hovered, geo, cx));
             }
         });
         window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+            let geo = geo.at(e.position);
+            if phase != DispatchPhase::Bubble
+                || !hitbox.is_hovered(window)
+                || !geo.takes(e.position)
+            {
                 return;
             }
             view.update(cx, |v, _| v.wheel(e, geo));
             cx.stop_propagation();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that brings in gpui's own `test` attribute.
+    use super::{FitMode, geometry_at};
+    use gpui_kit::{Bounds, Pixels, point, px, size};
+
+    fn viewport(w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(100.), px(50.)), size(px(w), px(h)))
+    }
+
+    #[test]
+    fn a_pan_is_mapped_through_the_events_own_position() {
+        // A 2560-wide desktop at 1:1 in a 1000px viewport pans by 1.56px per
+        // pointer pixel.
+        let vp = viewport(1000., 800.);
+        let painted = geometry_at(
+            vp,
+            (2560, 800),
+            FitMode::Actual,
+            1.,
+            point(px(300.), px(60.)),
+        );
+        let to = point(px(310.), px(60.));
+        let fresh = geometry_at(vp, (2560, 800), FitMode::Actual, 1., to);
+        assert_eq!(
+            painted.at(to).framebuffer_pixel(to),
+            fresh.framebuffer_pixel(to)
+        );
+        // What the stale geometry got wrong: 10px of motion, ~16px of pan.
+        let stale = painted.framebuffer_pixel(to).0;
+        assert!(fresh.framebuffer_pixel(to).0 - stale >= 15, "{stale}");
+        // The far edge reaches the last remote pixel.
+        let edge = point(px(1100.), px(60.));
+        assert_eq!(painted.at(edge).framebuffer_pixel(edge).0, 2559);
+    }
+
+    #[test]
+    fn fit_does_not_depend_on_the_pointer() {
+        let vp = viewport(1000., 800.);
+        let g = geometry_at(vp, (800, 600), FitMode::Fit, 1., point(px(0.), px(0.)));
+        let to = point(px(900.), px(700.));
+        assert_eq!(g.at(to).image, g.image);
+    }
+
+    #[test]
+    fn the_letterbox_takes_no_input() {
+        // A 4:3 desktop in a wide viewport: bars left and right.
+        let vp = viewport(1600., 600.);
+        let g = geometry_at(vp, (800, 600), FitMode::Fit, 1., point(px(0.), px(0.)));
+        assert_eq!(f32::from(g.image.origin.x), 500.);
+        assert!(!g.takes(point(px(150.), px(100.))), "left bar");
+        assert!(!g.takes(point(px(1650.), px(60.))), "right bar");
+        assert!(g.takes(point(px(600.), px(300.))), "the image");
+        // 1:1 and smaller than the viewport: centred, bars all round.
+        let g = geometry_at(vp, (400, 300), FitMode::Actual, 1., point(px(0.), px(0.)));
+        assert!(!g.takes(point(px(110.), px(60.))));
+        assert!(g.takes(point(px(900.), px(350.))));
+        // 1:1 and larger: the image covers the viewport, and nothing
+        // outside the viewport counts even though the image extends there.
+        let g = geometry_at(vp, (4000, 3000), FitMode::Actual, 1., point(px(0.), px(0.)));
+        let inside = point(px(800.), px(300.));
+        assert!(g.at(inside).takes(inside));
+        let outside = point(px(1800.), px(300.));
+        assert!(!g.at(outside).takes(outside));
     }
 }
