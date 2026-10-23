@@ -59,7 +59,7 @@ jobs:
         run: |
           set -o pipefail
           cargo clippy --workspace --all-targets --message-format=short -- -D warnings 2>&1 | tee ../clippy.log || {
-            msg=$(grep -E '^(error|warning)|^[^ ].*: (error|warning)' ../clippy.log | head -60 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            msg=$( { grep -E 'error|warning' ../clippy.log || true; echo '--- last lines ---'; tail -n 40 ../clippy.log; } | tail -n 120 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' || true)
             echo "::error title=clippy (${{ matrix.platform }})::${msg}"
             exit 1
           }
@@ -68,7 +68,7 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace 2>&1 | tee ../test.log || {
-            msg=$(grep -E '^error|panicked|FAILED|^test .* \.\.\. FAILED|^---- ' ../test.log | head -60 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            msg=$( { grep -E '^error|panicked|FAILED|^---- ' ../test.log || true; echo '--- last lines ---'; tail -n 40 ../test.log; } | tail -n 120 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' || true)
             echo "::error title=tests (${{ matrix.platform }})::${msg}"
             exit 1
           }
