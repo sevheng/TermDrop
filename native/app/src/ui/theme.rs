@@ -162,10 +162,7 @@ fn hsla([r, g, b]: Rgb) -> Hsla {
     .into()
 }
 
-/// The UI font when it is installed. GPUI cannot load the woff2 files the
-/// webview bundles, so until packaging ships the TTFs this is "if loadable"
-/// and the platform UI font stands in.
-pub const UI_FONT: &str = "IBM Plex Sans";
+pub use super::fonts::{MONO_FONT, UI_FONT};
 
 /// A GPUI Kit theme config for one mode, every Kit colour slot mapped to the
 /// token that plays that role in the Vue app.
@@ -330,6 +327,8 @@ pub fn theme_config_json(choice: ThemeChoice, font_family: Option<&str>) -> serd
     if let Some(family) = font_family {
         config["font.family"] = family.into();
     }
+    // Code in the UI (paths, fingerprints, documents) in the terminal's face.
+    config["mono_font.family"] = MONO_FONT.into();
     config
 }
 
@@ -418,15 +417,12 @@ pub fn palette(cx: &App) -> &Palette {
 
 /// Register both TermDrop themes with GPUI Kit and switch to `choice`. Call
 /// after `gpui_kit::init` and again whenever the setting changes.
+///
+/// The fonts are the bundled ones ([`super::fonts::register`] runs first), so
+/// there is no "if installed" check here.
 pub fn install(choice: ThemeChoice, cx: &mut App) {
-    let font = cx
-        .text_system()
-        .all_font_names()
-        .into_iter()
-        .any(|name| name == UI_FONT)
-        .then_some(UI_FONT);
-    let light = theme_config(ThemeChoice::Light, font);
-    let dark = theme_config(ThemeChoice::Dark, font);
+    let light = theme_config(ThemeChoice::Light, Some(UI_FONT));
+    let dark = theme_config(ThemeChoice::Dark, Some(UI_FONT));
     Theme::update(cx, |theme| {
         theme.light_theme = light;
         theme.dark_theme = dark;
@@ -469,6 +465,7 @@ mod tests {
             let config = theme_config(choice, Some(UI_FONT));
             assert_eq!(config.mode.is_dark(), choice == ThemeChoice::Dark);
             assert_eq!(config.font_family.as_deref(), Some(UI_FONT));
+            assert_eq!(config.mono_font_family.as_deref(), Some(MONO_FONT));
         }
     }
 

@@ -42,6 +42,9 @@ pub fn run(store: Arc<dyn HostStore>, factory: Rc<dyn TabContentFactory>) {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
+            // First: the theme and every terminal resolve their families
+            // against the fonts registered at that moment.
+            ui::fonts::register(cx);
             gpui_kit::init(cx);
             // After the kit: its root binds Tab and Ctrl+C, and the terminal
             // rebinds them in its own context so they reach the program.

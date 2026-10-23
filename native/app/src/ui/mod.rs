@@ -1,6 +1,7 @@
 //! The UI kit every panel builds on: the theme and our wrappers over GPUI
 //! Kit components, each keeping one of the Vue app's rules.
 //!
+//! - [`fonts`]: the bundled TTFs, registered before the first window.
 //! - [`theme`]: tokens and the `Palette`; views name a token, never a colour.
 //! - [`icon_button::IconButton`]: an icon-only button needs a label.
 //! - [`empty_state::EmptyState`]: empty, filtered and loading stay distinct.
@@ -18,6 +19,7 @@ pub mod choice;
 pub mod dialogs;
 pub mod empty_state;
 pub mod file_dialog;
+pub mod fonts;
 pub mod host_key_dialog;
 pub mod icon_button;
 pub mod notify;

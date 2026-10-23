@@ -29,7 +29,10 @@ pub const NERD_SYMBOLS_FAMILY: &str = "Symbols Nerd Font Mono";
 
 /// Monospace families tried, in order, when the requested one is not
 /// installed. GPUI panics on the first line laid out in a family it cannot
-/// find, so the family is always checked before use.
+/// find, so the family is always checked before use. The app embeds and
+/// registers JetBrains Mono and the Nerd Font symbols at startup
+/// (`app/src/ui/fonts.rs`), so there this list is never reached; it is for
+/// the crate on its own, such as the `local_shell` example.
 const MONO_ALTERNATES: &[&str] = &[
     "JetBrains Mono",
     "SF Mono",
