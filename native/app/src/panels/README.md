@@ -5,13 +5,12 @@ Security**, as in `src/views/MainWindow.vue`. The frame around them is done:
 the strip, the resizable width (`sftp-width`, shared with the Tauri app), the
 selected tab (in memory, SFTP at launch, one choice for all SSH tabs, as
 Vue's `rightPanelTab`), when each panel is built and when it is dropped.
-Tunnels shows a "not in the native app yet" state.
 
-SFTP, Docker and Security are built. Each is one folder here with one entry
-point, registered in `DefaultPanels`:
+All four are built. Each is one folder here with one entry point,
+registered in `DefaultPanels`:
 
 ```rust
-// panels/sftp/mod.rs, panels/docker/mod.rs, panels/security/mod.rs
+// panels/sftp/mod.rs, panels/tunnels/mod.rs, panels/docker/mod.rs, panels/security/mod.rs
 pub fn build(ctx: PanelContext, window: &mut Window, cx: &mut App) -> AnyView
 ```
 
@@ -162,7 +161,7 @@ the view. The SFTP editor is the one user.
 | SFTP | the tab | first shown, once the tab's SFTP session is up (the frame shows "Connecting SFTP..." or the failure with Retry until then) | the tab closes |
 | Docker | the host | first shown | the host's last SSH tab closes |
 | Security | the host | first shown | the host's last SSH tab closes |
-| Tunnels | the host | (not ported) | |
+| Tunnels | the host | first shown | the host's last SSH tab closes (running forwards do not: they live in the core until stopped or the app exits, as in Tauri) |
 
 "The host's last SSH tab closes" is exactly when the core drops the host's
 exec session, its Docker and security caches and its exec PTYs
@@ -205,6 +204,32 @@ so a large transfer delays a listing, as in the Tauri app.
 The column choice is the `sftp-columns` setting (`model.setting` /
 `set_setting`, JSON as `usePrefs.js` writes it), followed through
 `AppEvent::SettingChanged`.
+
+## Tunnels (`tunnels/`)
+
+Port of `PortForwardPanel.vue`, `PortForwardModal.vue` and `onForwardSaved`
+in `MainWindow.vue`.
+
+On `ctx.core()` (`termdrop_core::forward_ops`, the Tauri commands' own
+bodies), all synchronous, so through `ctx.spawn_blocking`:
+`get_port_forwards(host_id)`, `add_port_forward(&row)`,
+`update_port_forward(id, &row)`, `delete_port_forward(id)` (stops it first),
+`start_port_forward(id)` (keyring + listener; each connection opens its own
+SSH session, host key checked and failing closed), `stop_port_forward(id)`,
+`port_forward_status(id)`.
+
+For the terminal's context menu (`TerminalTab.vue`'s "Forward <port>"):
+
+```rust
+use crate::panels::tunnels::{detect_forward, open_forward_editor};
+if let Some(hint) = detect_forward(&selection) {   // hint.label is the entry
+    open_forward_editor(window, cx, services, host_id, Some(hint.prefill()));
+}
+```
+
+Offer it on SSH tabs only (a host id). A save from the dialog emits
+`ForwardsChanged { host_id }` on `tunnels::bus(cx)` (the Vue
+`port-forward-added`), which the open panel for that host reloads on.
 
 ## Docker (`docker/`)
 

@@ -451,7 +451,7 @@ fn get_port_forwards(
     state: State<'_, AppState>,
     host_id: i64,
 ) -> Result<Vec<db::PortForward>, String> {
-    with_db(&state, |conn| db::get_port_forwards(conn, host_id))
+    state.get_port_forwards(host_id)
 }
 
 #[tauri::command]
@@ -459,7 +459,7 @@ fn add_port_forward(
     state: State<'_, AppState>,
     forward: db::NewPortForward,
 ) -> Result<i64, String> {
-    with_db(&state, |conn| db::add_port_forward(conn, &forward))
+    state.add_port_forward(&forward)
 }
 
 #[tauri::command]
@@ -468,66 +468,28 @@ fn update_port_forward(
     id: i64,
     forward: db::NewPortForward,
 ) -> Result<(), String> {
-    with_db(&state, |conn| db::update_port_forward(conn, id, &forward))
+    state.update_port_forward(id, &forward)
 }
 
 #[tauri::command]
 fn delete_port_forward(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    state.forward_manager.stop(id);
-    with_db(&state, |conn| db::delete_port_forward(conn, id))
+    state.delete_port_forward(id)
 }
 
 #[tauri::command]
 fn start_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), String> {
-    let (host, forward) = {
-        let conn = state.db.get().map_err(db_err)?;
-        let forward = db::get_port_forward_by_id(&conn, rule_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Port forward rule not found")?;
-        let host = db::get_host_by_id(&conn, forward.host_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Host not found")?;
-        (host, forward)
-    };
-
-    let target = resolve_target(&state, &host, None)?;
-
-    match forward.kind.as_str() {
-        "local" => {
-            let remote_host = forward.remote_host.ok_or("Remote host not set")?;
-            let remote_port = forward.remote_port.ok_or("Remote port not set")? as u16;
-            state.forward_manager.start_local(
-                rule_id,
-                target,
-                forward.local_host,
-                forward.local_port as u16,
-                remote_host,
-                remote_port,
-            )?;
-        }
-        "dynamic" => {
-            state.forward_manager.start_dynamic(
-                rule_id,
-                target,
-                forward.local_host,
-                forward.local_port as u16,
-            )?;
-        }
-        _ => return Err(format!("Unsupported forward kind: {}", forward.kind)),
-    }
-
-    Ok(())
+    state.start_port_forward(rule_id)
 }
 
 #[tauri::command]
 fn stop_port_forward(state: State<'_, AppState>, rule_id: i64) -> Result<(), String> {
-    state.forward_manager.stop(rule_id);
+    state.stop_port_forward(rule_id);
     Ok(())
 }
 
 #[tauri::command]
 fn get_port_forward_status(state: State<'_, AppState>, rule_id: i64) -> Result<bool, String> {
-    Ok(state.forward_manager.is_active(rule_id))
+    Ok(state.port_forward_status(rule_id))
 }
 
 #[tauri::command]
