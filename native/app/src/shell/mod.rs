@@ -8,3 +8,4 @@ pub mod main_window;
 pub mod placeholder;
 pub mod settings;
 pub mod ssh_import;
+pub mod window_state;

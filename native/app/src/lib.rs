@@ -22,6 +22,7 @@ pub mod core_backend;
 pub mod datastores;
 pub mod panels;
 pub mod shell;
+pub mod single_instance;
 pub mod tabs;
 pub mod ui;
 
@@ -29,16 +30,33 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::TitleBar;
-use gpui_kit::{AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{AppContext as _, WindowOptions, px, size};
 
 use app::AppModel;
 use backend::{HostStore, TabContentFactory};
 use shell::main_window::{MainWindow, bind_keys};
+use shell::window_state::{self, MIN_SIZE, WINDOW_STATE_KEY, WindowState};
+
+/// The name the preview installs and shows under. It installs beside the
+/// Tauri app ("TermDrop", `com.termdrop`) rather than over it; see
+/// `native/RELEASING.md`. The packaging metadata in `app/Cargo.toml` carries
+/// the same two values.
+pub const PRODUCT_NAME: &str = "TermDrop Native Preview";
+/// The preview's identifier: bundle id, single-instance key.
+pub const IDENTIFIER: &str = "com.termdrop.native-preview";
+/// The Linux desktop file's name (cargo-packager names it after the
+/// binary), so a Wayland compositor can match the window to its icon.
+const APP_ID: &str = "termdrop-native";
 
 /// Open the app over `store`, with `factory` filling each tab: the core
 /// adapter and terminals normally, the fake backend and placeholders with
-/// `--demo`.
-pub fn run(store: Arc<dyn HostStore>, factory: Rc<dyn TabContentFactory>) {
+/// `--demo`. Each message on `focus_requests` (a second launch, see
+/// [`single_instance`]) brings the window forward.
+pub fn run(
+    store: Arc<dyn HostStore>,
+    factory: Rc<dyn TabContentFactory>,
+    focus_requests: Option<async_channel::Receiver<()>>,
+) {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
@@ -58,19 +76,36 @@ pub fn run(store: Arc<dyn HostStore>, factory: Rc<dyn TabContentFactory>) {
             // Before the window opens, so the first frame is in the saved theme.
             ui::theme::install(model.read(cx).theme(), cx);
 
+            let saved = model
+                .read(cx)
+                .setting(WINDOW_STATE_KEY)
+                .and_then(|raw| WindowState::decode(&raw));
+            let (bounds, display_id) = window_state::window_bounds(saved.as_ref(), cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(1200.), px(760.)),
-                    cx,
-                ))),
-                window_min_size: Some(size(px(720.), px(420.))),
+                window_bounds: Some(bounds),
+                display_id,
+                window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
+                app_id: Some(APP_ID.into()),
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, |window, cx| {
                 cx.new(|cx| MainWindow::new(model, factory, window, cx))
             })
             .expect("failed to open the main window");
+
+            if let Some(requests) = focus_requests {
+                cx.spawn(async move |cx| {
+                    while requests.recv().await.is_ok() {
+                        cx.update(|cx| {
+                            cx.activate(true);
+                            for handle in cx.windows() {
+                                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
 
             // Closing the last window ends the app, on every platform.
             cx.on_window_closed(|cx, _| {

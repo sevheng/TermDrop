@@ -41,3 +41,7 @@ unicode-width = "0.2"
 # frames GPUI's RenderImage is built from (datastores/vnc). In the lock
 # through GPUI, with the same features.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# One running copy per user (single_instance.rs), as the Tauri app gets from
+# tauri-plugin-single-instance: a named mutex on Windows, an abstract socket
+# on Linux, flock on macOS.
+single-instance = "0.3"

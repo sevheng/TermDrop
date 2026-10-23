@@ -21,6 +21,7 @@ use gpui_kit::{
 use super::host_editor::open_host_editor;
 use super::host_sidebar::HostSidebar;
 use super::settings::open_settings;
+use super::window_state::WindowStateSaver;
 use crate::app::host_form::EditorKind;
 use crate::app::tab_kind::{TabKind, has_right_panel};
 use crate::app::tabs::SftpLink;
@@ -90,6 +91,8 @@ pub struct MainWindow {
     contents: HashMap<String, AnyView>,
     factory: Rc<dyn TabContentFactory>,
     focus_handle: FocusHandle,
+    /// Saves the window's bounds as they change, for the next launch.
+    window_state: WindowStateSaver,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -107,9 +110,18 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let sidebar = cx.new(|cx| HostSidebar::new(model.clone(), window, cx));
+        let window_state = WindowStateSaver::new(model.read(cx).store().clone());
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe_in(&model, window, Self::on_app_event),
+            cx.observe_window_bounds(window, |this, window, cx| {
+                this.window_state
+                    .changed(window, cx, |this: &mut Self| &mut this.window_state)
+            }),
+            cx.on_app_quit(|this, _| {
+                this.window_state.flush();
+                async {}
+            }),
         ];
         let focus_handle = cx.focus_handle();
         // Shortcuts dispatch from the focused element up; with nothing
@@ -121,6 +133,7 @@ impl MainWindow {
             contents: HashMap::new(),
             factory,
             focus_handle,
+            window_state,
             _subscriptions: subscriptions,
         }
     }
@@ -541,8 +554,8 @@ impl Render for MainWindow {
         let right_w = model.prefs().sftp_width;
         let show_right = has_right_panel(model.active_tab()) && model.right_panel_open();
         let title: SharedString = match model.active_tab() {
-            Some(tab) => format!("{} — TermDrop", tab.title).into(),
-            None => "TermDrop".into(),
+            Some(tab) => format!("{} — {}", tab.title, crate::PRODUCT_NAME).into(),
+            None => crate::PRODUCT_NAME.into(),
         };
         window.set_window_title(&title);
         let ui_font = theme::ui_font(cx);

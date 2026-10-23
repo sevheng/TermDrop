@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use termdrop_gpui::backend::{FakeBackend, PlaceholderContent};
 use termdrop_gpui::core_backend::{self, CoreStore};
+use termdrop_gpui::single_instance::{self, Launch};
 use termdrop_gpui::tabs::CoreContent;
 
 fn main() {
@@ -12,9 +13,35 @@ fn main() {
     // `--demo` runs on fictional hosts, in-memory settings and placeholder
     // tabs: nothing reads or writes the real database, keyring or network.
     if std::env::args().skip(1).any(|a| a == "--demo") {
-        termdrop_gpui::run(Arc::new(FakeBackend::new()), Rc::new(PlaceholderContent));
+        termdrop_gpui::run(
+            Arc::new(FakeBackend::new()),
+            Rc::new(PlaceholderContent),
+            None,
+        );
         return;
     }
+    // One copy per user, keyed apart from the Tauri app so both can run. A
+    // second launch brings the first one's window forward and exits, before
+    // it opens the database.
+    let db_path = termdrop_core::state::default_db_path();
+    let data_dir = db_path.parent().unwrap_or(std::path::Path::new("."));
+    let instance = match single_instance::acquire(termdrop_gpui::IDENTIFIER, data_dir) {
+        Launch::Primary(primary) => primary,
+        Launch::Handed => {
+            tracing::info!(
+                "{} is already running; focused it",
+                termdrop_gpui::PRODUCT_NAME
+            );
+            return;
+        }
+        Launch::Unreachable(e) => {
+            eprintln!(
+                "{} is already running, but it did not respond: {e}",
+                termdrop_gpui::PRODUCT_NAME
+            );
+            std::process::exit(1);
+        }
+    };
     // The Tauri app's database, so both apps see the same hosts, settings
     // and trusted host keys.
     let (services, events) = match core_backend::open() {
@@ -28,7 +55,14 @@ fn main() {
         services.core.clone(),
         services.rt.handle().clone(),
     ));
-    termdrop_gpui::run(store, Rc::new(CoreContent::new(services, events)));
+    let requests = instance.requests.clone();
+    termdrop_gpui::run(
+        store,
+        Rc::new(CoreContent::new(services, events)),
+        Some(requests),
+    );
+    // Held until the app exits: dropping it releases the lock.
+    drop(instance);
 }
 
 /// Logs to stderr, filtered by `RUST_LOG` (default `info`), as the Tauri app's
