@@ -133,8 +133,11 @@ error).
 (`composables/useSecretRetry.js`). It runs `call(core, None)`; when that
 fails because a stored password is missing, it asks with the Vue wording
 ("MongoDB password required" / "Redis password required"), **stores** the
-answer in the keyring, and runs `call` **once** more. Cancelling, an empty
-answer or a second miss deliver the error. Use it for the calls the Vue tabs
+answer in the keyring, and runs `call` again. Each password is asked for at
+most once per call (`common::next_secret_prompt`), so a tunnelled Redis host
+missing both its own password and its bastion's gets two prompts in a row
+rather than a raw keyring error after the first. Cancelling, an empty answer
+or a second miss of the same password deliver the error. Use it for the calls the Vue tabs
 wrap: `mongodb_list_databases`, `mongodb_list_collections`,
 `redis_connect`.
 

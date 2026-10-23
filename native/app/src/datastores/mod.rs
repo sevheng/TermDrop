@@ -26,7 +26,7 @@ use gpui_kit::{
 };
 use termdrop_core::{Core, CoreEvent, Events};
 
-use self::common::{MissingSecret, missing_secret};
+use self::common::{MissingSecret, next_secret_prompt};
 use crate::app::AppModel;
 use crate::app::display::{mongo_display_uri, redis_display_uri};
 use crate::app::tab_kind::TabKind;
@@ -251,13 +251,15 @@ impl ServiceTabContext {
     ///
     /// `call(core, ssh_password)` runs once; when it fails because a stored
     /// password is missing ([`common::missing_secret`]), the user is asked,
-    /// and it runs **once** more. Asking again after a second miss would loop
-    /// against a genuinely wrong password, so the second result is final.
-    /// Cancelling the prompt delivers the first error.
+    /// and it runs again. Each password is asked for **at most once** per
+    /// call ([`common::next_secret_prompt`]): a second miss of the same one
+    /// would loop against a genuinely wrong password, so that result is
+    /// final. A tunnelled Redis host missing both its own password and its
+    /// bastion's is asked for one, then the other. Cancelling a prompt
+    /// delivers the error it was asked for.
     ///
     /// - The datastore's own password is stored in the keyring before the
-    ///   retry (so the next call and the other app find it), and the retry
-    ///   gets `ssh_password: None`.
+    ///   retry (so the next call and the other app find it).
     /// - A Redis host's **bastion** password (its tunnel's SSH host) is
     ///   stored under that SSH host, as the SSH tab stores a typed password,
     ///   and also passed as `ssh_password`, for `redis_connect`'s
@@ -284,20 +286,28 @@ impl ServiceTabContext {
         let ctx = self.clone();
         let first = self.spawn(call(self.core().clone(), None));
         cx.spawn_in(window, async move |this, cx| {
-            let first = first.await.unwrap_or_else(|e| Err(task_failed(e)));
-            let result = match first {
-                Err(err) => match missing_secret(ctx.kind, &err) {
-                    None => Err(err),
-                    Some(need) => match ctx.ask_secret(need, cx).await {
-                        None => Err(err),
-                        Some(ssh_password) => ctx
-                            .spawn(call(ctx.core().clone(), ssh_password))
-                            .await
-                            .unwrap_or_else(|e| Err(task_failed(e))),
-                    },
-                },
-                ok => ok,
-            };
+            let mut result = first.await.unwrap_or_else(|e| Err(task_failed(e)));
+            // At most one prompt per secret, so at most two retries.
+            let mut asked = Vec::new();
+            let mut ssh_password = None;
+            while let Err(err) = &result {
+                let Some(need) = next_secret_prompt(ctx.kind, err, &asked) else {
+                    break;
+                };
+                asked.push(need);
+                let Some(answer) = ctx.ask_secret(need, cx).await else {
+                    break;
+                };
+                // A bastion password is passed on every later try; the
+                // datastore's own is read back from the keyring.
+                if answer.is_some() {
+                    ssh_password = answer;
+                }
+                result = ctx
+                    .spawn(call(ctx.core().clone(), ssh_password.clone()))
+                    .await
+                    .unwrap_or_else(|e| Err(task_failed(e)));
+            }
             deliver(this, cx, result, done);
         })
     }

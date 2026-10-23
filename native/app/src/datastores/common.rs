@@ -167,6 +167,21 @@ pub fn missing_secret(kind: DatastoreKind, err: &str) -> Option<MissingSecret> {
     })
 }
 
+/// The password to ask for after a call failed with `err`, or `None` to
+/// give up and show the error. Each secret is asked for at most once per
+/// call: a second miss of the same one means the answer did not take, and
+/// asking again would loop. A *different* one is asked for, though: a new
+/// Redis host tunnelled through a bastion whose password is not stored
+/// either misses its own password first and the SSH one after, and showing
+/// the raw keyring error in between only made the user press Reconnect.
+pub fn next_secret_prompt(
+    kind: DatastoreKind,
+    err: &str,
+    asked: &[MissingSecret],
+) -> Option<MissingSecret> {
+    missing_secret(kind, err).filter(|need| !asked.contains(need))
+}
+
 // ---- operation progress --------------------------------------------------
 
 /// Where a backup or restore stands.
@@ -196,6 +211,11 @@ pub struct OpProgress {
     pub item: String,
     /// 0..=100. MongoDB's CLI tools report an estimate while they run.
     pub percent: u8,
+    /// Whether `percent` means anything yet. A Redis restore reads its file
+    /// as it goes and only learns the key count at the end, so the core
+    /// sends `total: 0` and a percent that stays 0 until it is done; the row
+    /// then shows the count without a "0%" beside 600,000 restored keys.
+    pub percent_known: bool,
     /// "current / total" as the tool or the core printed it, or built from
     /// the counts when it did not.
     pub detail: String,
@@ -210,6 +230,7 @@ impl OpProgress {
             stage: String::new(),
             item: String::new(),
             percent: 0,
+            percent_known: true,
             detail: String::new(),
             state: OpState::Running,
         }
@@ -235,6 +256,7 @@ impl OpProgress {
             CoreEvent::RedisProgress(p) if p.op_id == self.op_id => {
                 self.stage = p.stage.clone();
                 self.percent = p.percent.min(100) as u8;
+                self.percent_known = p.total > 0 || p.stage == "done";
                 self.detail = if p.detail.is_empty() {
                     if p.total > 0 {
                         format!("{} / {}", format_count(p.processed), format_count(p.total))
@@ -262,6 +284,7 @@ impl OpProgress {
         self.state = match result {
             Ok(()) => {
                 self.percent = 100;
+                self.percent_known = true;
                 OpState::Done
             }
             Err("cancelled") => OpState::Cancelled,
@@ -332,11 +355,13 @@ pub fn op_progress_row(
                         .text_color(p.ink)
                         .child(SharedString::from(op.title.clone())),
                 )
-                .child(
-                    num(text_2xs(div()))
-                        .text_color(p.ink_2)
-                        .child(format!("{}%", op.percent)),
-                )
+                .when(op.percent_known, |row| {
+                    row.child(
+                        num(text_2xs(div()))
+                            .text_color(p.ink_2)
+                            .child(format!("{}%", op.percent)),
+                    )
+                })
                 .when_active(active, || {
                     IconButton::new(
                         ElementId::Name(format!("{id}-cancel").into()),
@@ -637,6 +662,38 @@ mod tests {
     }
 
     #[test]
+    fn each_missing_secret_is_asked_for_once_per_call() {
+        use DatastoreKind::*;
+        let own = "keyring retrieve failed for Redis password: No matching entry";
+        let ssh = "keyring retrieve failed: no fallback password for host";
+        // Nothing asked yet: ask for whichever is missing.
+        assert_eq!(
+            next_secret_prompt(Redis, own, &[]),
+            Some(MissingSecret::Datastore)
+        );
+        // The Redis password was given and the bastion's is missing next.
+        assert_eq!(
+            next_secret_prompt(Redis, ssh, &[MissingSecret::Datastore]),
+            Some(MissingSecret::Bastion)
+        );
+        // The same one missing again: the answer did not take; stop.
+        assert_eq!(
+            next_secret_prompt(Redis, own, &[MissingSecret::Datastore]),
+            None
+        );
+        assert_eq!(
+            next_secret_prompt(
+                Redis,
+                ssh,
+                &[MissingSecret::Datastore, MissingSecret::Bastion]
+            ),
+            None
+        );
+        // Any other error is shown as it is.
+        assert_eq!(next_secret_prompt(Mongo, "connection refused", &[]), None);
+    }
+
+    #[test]
     fn a_missing_secret_is_told_apart_from_a_missing_bastion_password() {
         use DatastoreKind::*;
         use MissingSecret::*;
@@ -715,6 +772,34 @@ mod tests {
         }));
         assert_eq!(op.detail, "1,500 / 3,000");
         assert_eq!(op.status_line(), "exporting");
+        assert!(op.percent_known);
+    }
+
+    #[test]
+    fn a_restore_without_a_total_shows_no_percent_until_it_is_done() {
+        let restoring = |processed, total, stage: &str, percent| {
+            CoreEvent::RedisProgress(RedisProgress {
+                op_id: "r".into(),
+                db: 6,
+                stage: stage.into(),
+                processed,
+                total,
+                percent,
+                detail: format!("{processed} keys restored"),
+            })
+        };
+        let mut op = OpProgress::new("r", "Restoring");
+        op.apply(&restoring(578_200, 0, "restoring", 0));
+        assert!(!op.percent_known);
+        assert_eq!(op.detail, "578200 keys restored");
+        op.apply(&restoring(1_000_000, 1_000_000, "done", 100));
+        assert!(op.percent_known);
+        assert_eq!(op.percent, 100);
+
+        let mut op = OpProgress::new("r", "Restoring");
+        op.apply(&restoring(10, 0, "restoring", 0));
+        op.finish(Ok(()));
+        assert!(op.percent_known);
     }
 
     fn texts(lines: &[JsonLine]) -> Vec<String> {
