@@ -9,6 +9,8 @@
 //!   and `termdrop-terminal`.
 //! - [`panels`]: the right-hand panel beside an SSH tab (SFTP, Tunnels,
 //!   Docker, Security); its `README.md` is the contract for each panel.
+//! - [`datastores`]: the MongoDB and Redis tabs; its `README.md` is the
+//!   contract for each.
 
 // The theme config is one `serde_json::json!` object with a key per GPUI Kit
 // colour slot, which is deeper than the macro's default recursion budget.
@@ -17,6 +19,7 @@
 pub mod app;
 pub mod backend;
 pub mod core_backend;
+pub mod datastores;
 pub mod panels;
 pub mod shell;
 pub mod tabs;

@@ -1,5 +1,6 @@
 //! What fills a tab when the app runs on the real backend: a terminal for
-//! SSH and local tabs, and for the kinds not ported yet a notice saying so.
+//! SSH and local tabs, the datastore views (`crate::datastores`) for MongoDB
+//! and Redis tabs, and for VNC, not ported yet, a notice saying so.
 //! Phase 4 of docs/gpui-migration-plan.md.
 //!
 //! [`CoreContent`] is the shell's `TabContentFactory`. It owns the routing of
@@ -25,6 +26,10 @@ use crate::app::tabs::Tab;
 use crate::app::{AppModel, LocalShellChoice};
 use crate::backend::TabContentFactory;
 use crate::core_backend::Services;
+use crate::datastores::{
+    DatastoreFactory, DatastoreKind, DefaultDatastores, ServiceTabContext, release_host,
+    release_on_close,
+};
 use crate::panels::{
     DefaultPanels, EventKey, PanelCache, PanelContext, PanelKind, PanelLinks, PanelRoutes,
     dispatch_to_panels,
@@ -139,6 +144,7 @@ pub struct CoreContent {
     terminals: Terminals,
     panels: RefCell<PanelCache>,
     links: Rc<PanelLinks>,
+    datastores: Box<dyn DatastoreFactory>,
 }
 
 impl CoreContent {
@@ -153,6 +159,7 @@ impl CoreContent {
             model: RefCell::new(None),
             terminals,
             panels: RefCell::new(PanelCache::new(Box::new(DefaultPanels))),
+            datastores: Box::new(DefaultDatastores),
         }
     }
 
@@ -220,6 +227,19 @@ impl TabContentFactory for CoreContent {
             }),
             _ => None,
         };
+        if let (Some(kind), Some(host_id), Some(model)) =
+            (DatastoreKind::of(tab.kind), tab.host_id, model.clone())
+        {
+            let ctx = ServiceTabContext::new(
+                kind,
+                tab.id.clone(),
+                host_id,
+                self.services.clone(),
+                model,
+                self.links.clone(),
+            );
+            return self.datastores.build(kind, ctx, window, cx);
+        }
         match (target, model) {
             (Some(target), Some(model)) => {
                 let view = TerminalTab::new(
@@ -243,6 +263,14 @@ impl TabContentFactory for CoreContent {
     }
 
     fn tab_closed(&self, tab: &Tab, last_of_kind_for_host: bool, cx: &mut App) {
+        // `closeServiceTab`: the host's pooled connections (and a Redis
+        // host's tunnel) go with its last tab of that kind.
+        if let (Some(kind), Some(host_id)) = (
+            release_on_close(tab.kind, last_of_kind_for_host),
+            tab.host_id,
+        ) {
+            release_host(&self.services, kind, host_id);
+        }
         let view = self.terminals.borrow_mut().remove(&tab.id);
         if let Some(view) = view.and_then(|v| v.upgrade()) {
             view.update(cx, |view, cx| view.shutdown(cx));

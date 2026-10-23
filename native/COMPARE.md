@@ -84,7 +84,7 @@ Read from the code on this branch, not from the plan.
 | Docker panel | Yes | Per host, over the shared exec session. Container list (Show all, 5 s poll only while shown), start/stop/restart with the Vue confirms, install, and the not-installed / daemon-stopped / permission-denied states with their commands. Logs (`-f` for running containers) and exec open a pane under the terminal, closed with the shell. No exec PTY resize, as in Tauri. Tested live only as far as "not installed" (no Docker on the test container); the list, actions and pane are unit tested and read from the code. |
 | Security audit | Yes | Per host and lazy (runs when the panel is first opened, dropped with the host's last SSH tab). Score, grade, checks, "What to do" with Copy and Send to terminal (typed with no newline, after a one-time confirm, only into a connected shell on that host). |
 | Port forwards (Tunnels) | **No** | The panel says it is not ported. |
-| MongoDB, Redis | **No** | The tab opens with a notice pointing to the Tauri app. |
+| MongoDB, Redis | **Frame only** | One tab per host and kind (opening again activates it); closing the host's last tab of that kind releases its pooled connections (and a Redis host's tunnel), as `closeServiceTab` does. The tab's content is a placeholder naming the host. The core calls, progress events and password prompt-and-retry the tabs will use are in place; contract: `app/src/datastores/README.md`. `app/build.rs` copies the bundled `mongodump`/`mongorestore` next to the binary. |
 | VNC | **No** | Same notice. |
 | Updater, packaging, tray/notifications, single instance | **No** | Phase 8. |
 

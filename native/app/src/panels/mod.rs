@@ -116,6 +116,12 @@ pub enum EventKey {
     /// with this id (`PtyKind::ExecPty`). Its output does not come as events:
     /// it goes to the feed given to `Bridge::attach_exec_pty`.
     ExecPty(String),
+    /// `CoreEvent::MongoProgress` / `MongoCancelled` of the MongoDB dump or
+    /// restore with this op id (the MongoDB tab, `datastores::mongo`).
+    MongoOp(String),
+    /// `CoreEvent::RedisProgress` / `RedisCancelled` of the Redis backup or
+    /// restore with this op id (the Redis tab, `datastores::redis`).
+    RedisOp(String),
 }
 
 impl EventKey {
@@ -144,6 +150,10 @@ impl EventKey {
                 id,
                 ..
             } => Some(Self::ExecPty(id.clone())),
+            CoreEvent::MongoProgress(p) => Some(Self::MongoOp(p.op_id.clone())),
+            CoreEvent::MongoCancelled { op_id, .. } => Some(Self::MongoOp(op_id.clone())),
+            CoreEvent::RedisProgress(p) => Some(Self::RedisOp(p.op_id.clone())),
+            CoreEvent::RedisCancelled { op_id, .. } => Some(Self::RedisOp(op_id.clone())),
             _ => None,
         }
     }
@@ -213,6 +223,24 @@ pub(crate) fn dispatch_to_panels(
         .collect();
     if !dead.is_empty() {
         hub.borrow_mut().panels.remove_dead(&key, &dead);
+    }
+}
+
+/// Route the core events under `key` to `handler` on `view`. Shared by
+/// [`PanelContext::subscribe`] and the datastore tabs' `subscribe_op`.
+pub(crate) fn subscribe_key<V: 'static>(
+    links: &PanelLinks,
+    key: EventKey,
+    view: WeakEntity<V>,
+    handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static,
+) -> PanelSubscription {
+    let callback: Callback =
+        Rc::new(move |event, cx| view.update(cx, |v, cx| handler(v, event, cx)).is_ok());
+    let token = links.hub.borrow_mut().panels.add(key.clone(), callback);
+    PanelSubscription {
+        hub: Rc::downgrade(&links.hub),
+        key,
+        token,
     }
 }
 
@@ -416,19 +444,7 @@ impl PanelContext {
         view: WeakEntity<V>,
         handler: impl Fn(&mut V, &CoreEvent, &mut Context<V>) + 'static,
     ) -> PanelSubscription {
-        let callback: Callback =
-            Rc::new(move |event, cx| view.update(cx, |v, cx| handler(v, event, cx)).is_ok());
-        let token = self
-            .links
-            .hub
-            .borrow_mut()
-            .panels
-            .add(key.clone(), callback);
-        PanelSubscription {
-            hub: Rc::downgrade(&self.links.hub),
-            key,
-            token,
-        }
+        subscribe_key(&self.links, key, view, handler)
     }
 
     /// A fresh id for a docker exec PTY: the caller picks it
@@ -766,6 +782,48 @@ mod tests {
             id: "s".into(),
         };
         assert_eq!(EventKey::of(&shell), None);
+    }
+
+    #[test]
+    fn datastore_progress_routes_by_op_id_and_kind() {
+        use termdrop_core::events::{MongoProgress, RedisProgress};
+        let mongo = CoreEvent::MongoProgress(MongoProgress {
+            op_id: "op".into(),
+            db: "d".into(),
+            collection: String::new(),
+            stage: "dumping".into(),
+            synced: 0,
+            total: 1,
+            percent: 5,
+            detail: None,
+        });
+        assert_eq!(EventKey::of(&mongo), Some(EventKey::MongoOp("op".into())));
+        let cancelled = CoreEvent::MongoCancelled {
+            op_id: "op".into(),
+            db: "d".into(),
+        };
+        assert_eq!(
+            EventKey::of(&cancelled),
+            Some(EventKey::MongoOp("op".into()))
+        );
+        let redis = CoreEvent::RedisProgress(RedisProgress {
+            op_id: "op".into(),
+            db: 0,
+            stage: "exporting".into(),
+            processed: 1,
+            total: 2,
+            percent: 50,
+            detail: String::new(),
+        });
+        // Same id, other kind: a Redis backup never drives a MongoDB bar.
+        assert_eq!(EventKey::of(&redis), Some(EventKey::RedisOp("op".into())));
+        assert_eq!(
+            EventKey::of(&CoreEvent::RedisCancelled {
+                op_id: "op".into(),
+                db: 0
+            }),
+            Some(EventKey::RedisOp("op".into()))
+        );
     }
 
     #[test]

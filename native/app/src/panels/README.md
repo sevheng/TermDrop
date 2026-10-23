@@ -60,6 +60,8 @@ impl PanelContext {
 pub enum EventKey {
     SftpTransfer(String), // CoreEvent::SftpProgress for this sftp session id
     ExecPty(String),      // PtyConnected / PtyDisconnected / PtyError of this exec PTY id
+    MongoOp(String),      // the datastore tabs' backup/restore progress (see
+    RedisOp(String),      //   ../datastores/README.md; not for panels)
 }
 ```
 

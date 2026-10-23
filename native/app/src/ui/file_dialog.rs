@@ -1,6 +1,7 @@
-//! Native open and save dialogs, over `rfd`. The Tauri app used its dialog
-//! plugin for the same three jobs: choosing a key file, an export's
-//! destination and an import's source.
+//! Native open, save and folder dialogs, over `rfd`. The Tauri app used its
+//! dialog plugin for the same jobs: choosing a key file, an export's
+//! destination and an import's source, and the datastore tabs' backup files
+//! and dump folders.
 //!
 //! The dialog runs on rfd's own GTK thread (on Linux) and is awaited here,
 //! so the window keeps painting while it is open. The answer comes back on
@@ -64,6 +65,30 @@ pub fn save_file(
         .spawn(cx, async move |cx| {
             if let Some(file) = chosen.await {
                 let path = file.path().to_path_buf();
+                let _ = cx.update(|window, cx| on_pick(path, window, cx));
+            }
+        })
+        .detach();
+}
+
+/// Ask for an existing folder (a MongoDB dump's destination or source).
+pub fn pick_folder(
+    window: &Window,
+    cx: &App,
+    title: &str,
+    on_pick: impl FnOnce(PathBuf, &mut Window, &mut App) + 'static,
+) {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .set_can_create_directories(true);
+    if let Some(home) = std::env::var_os("HOME") {
+        dialog = dialog.set_directory(home);
+    }
+    let chosen = dialog.pick_folder();
+    window
+        .spawn(cx, async move |cx| {
+            if let Some(folder) = chosen.await {
+                let path = folder.path().to_path_buf();
                 let _ = cx.update(|window, cx| on_pick(path, window, cx));
             }
         })
