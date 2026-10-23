@@ -7,5 +7,6 @@ pub mod host_sidebar;
 pub mod main_window;
 pub mod placeholder;
 pub mod settings;
+pub mod shortcuts_help;
 pub mod ssh_import;
 pub mod window_state;

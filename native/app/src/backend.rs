@@ -16,7 +16,10 @@ use gpui_kit::{AnyView, App, Entity, Window};
 
 use crate::app::AppModel;
 
-use crate::app::display::{mongo_display_uri, redis_display_uri, vnc_display_target};
+use crate::app::display::{
+    looks_like_mac, mongo_display_uri, redis_display_uri, ssh_subtitle, vnc_display_target,
+    with_tunnel_suffix,
+};
 use crate::app::host_kind::{HostKind, KindFields, has_vnc};
 use crate::app::tabs::Tab;
 use crate::panels::PanelKind;
@@ -44,6 +47,13 @@ pub struct HostSummary {
     /// What the row's subtitle shows and the search matches for a row whose
     /// `host` is empty: the masked datastore URI or the VNC `host:port`.
     pub address: String,
+    /// The row's second line, as `HostRow.vue` writes it: `user@host:port`
+    /// for SSH, the masked URI for a datastore, `host:port` for a screen,
+    /// with ` · tunnelled` on a Redis or VNC row that goes through SSH.
+    pub subtitle: String,
+    /// An SSH host whose name or address reads as a Mac: the row's Apple
+    /// icon.
+    pub mac: bool,
     /// The bastion this host connects through, for the jump-host picker,
     /// which offers only hosts without one of their own.
     pub jump_host_id: Option<i64>,
@@ -107,7 +117,23 @@ impl HostRecord {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
+        let subtitle = match kind {
+            HostKind::Mongodb => mongo_display_uri(self.mongo_uri.as_deref().unwrap_or_default()),
+            HostKind::Redis => with_tunnel_suffix(
+                redis_display_uri(self.redis_uri.as_deref().unwrap_or_default()),
+                self.redis_tunnel_host_id.is_some(),
+            ),
+            HostKind::Vnc => with_tunnel_suffix(
+                vnc_display_target(self.vnc_host.as_deref(), self.vnc_port),
+                self.vnc_tunnel_host_id.is_some(),
+            ),
+            HostKind::Ssh | HostKind::Local => ssh_subtitle(&self.username, &self.host, self.port),
+        };
+        let mac = matches!(kind, HostKind::Ssh | HostKind::Local)
+            && looks_like_mac(&self.name, &self.host);
         HostSummary {
+            subtitle,
+            mac,
             id: self.id,
             name: self.name.clone(),
             group: self.group.clone().unwrap_or_default(),
@@ -255,6 +281,13 @@ pub trait TabContentFactory: 'static {
     /// a factory with sessions can keep the model and start background work
     /// (detecting local shells, routing backend events).
     fn start(&self, _model: &Entity<AppModel>, _cx: &mut App) {}
+
+    /// Detect this machine's shells again, in the background, and hand them
+    /// to [`AppModel::set_local_shells`] (or [`AppModel::shell_detection_failed`]).
+    /// Called each time the new-terminal button is used, as the Vue tab bar
+    /// re-detects, so a WSL distro installed while the app runs appears
+    /// without a restart. The default has nothing to detect.
+    fn detect_local_shells(&self, _model: &Entity<AppModel>, _cx: &mut App) {}
 
     fn build(&self, tab: &Tab, window: &mut Window, cx: &mut App) -> AnyView;
 
@@ -699,6 +732,51 @@ mod tests {
         let s = rec.summary();
         assert!(!format!("{s:?}").contains("hunter2"));
         assert!(!format!("{s:?}").contains("hunter3"));
+    }
+
+    #[test]
+    fn subtitles_follow_host_row_vue() {
+        let ssh = HostRecord {
+            name: "Mac mini".into(),
+            host: "10.0.0.2".into(),
+            port: 2222,
+            username: "me".into(),
+            ..Default::default()
+        }
+        .summary();
+        assert_eq!(ssh.subtitle, "me@10.0.0.2:2222");
+        assert!(ssh.mac);
+
+        let redis = HostRecord {
+            name: "cache".into(),
+            redis_uri: Some("redis://:pw@redis-private:6379".into()),
+            redis_tunnel_host_id: Some(4),
+            ..Default::default()
+        }
+        .summary();
+        assert_eq!(
+            redis.subtitle,
+            "redis://***:***@redis-private:6379 · tunnelled"
+        );
+
+        let vnc = HostRecord {
+            name: "mac screen".into(),
+            vnc_host: Some("10.0.0.9".into()),
+            vnc_port: Some(5901),
+            ..Default::default()
+        }
+        .summary();
+        assert_eq!(vnc.subtitle, "10.0.0.9:5901");
+        // The Apple icon is for SSH hosts; a screen keeps its monitor.
+        assert!(!vnc.mac);
+
+        let mongo = HostRecord {
+            name: "db".into(),
+            mongo_uri: Some("mongodb://u:p@db:27017/app".into()),
+            ..Default::default()
+        }
+        .summary();
+        assert_eq!(mongo.subtitle, "mongodb://db:27017");
     }
 
     #[test]

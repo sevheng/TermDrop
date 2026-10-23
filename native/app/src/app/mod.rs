@@ -4,6 +4,7 @@
 //! utilities it ports, case for case.
 
 pub mod display;
+pub mod group_accent;
 pub mod host_form;
 pub mod host_grouping;
 pub mod host_import;
@@ -17,4 +18,4 @@ pub mod tab_kind;
 pub mod tabs;
 pub mod uri_form;
 
-pub use model::{AppEvent, AppModel, LocalShellChoice};
+pub use model::{AppEvent, AppModel, LocalShellChoice, ShellDetection};

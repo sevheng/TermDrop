@@ -8,6 +8,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     Icon, Sizable as _, TitleBar, h_flex, resizable::HandleEdge, resize_handle, v_flex,
 };
@@ -21,11 +22,12 @@ use gpui_kit::{
 use super::host_editor::open_host_editor;
 use super::host_sidebar::HostSidebar;
 use super::settings::open_settings;
+use super::shortcuts_help::open_shortcuts_help;
 use super::window_state::WindowStateSaver;
 use crate::app::host_form::EditorKind;
 use crate::app::tab_kind::{TabKind, has_right_panel};
 use crate::app::tabs::SftpLink;
-use crate::app::{AppEvent, AppModel, LocalShellChoice};
+use crate::app::{AppEvent, AppModel, ShellDetection};
 use crate::backend::TabContentFactory;
 use crate::panels::PanelKind;
 use crate::ui::dialogs::{ConfirmOptions, confirm};
@@ -42,7 +44,8 @@ gpui_kit::actions!(
         NextTab,
         PrevTab,
         OpenSettings,
-        ToggleRightPanel
+        ToggleRightPanel,
+        ShowShortcuts
     ]
 );
 
@@ -61,6 +64,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-pageup", PrevTab, Some(CONTEXT)),
         KeyBinding::new("ctrl-,", OpenSettings, Some(CONTEXT)),
         KeyBinding::new("ctrl-alt-b", ToggleRightPanel, Some(CONTEXT)),
+        // Ctrl+Shift+? : the chord is Shift+/ on a US layout, reported
+        // either way depending on the platform.
+        KeyBinding::new("ctrl-shift-/", ShowShortcuts, Some(CONTEXT)),
+        KeyBinding::new("ctrl-?", ShowShortcuts, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-?", ShowShortcuts, Some(CONTEXT)),
     ]);
 }
 
@@ -304,7 +312,7 @@ impl MainWindow {
         }
 
         let m_local = self.model.clone();
-        let shells = model.local_shells().to_vec();
+        let factory = self.factory.clone();
         let m_panel = self.model.clone();
         let model_settings = self.model.clone();
         h_flex()
@@ -319,7 +327,7 @@ impl MainWindow {
                     .flex_none()
                     .px_1()
                     .gap_0p5()
-                    .child(new_local_button(m_local, shells))
+                    .child(new_local_button(m_local, factory, cx))
                     .when(show_panel_toggle, |d| {
                         d.child(
                             IconButton::new(
@@ -341,6 +349,10 @@ impl MainWindow {
                             }),
                         )
                     })
+                    .child(
+                        IconButton::new("open-shortcuts", IconName::Keyboard, "Keyboard shortcuts")
+                            .on_click(|_, window, cx| open_shortcuts_help(window, cx)),
+                    )
                     .child(
                         IconButton::new("open-settings", IconName::Settings, "Settings").on_click(
                             move |_, window, cx| open_settings(window, cx, model_settings.clone()),
@@ -509,39 +521,127 @@ impl MainWindow {
     }
 }
 
-/// The new-terminal button. With one shell (or detection not finished) it
-/// opens the default directly; with several it is a menu of them, as the Vue
-/// tab bar's button is. Ctrl+Shift+T always opens the default.
-fn new_local_button(model: Entity<AppModel>, shells: Vec<LocalShellChoice>) -> AnyElement {
+/// What the new-terminal button does when pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellButton {
+    /// Open the only shell (or the default when none was found) at once.
+    Open,
+    /// Show the menu: several shells, or the first detection still running.
+    Menu,
+}
+
+/// `onTerminalButton`: one shell opens directly, several make a menu. While
+/// the first detection runs the menu says so (Vue awaited it with the button
+/// spinning); with no detector at all (`--demo`) the default opens.
+fn shell_button(detection: ShellDetection, detecting: bool, shells: usize) -> ShellButton {
+    match detection {
+        ShellDetection::Pending if detecting => ShellButton::Menu,
+        ShellDetection::Pending => ShellButton::Open,
+        ShellDetection::Known if shells > 1 => ShellButton::Menu,
+        ShellDetection::Known => ShellButton::Open,
+    }
+}
+
+/// The new-terminal button, as the Vue tab bar's: a menu of the detected
+/// shells (default marked, the command line on hover), or the only one
+/// opened directly. Every use re-detects in the background, so a shell
+/// installed while the app runs appears without a restart. Ctrl+Shift+T
+/// always opens the default.
+fn new_local_button(
+    model: Entity<AppModel>,
+    factory: Rc<dyn TabContentFactory>,
+    cx: &App,
+) -> AnyElement {
     const LABEL: &str = "New local terminal (Ctrl+Shift+T)";
-    if shells.len() < 2 {
+    let m = model.read(cx);
+    let shells = m.local_shells().to_vec();
+    let detection = m.shell_detection();
+    let detecting = m.shells_detecting();
+    // The button spins only while nothing is known yet.
+    let pending = detection == ShellDetection::Pending && detecting;
+    if shell_button(detection, detecting, shells.len()) == ShellButton::Open {
         return IconButton::new("new-local-terminal", IconName::SquareTerminal, LABEL)
+            .pending(pending)
             .on_click(move |_, _, cx| {
-                model.update(cx, |m, cx| {
-                    m.open_local(None, cx);
+                model.update(cx, |m, cx| match shells.first() {
+                    Some(shell) => {
+                        m.open_local_shell(shell, cx);
+                    }
+                    None => {
+                        m.open_local(None, cx);
+                    }
                 });
+                factory.detect_local_shells(&model, cx);
             })
             .into_any_element();
     }
+    let model_open = model.clone();
     Button::new("new-local-terminal")
         .ghost()
         .small()
         .icon(Icon::new(IconName::SquareTerminal))
+        .loading(pending)
         .tooltip(LABEL)
         .accessibility_label(LABEL)
         .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+            if shells.is_empty() {
+                let text = if detection == ShellDetection::Pending {
+                    "Detecting shells…"
+                } else {
+                    "No shells found"
+                };
+                let spinning = detection == ShellDetection::Pending;
+                return menu.item(
+                    PopupMenuItem::element(move |_, cx| {
+                        let p = *palette(cx);
+                        h_flex()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(p.ink_2)
+                            .when(spinning, |d| d.child(Spinner::new().xsmall()))
+                            .child(text)
+                    })
+                    .disabled(true),
+                );
+            }
+            menu = menu.min_w(px(200.));
             for shell in &shells {
                 let model = model.clone();
                 let shell = shell.clone();
-                menu = menu.item(PopupMenuItem::new(shell.label.clone()).on_click(
-                    move |_, _, cx| {
+                let row = shell.clone();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, cx| {
+                        let p = *palette(cx);
+                        let tip: SharedString = row.command_line.clone().into();
+                        h_flex()
+                            .id(SharedString::from(format!("shell-{}", row.id)))
+                            .w_full()
+                            .gap_2()
+                            .text_xs()
+                            .child(
+                                Icon::new(IconName::SquareTerminal)
+                                    .xsmall()
+                                    .text_color(p.ink_2),
+                            )
+                            .child(div().min_w_0().truncate().child(row.label.clone()))
+                            .when(row.default, |d| {
+                                d.child(div().ml_auto().pl_3().text_color(p.ink_3).child("default"))
+                            })
+                            .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    })
+                    .on_click(move |_, _, cx| {
                         model.update(cx, |m, cx| {
                             m.open_local_shell(&shell, cx);
                         });
-                    },
-                ));
+                    }),
+                );
             }
             menu
+        })
+        .on_open_change(move |open, _, cx| {
+            if *open {
+                factory.detect_local_shells(&model_open, cx);
+            }
         })
         .into_any_element()
 }
@@ -607,6 +707,13 @@ impl Render for MainWindow {
             }))
             .on_action(cx.listener(|this, _: &ToggleRightPanel, _, cx| {
                 this.model.update(cx, |m, cx| m.toggle_right_panel(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ShowShortcuts, window, cx| {
+                if this.keyboard_owned_by_tab(cx) {
+                    cx.propagate();
+                    return;
+                }
+                open_shortcuts_help(window, cx);
             }))
             // Widths follow the pointer while a drag is live and are saved
             // once, when it ends: a width changes on every move and the store
@@ -708,5 +815,33 @@ impl Render for MainWindow {
                     .size_full()
                     .children(floating),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_shell_opens_and_several_make_a_menu() {
+        use ShellDetection::*;
+        assert_eq!(shell_button(Known, false, 0), ShellButton::Open);
+        assert_eq!(shell_button(Known, false, 1), ShellButton::Open);
+        assert_eq!(shell_button(Known, false, 3), ShellButton::Menu);
+        // A background refresh does not change what a known list does.
+        assert_eq!(shell_button(Known, true, 1), ShellButton::Open);
+        assert_eq!(shell_button(Known, true, 3), ShellButton::Menu);
+    }
+
+    #[test]
+    fn the_first_detection_shows_the_menu_and_no_detector_opens_the_default() {
+        assert_eq!(
+            shell_button(ShellDetection::Pending, true, 0),
+            ShellButton::Menu
+        );
+        assert_eq!(
+            shell_button(ShellDetection::Pending, false, 0),
+            ShellButton::Open
+        );
     }
 }

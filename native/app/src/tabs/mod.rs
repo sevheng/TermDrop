@@ -185,9 +185,13 @@ impl TabContentFactory for CoreContent {
             .detach();
         }
 
-        // Detected once at launch for the new-terminal menu. The Vue app
-        // re-detected each time the menu opened; a shell installed while the
-        // app runs appears after a restart here.
+        // Detected at launch for the new-terminal menu, and again each time
+        // the button is used (`detect_local_shells`).
+        self.detect_local_shells(model, cx);
+    }
+
+    fn detect_local_shells(&self, model: &Entity<AppModel>, cx: &mut App) {
+        model.update(cx, |m, cx| m.set_shells_detecting(cx));
         let services = self.services.clone();
         let detect = self
             .services
@@ -199,19 +203,18 @@ impl TabContentFactory for CoreContent {
                 Ok(Ok(shells)) => shells,
                 Ok(Err(e)) => {
                     tracing::warn!("Shell detection failed: {e}");
+                    let _ = model.update(cx, |m, cx| m.shell_detection_failed(cx));
                     return;
                 }
                 Err(e) => {
                     tracing::warn!("Shell detection task failed: {e}");
+                    let _ = model.update(cx, |m, cx| m.shell_detection_failed(cx));
                     return;
                 }
             };
             let choices = shells
                 .into_iter()
-                .map(|s| LocalShellChoice {
-                    id: s.id,
-                    label: s.label,
-                })
+                .map(|s| LocalShellChoice::new(s.id, s.label, &s.program, &s.args, s.default))
                 .collect();
             let _ = model.update(cx, |m, cx| m.set_local_shells(choices, cx));
         })
