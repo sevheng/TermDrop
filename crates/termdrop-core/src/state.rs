@@ -1083,6 +1083,24 @@ pub fn default_db_path() -> PathBuf {
         .join("termdrop.db")
 }
 
+/// How long a statement waits for another connection's lock before failing
+/// with `SQLITE_BUSY`. The Tauri app and the native app can run at the same
+/// time on the same `termdrop.db`, each with its own pool, so a write from one
+/// must queue behind a write from the other rather than fail at once.
+///
+/// rusqlite already applies 5 s to every connection it opens, which is what
+/// the Tauri app's own pool runs on; this states it rather than relying on
+/// the driver's default. The journal mode is left at SQLite's default
+/// (rollback journal): WAL would be persistent, change the files beside the
+/// database for the Tauri app too, and buys nothing at this write rate.
+pub const DB_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The connection manager for the database at `path`, every connection
+/// opened with [`DB_BUSY_TIMEOUT`].
+pub fn db_manager(path: &Path) -> SqliteConnectionManager {
+    SqliteConnectionManager::file(path).with_init(|conn| conn.busy_timeout(DB_BUSY_TIMEOUT))
+}
+
 /// Create every table and run the launch-time migrations, in the order the
 /// Tauri app has always run them. Idempotent, so it runs on every launch.
 pub fn prepare_database(conn: &rusqlite::Connection) -> Result<(), String> {
@@ -1125,7 +1143,7 @@ impl Core {
     pub fn open(path: &Path) -> Result<Self, String> {
         let pool = Pool::builder()
             .max_size(10)
-            .build(SqliteConnectionManager::file(path))
+            .build(db_manager(path))
             .map_err(|e| format!("Failed to create database pool: {}", e))?;
         {
             let conn = pool.get().map_err(db_err)?;
@@ -1848,6 +1866,40 @@ mod tests {
 
         // A second launch runs the same preparation over existing tables.
         let core = Core::open(&path).expect("reopen");
+        assert_eq!(core.get_setting("theme").unwrap().as_deref(), Some("light"));
+        drop(core);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Two processes on one `termdrop.db` (the Tauri and native apps): a
+    /// write made while the other holds the write lock waits for it rather
+    /// than failing with "database is locked".
+    #[test]
+    fn a_write_waits_for_another_connections_lock() {
+        let path = std::env::temp_dir().join(format!(
+            "termdrop-core-busy-{}-{}.db",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let core = Core::open(&path).expect("open");
+        let busy: i64 = with_db(&core, |c| {
+            c.query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+        })
+        .unwrap();
+        assert_eq!(busy, DB_BUSY_TIMEOUT.as_millis() as i64);
+
+        // The other app: a plain connection holding the write lock briefly.
+        let other = rusqlite::Connection::open(&path).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            other.execute_batch("COMMIT").unwrap();
+        });
+        let started = std::time::Instant::now();
+        core.set_setting("theme", "light")
+            .expect("waits, then writes");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+        releaser.join().unwrap();
         assert_eq!(core.get_setting("theme").unwrap().as_deref(), Some("light"));
         drop(core);
         let _ = std::fs::remove_file(&path);

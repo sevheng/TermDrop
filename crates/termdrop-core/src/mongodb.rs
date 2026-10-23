@@ -750,47 +750,50 @@ fn resolve_mongo_tool(name: &str) -> Result<std::path::PathBuf, String> {
         name.to_string()
     };
 
-    // Try bundled binary next to the executable
+    // Try a bundled binary beside the executable, in each packaged layout.
     if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            // Same directory as executable (Windows, Linux AppImage/standalone,
-            // and cargo's target/debug or target/release directories)
-            let bundled = exe_dir.join(&name);
-            if bundled.exists() {
-                return Ok(bundled);
-            }
-
-            // Cargo sometimes places test/run binaries in target/<profile>/deps/;
-            // the profile directory (e.g. target/debug) is the parent.
-            if let Some(profile_dir) = exe_dir.parent() {
-                let bundled = profile_dir.join(&name);
-                if bundled.exists() {
-                    return Ok(bundled);
-                }
-            }
-
-            // macOS app bundle: Contents/MacOS/ -> Contents/Resources/
-            #[cfg(target_os = "macos")]
-            {
-                let macos_bundle = exe_dir.join("../Resources").join(&name);
-                if macos_bundle.exists() {
-                    return Ok(macos_bundle);
-                }
-            }
-
-            // Linux .deb/AppImage: usr/bin/ -> usr/lib/TermDrop/
-            #[cfg(target_os = "linux")]
-            {
-                let linux_bundle = exe_dir.join("../lib/TermDrop").join(&name);
-                if linux_bundle.exists() {
-                    return Ok(linux_bundle);
-                }
-            }
+        if let Some(found) = bundled_tool_candidates(&exe_path, &name)
+            .into_iter()
+            .find(|p| p.exists())
+        {
+            return Ok(found);
         }
     }
 
     // Fall back to PATH
     Ok(std::path::PathBuf::from(&name))
+}
+
+/// Where a packaged app keeps `name` relative to its executable, in the order
+/// they are tried. Each packager puts resources somewhere else:
+///
+/// - Same directory as the executable: Windows (Tauri's MSI and NSIS, and
+///   cargo-packager's NSIS), and cargo's `target/<profile>/`.
+/// - The parent: cargo places test binaries in `target/<profile>/deps/`.
+/// - macOS app bundle: `Contents/MacOS/` -> `Contents/Resources/` (Tauri and
+///   cargo-packager alike).
+/// - Linux .deb/AppImage from Tauri: `usr/bin/` -> `usr/lib/TermDrop/` (the
+///   product name).
+/// - Linux .deb/AppImage from cargo-packager (the native app):
+///   `usr/bin/` -> `usr/lib/<binary name>/`, e.g. `usr/lib/termdrop-native/`.
+fn bundled_tool_candidates(exe_path: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let Some(exe_dir) = exe_path.parent() else {
+        return Vec::new();
+    };
+    let mut out = vec![exe_dir.join(name)];
+    if let Some(profile_dir) = exe_dir.parent() {
+        out.push(profile_dir.join(name));
+    }
+    if cfg!(target_os = "macos") {
+        out.push(exe_dir.join("../Resources").join(name));
+    }
+    if cfg!(target_os = "linux") {
+        out.push(exe_dir.join("../lib/TermDrop").join(name));
+        if let Some(stem) = exe_path.file_stem() {
+            out.push(exe_dir.join("../lib").join(stem).join(name));
+        }
+    }
+    out
 }
 
 /// Returns true if the MongoDB URI has a path component after the authority.
@@ -1462,6 +1465,56 @@ mod tests {
         assert!(dump.exists(), "mongodump not found at {:?}", dump);
         let restore = resolve_mongo_tool("mongorestore").expect("failed to resolve mongorestore");
         assert!(restore.exists(), "mongorestore not found at {:?}", restore);
+    }
+
+    /// Each packaged layout, built in a temp dir, finds its tools.
+    #[test]
+    fn bundled_tools_are_found_in_each_packaged_layout() {
+        fn layout(exe: &str, tool: &str) -> bool {
+            let root = std::env::temp_dir().join(format!(
+                "termdrop-tool-layout-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ));
+            let exe = root.join(exe);
+            let tool = root.join(tool);
+            std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+            std::fs::write(&exe, b"").unwrap();
+            std::fs::write(&tool, b"").unwrap();
+            let name = tool.file_name().unwrap().to_str().unwrap().to_string();
+            let found = bundled_tool_candidates(&exe, &name)
+                .into_iter()
+                .find(|p| p.exists())
+                .map(|p| p.canonicalize().unwrap());
+            let ok = found == Some(tool.canonicalize().unwrap());
+            let _ = std::fs::remove_dir_all(&root);
+            ok
+        }
+        // Beside the executable (Windows installers, cargo's target dir).
+        assert!(layout("app/termdrop-native.exe", "app/mongodump.exe"));
+        // Test binaries in target/<profile>/deps/.
+        assert!(layout("debug/deps/termdrop_core-x", "debug/mongodump"));
+        if cfg!(target_os = "linux") {
+            // Tauri's .deb/AppImage.
+            assert!(layout("usr/bin/termdrop", "usr/lib/TermDrop/mongodump"));
+            // cargo-packager's .deb/AppImage.
+            assert!(layout(
+                "usr/bin/termdrop-native",
+                "usr/lib/termdrop-native/mongorestore"
+            ));
+        }
+        if cfg!(target_os = "macos") {
+            assert!(layout(
+                "X.app/Contents/MacOS/termdrop-native",
+                "X.app/Contents/Resources/mongodump"
+            ));
+        }
+        // Not some other app's folder.
+        assert!(!layout(
+            "usr/bin/termdrop-native",
+            "usr/lib/other/mongodump"
+        ));
     }
 
     #[test]
