@@ -7,6 +7,11 @@
 //! window-level so that a drag which leaves the image keeps going to the
 //! remote until the button is released, as the Vue canvas's pointer capture
 //! did.
+//!
+//! The remote cursor shape (the Cursor pseudo-encoding) is painted over the
+//! image at the pointer, hotspot on the pointer, at its own size whatever
+//! the scale, as the Vue panel's CSS cursor was drawn. GPUI has no image
+//! cursor and no hidden one, so the local arrow stays visible above it.
 
 use gpui_kit::*;
 
@@ -141,6 +146,24 @@ pub(super) fn geometry(
     )
 }
 
+/// Where the remote cursor's sprite goes for a pointer at `pointer`: its
+/// hotspot on the pointer, at the image's own size in logical pixels (a CSS
+/// cursor is not scaled with the canvas), snapped to a device pixel.
+pub(super) fn cursor_bounds(
+    pointer: Point<Pixels>,
+    hot: (u16, u16),
+    size_px: (u16, u16),
+    scale_factor: f32,
+) -> Bounds<Pixels> {
+    let snap = |v: f32| (v * scale_factor).round() / scale_factor;
+    let x = snap(f32::from(pointer.x) - hot.0 as f32);
+    let y = snap(f32::from(pointer.y) - hot.1 as f32);
+    Bounds::new(
+        point(px(x), px(y)),
+        size(px(size_px.0 as f32), px(size_px.1 as f32)),
+    )
+}
+
 pub(super) struct Prepaint {
     geometry: Geometry,
     hitbox: Hitbox,
@@ -223,6 +246,19 @@ impl Element for VncScreen {
         let accent = view.accent;
         let focused = focus.is_focused(window);
         let tiles = view.tiles.clone();
+        // Not in view only, where the Vue canvas showed the default cursor,
+        // and only while the pointer is over the image itself.
+        let mouse = window.mouse_position();
+        let sprite = view
+            .cursor
+            .as_ref()
+            .filter(|_| !view.view_only)
+            .filter(|_| prepaint.hitbox.is_hovered(window) && geo.takes(mouse))
+            .and_then(|c| {
+                c.image
+                    .clone()
+                    .map(|image| (cursor_bounds(mouse, c.hot, c.size, sf), image))
+            });
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             // The canvas started black before the first frame drew.
@@ -251,6 +287,11 @@ impl Element for VncScreen {
             }
             if focused {
                 window.paint_quad(outline(geo.image, accent, BorderStyle::Solid));
+            }
+            if let Some((at, image)) = sprite
+                && let Err(e) = window.paint_image(bounds, at, Corners::default(), image, 0, false)
+            {
+                tracing::warn!(target: "termdrop::vnc", "could not paint the remote cursor: {e}");
             }
         });
 
@@ -314,7 +355,7 @@ impl Element for VncScreen {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that brings in gpui's own `test` attribute.
-    use super::{FitMode, geometry_at};
+    use super::{FitMode, cursor_bounds, geometry_at};
     use gpui_kit::{Bounds, Pixels, point, px, size};
 
     fn viewport(w: f32, h: f32) -> Bounds<Pixels> {
@@ -345,6 +386,17 @@ mod tests {
         // The far edge reaches the last remote pixel.
         let edge = point(px(1100.), px(60.));
         assert_eq!(painted.at(edge).framebuffer_pixel(edge).0, 2559);
+    }
+
+    #[test]
+    fn the_cursor_sprite_puts_its_hotspot_on_the_pointer_unscaled() {
+        let b = cursor_bounds(point(px(200.), px(100.)), (3, 7), (16, 24), 1.);
+        assert_eq!(b.origin, point(px(197.), px(93.)));
+        assert_eq!(b.size, size(px(16.), px(24.)));
+        // Snapped to a device pixel at 1.5x: 200.3 - 3 = 197.3 -> 197.33.
+        let b = cursor_bounds(point(px(200.3), px(100.)), (3, 0), (16, 24), 1.5);
+        assert!((f32::from(b.origin.x) - 197.333).abs() < 0.01);
+        assert_eq!(b.size, size(px(16.), px(24.)));
     }
 
     #[test]
