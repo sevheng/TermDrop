@@ -39,10 +39,10 @@ use termdrop_core::redis::{
 
 use self::logic::{
     CursorStack, EmptyAction, KEY_TYPES, MoreValue, TreeRow, append_page, clip_cell,
-    databases_or_default, db_key_count, default_backup_name, default_restore_db, display_lines,
-    empty_page, field_header, format_key_kind, format_ttl, group_label, is_viewable_kind,
-    key_label, more_value, op_error_message, prefix_pattern, restore_warning, summarize_op,
-    summarize_scan, total_label, tree_rows, truncated_note,
+    copyable_value, databases_or_default, db_key_count, default_backup_name, default_restore_db,
+    display_lines, empty_page, field_header, format_key_kind, format_ttl, group_label,
+    is_viewable_kind, key_label, more_value, op_error_message, prefix_pattern, restore_warning,
+    summarize_op, summarize_scan, total_label, tree_rows, truncated_note,
 };
 use self::restore::{RestoreChoice, open_restore_dialog};
 use super::common::{OpProgress, format_bytes, format_count, op_progress_row, text_2xs};
@@ -617,8 +617,8 @@ impl RedisTab {
         let Some(text) = self
             .value
             .as_ref()
-            .and_then(|v| v.entries.first())
-            .map(|e| e.value.text.clone())
+            .and_then(copyable_value)
+            .map(str::to_owned)
         else {
             return;
         };
@@ -1349,7 +1349,9 @@ impl RedisTab {
         } else {
             meta = meta.child(format_key_kind(&key.kind));
         }
-        let is_string = page.is_some_and(|v| v.kind == "string");
+        // Only a whole text value: a truncated preview or base64 would
+        // reach the clipboard as if it were the value.
+        let can_copy = page.is_some_and(|v| copyable_value(v).is_some());
         let head = h_flex()
             .flex_none()
             .items_start()
@@ -1371,7 +1373,7 @@ impl RedisTab {
                     )
                     .child(text_2xs(meta)),
             )
-            .when(is_string && !self.value_loading, |h| {
+            .when(can_copy && !self.value_loading, |h| {
                 h.child(
                     IconButton::new("redis-copy-value", IconName::Copy, "Copy value")
                         .on_click(cx.listener(|this, _, window, cx| this.copy_value(window, cx))),

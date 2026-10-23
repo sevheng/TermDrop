@@ -1585,6 +1585,13 @@ pub async fn import_keys(
     // 40,000 successful keys tells the user nothing about the cause.
     check_restore_compatibility(&reader.header.redis_version, server_version)?;
 
+    // A cancel sent while the operation was still connecting must stop it
+    // before FLUSHDB, not after.
+    if cancelled.load(Ordering::Relaxed) {
+        progress.cancelled();
+        return Err(CANCELLED.to_string());
+    }
+
     if flush_first {
         ::redis::cmd("FLUSHDB")
             .query_async::<()>(conn)

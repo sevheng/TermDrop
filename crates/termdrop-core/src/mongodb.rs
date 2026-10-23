@@ -571,6 +571,13 @@ where
     progress.pulse(stage, 0);
 
     'attempt: for attempt in 0..max_retries {
+        // A cancel can land before the first spawn (the op is registered
+        // before its URI is read) or between retries. Starting the tool only
+        // to kill it would let a `--drop` restore touch the server.
+        if cancelled.load(Ordering::Relaxed) {
+            progress.cancelled();
+            return Err("cancelled".into());
+        }
         let mut cmd = build_cmd()?;
         cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
@@ -1707,6 +1714,36 @@ mod tests {
             }
             other => panic!("expected progress, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn a_cancel_before_the_first_spawn_never_starts_the_tool() {
+        let log = Arc::new(crate::events::EventLog::default());
+        let events: Events = log.clone();
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let mongo_ops = Arc::new(Mutex::new(HashMap::new()));
+        let mut built = 0;
+        let result = run_with_retry(
+            "mongorestore",
+            "restoring",
+            3,
+            0,
+            &events,
+            &cancelled,
+            &mongo_ops,
+            "op",
+            "shop",
+            || {
+                built += 1;
+                Err("must not be built".into())
+            },
+        );
+        assert_eq!(result, Err("cancelled".to_string()));
+        assert_eq!(built, 0);
+        assert!(log
+            .take()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::MongoCancelled { op_id, .. } if op_id == "op")));
     }
 
     // These pin the extended-JSON behaviour the browser depends on. Getting it

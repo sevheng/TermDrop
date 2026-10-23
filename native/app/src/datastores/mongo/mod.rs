@@ -37,8 +37,9 @@ use termdrop_core::mongodb::scan_restore_folder;
 use self::documents::DocumentsView;
 use self::restore::{RestoreRequest, confirm_restore};
 use self::selection::{
-    ARCHIVE_ONE_DB, CheckState, DbEntry, Job, JobKind, Selection, archive_file_name,
-    archive_restore_job, backup_jobs, backup_tooltip, folder_restore_jobs, is_cancel,
+    ARCHIVE_ONE_DB, CheckState, DbEntry, Job, JobKind, Selection, archive_backup_jobs,
+    archive_file_name, archive_restore_job, backup_jobs, backup_tooltip, folder_restore_jobs,
+    is_cancel,
 };
 use super::common::{OpProgress, completed_summary, op_progress_row, text_2xs, tri_check};
 use super::{OpSubscription, ServiceTabContext};
@@ -320,8 +321,10 @@ impl MongoTab {
             move |file, window, cx| {
                 let _ = view.update(cx, |this, cx| {
                     let entries = this.selection.entries();
-                    let jobs = backup_jobs(&entries, &file.to_string_lossy(), true);
-                    this.start_run(jobs, false, window, cx);
+                    match archive_backup_jobs(&entries, &file.to_string_lossy()) {
+                        Ok(jobs) => this.start_run(jobs, false, window, cx),
+                        Err(e) => this.ctx.toast(window, cx, e, ToastKind::Error),
+                    }
                 });
             },
         );

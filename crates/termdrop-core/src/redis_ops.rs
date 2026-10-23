@@ -195,14 +195,19 @@ impl Core {
         max_key_bytes: Option<u64>,
         app_version: &str,
     ) -> Result<redis::RedisOpSummary, String> {
-        let host = self.redis_host(host_id)?;
-        let (uri, tunnelled) = redis_dial_uri(self, &host, None).await?;
-
-        let mut conn = redis_conn(self, host_id, db).await?;
-        let info = redis::server_info(&mut conn, uri::redact_uri(&uri), tunnelled).await?;
-
+        // Registered before connecting, so a cancel sent while the tunnel,
+        // pool connection or INFO is still in flight is not dropped as an
+        // unknown id.
         let registry_id = op_id.clone();
         with_redis_op(self, &registry_id, |cancelled| async move {
+            let host = self.redis_host(host_id)?;
+            let (uri, tunnelled) = redis_dial_uri(self, &host, None).await?;
+            let mut conn = redis_conn(self, host_id, db).await?;
+            let info = with_async_timeout(
+                redis::server_info(&mut conn, uri::redact_uri(&uri), tunnelled),
+                30,
+            )
+            .await?;
             redis::export_keys(
                 &events,
                 cancelled,
@@ -235,14 +240,19 @@ impl Core {
         replace: bool,
         flush_first: bool,
     ) -> Result<redis::RedisOpSummary, String> {
-        let host = self.redis_host(host_id)?;
-        let (uri, tunnelled) = redis_dial_uri(self, &host, None).await?;
-
-        let mut conn = redis_conn(self, host_id, db).await?;
-        let info = redis::server_info(&mut conn, uri::redact_uri(&uri), tunnelled).await?;
-
+        // Registered before connecting, so a cancel sent while the tunnel,
+        // pool connection or INFO is still in flight is not dropped as an
+        // unknown id.
         let registry_id = op_id.clone();
         with_redis_op(self, &registry_id, |cancelled| async move {
+            let host = self.redis_host(host_id)?;
+            let (uri, tunnelled) = redis_dial_uri(self, &host, None).await?;
+            let mut conn = redis_conn(self, host_id, db).await?;
+            let info = with_async_timeout(
+                redis::server_info(&mut conn, uri::redact_uri(&uri), tunnelled),
+                30,
+            )
+            .await?;
             redis::import_keys(
                 &events,
                 cancelled,
@@ -312,6 +322,84 @@ mod tests {
             .err()
             .unwrap();
         assert!(!err.contains("not found"), "{err}");
+    }
+
+    /// A server that accepts and never answers: the op must be cancellable
+    /// while the connect is still waiting on it, so the flag has to be
+    /// registered before any I/O.
+    #[test]
+    fn an_export_is_registered_before_it_connects() {
+        let core = Arc::new(memory_core());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let hold = tokio::spawn(async move {
+                let mut held = Vec::new();
+                while let Ok((socket, _)) = listener.accept().await {
+                    held.push(socket);
+                }
+            });
+            // The password is inline so the keyring is never consulted.
+            let host_id = crate::state::with_db(&core, |conn| {
+                crate::db::add_host(
+                    conn,
+                    &crate::db::NewHost {
+                        name: "stall".into(),
+                        host: String::new(),
+                        port: 0,
+                        username: String::new(),
+                        auth_type: "password".into(),
+                        key_path: None,
+                        group: None,
+                        favorite: None,
+                        mongo_uri: None,
+                        mongo_local_uri: None,
+                        redis_uri: Some(format!("redis://:pw@127.0.0.1:{port}")),
+                        redis_tunnel_host_id: None,
+                        jump_host_id: None,
+                        vnc_host: None,
+                        vnc_port: None,
+                        vnc_username: None,
+                        vnc_tunnel_host_id: None,
+                        vnc_view_only: None,
+                    },
+                )
+            })
+            .unwrap();
+
+            let export = tokio::spawn({
+                let core = core.clone();
+                async move {
+                    core.redis_export(
+                        Arc::new(NoEvents),
+                        "op".into(),
+                        host_id,
+                        0,
+                        None,
+                        "/nonexistent/out.tdredis".into(),
+                        None,
+                        "0.0.0",
+                    )
+                    .await
+                }
+            });
+
+            let mut flag = None;
+            for _ in 0..200 {
+                flag = core.redis_ops.lock().unwrap().get("op").cloned();
+                if flag.is_some() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let flag = flag.expect("the op was not registered while connecting");
+            core.redis_cancel("op");
+            assert!(flag.load(Ordering::Relaxed));
+
+            export.abort();
+            hold.abort();
+        });
     }
 
     #[test]

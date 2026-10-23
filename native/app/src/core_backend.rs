@@ -28,16 +28,29 @@ use crate::backend::{
 /// The shell's hosts and settings, over the core's database and keyring.
 pub struct CoreStore {
     core: Arc<Core>,
-    /// For the core's async host operations (an update or delete releases
-    /// pooled connections behind tokio locks). They are short, so the UI
-    /// thread waits for them rather than threading a task through every
-    /// caller.
+    /// For the core's async host operations: an update or delete releases
+    /// pooled connections behind tokio locks, in the background.
     rt: tokio::runtime::Handle,
 }
 
 impl CoreStore {
     pub fn new(core: Arc<Core>, rt: tokio::runtime::Handle) -> Self {
         Self { core, rt }
+    }
+
+    /// Drop a saved or deleted host's pooled connections and tunnels on the
+    /// runtime. The pool locks are held across a connect in flight (a tunnel
+    /// handshake, a Redis connect of up to its timeout), and they are global,
+    /// so waiting for them here froze the window while any tab was
+    /// connecting, even when editing an unrelated host. The row is already
+    /// written; a connection opened before this runs is dropped when it does.
+    fn forget_in_background(&self, host_id: i64) -> tokio::task::JoinHandle<()> {
+        let core = self.core.clone();
+        self.rt.spawn(async move {
+            if let Err(e) = core.forget_host_connections(host_id).await {
+                tracing::warn!(host_id, "releasing the host's connections failed: {e}");
+            }
+        })
     }
 }
 
@@ -134,16 +147,26 @@ impl HostStore for CoreStore {
         self.core.add_host(&new_host(host)).map_err(|e| anyhow!(e))
     }
 
+    /// `Core::update_existing_host`, with the connection release moved off
+    /// the UI thread (see [`CoreStore::forget_in_background`]).
     fn update_host(&self, host_id: i64, host: &HostRecord) -> Result<()> {
-        self.rt
-            .block_on(self.core.update_existing_host(host_id, &new_host(host)))
-            .map_err(|e| anyhow!(e))
+        let rows = self
+            .core
+            .write_host_row(host_id, &new_host(host))
+            .map_err(|e| anyhow!(e))?;
+        self.forget_in_background(host_id);
+        match rows {
+            0 => Err(anyhow!("host {host_id} not found")),
+            _ => Ok(()),
+        }
     }
 
+    /// `Core::delete_host`, likewise.
     fn delete_host(&self, host_id: i64) -> Result<()> {
-        self.rt
-            .block_on(self.core.delete_host(host_id))
-            .map_err(|e| anyhow!(e))
+        self.core.delete_host_row(host_id).map_err(|e| anyhow!(e))?;
+        hosts::delete_host_secrets(host_id);
+        self.forget_in_background(host_id);
+        Ok(())
     }
 
     fn set_favorite(&self, host_id: i64, favorite: bool) -> Result<()> {
@@ -502,6 +525,40 @@ mod tests {
             (Some("10.0.0.5"), Some(5902), Some(1))
         );
         assert_eq!(vnc.vnc_username.as_deref(), Some("me"));
+    }
+
+    /// Saving a host must not wait for the Redis pool locks, which a tab
+    /// that is connecting holds across its handshake.
+    #[test]
+    fn saving_a_host_does_not_wait_for_a_connect_in_flight() {
+        let dir = std::env::temp_dir().join(format!("termdrop-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = Arc::new(Core::open(&dir.join("termdrop.db")).unwrap());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = Arc::new(CoreStore::new(core.clone(), rt.handle().clone()));
+        let record = host_record(&host());
+        let id = store.add_host(&record).unwrap();
+
+        // A tunnel handshake in flight, as `redis_tunnel_port` holds it.
+        let held = core.redis_tunnels.blocking_lock();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn({
+            let store = store.clone();
+            let record = HostRecord {
+                name: "renamed".into(),
+                ..record.clone()
+            };
+            move || tx.send(store.update_host(id, &record).map_err(|e| e.to_string()))
+        });
+        let saved = rx.recv_timeout(std::time::Duration::from_secs(5));
+        drop(held);
+        assert_eq!(saved.expect("saving blocked on the pool lock"), Ok(()));
+        assert_eq!(store.host_record(id).unwrap().unwrap().name, "renamed");
+        // A row that is gone is still an error.
+        assert!(store.update_host(id + 1, &record).is_err());
+
+        drop(rt);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

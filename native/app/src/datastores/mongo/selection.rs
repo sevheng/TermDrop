@@ -211,6 +211,18 @@ pub fn backup_jobs(entries: &[Entry], output: &str, is_archive: bool) -> Vec<Job
         .collect()
 }
 
+/// The dump for an archive backup, refused when the selection spans more
+/// than one database. Checked again after the save dialog, which leaves the
+/// window usable: a second database ticked meanwhile would otherwise make
+/// two dumps to one file, the second overwriting the first (Vue's
+/// `runBackup` repeats the check for the same reason).
+pub fn archive_backup_jobs(entries: &[Entry], output: &str) -> Result<Vec<Job>, &'static str> {
+    if entries.len() > 1 {
+        return Err(ARCHIVE_ONE_DB);
+    }
+    Ok(backup_jobs(entries, output, true))
+}
+
 /// The runs for a folder restore (`folderRestoreJobs`).
 pub fn folder_restore_jobs(entries: &[Entry], source_dbs: &[String], input: &str) -> Vec<Job> {
     let whole = |db: &str, success: String| Job {
@@ -360,6 +372,24 @@ mod tests {
         assert_eq!(s.dbs(), ["logs"]);
         s.clear();
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn an_archive_backup_refuses_a_second_database() {
+        let entry = |db: &str| Entry {
+            db: db.into(),
+            collections: vec!["c".into()],
+        };
+        let one = archive_backup_jobs(&[entry("shop")], "/b/shop.gz").unwrap();
+        assert_eq!(one.len(), 1);
+        assert!(matches!(
+            &one[0].kind,
+            JobKind::Dump { is_archive: true, output, .. } if output == "/b/shop.gz"
+        ));
+        assert_eq!(
+            archive_backup_jobs(&[entry("shop"), entry("logs")], "/b/shop.gz"),
+            Err(ARCHIVE_ONE_DB)
+        );
     }
 
     #[test]

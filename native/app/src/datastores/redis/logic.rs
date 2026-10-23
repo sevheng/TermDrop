@@ -268,6 +268,18 @@ pub fn total_label(page: &RedisValuePage) -> Option<String> {
     })
 }
 
+/// The text Copy value may put on the clipboard: a string value that is
+/// whole and text. A truncated value is only the first 256 KB preview and a
+/// binary one is shown as base64, so copying either would hand over
+/// something other than the value while claiming success.
+pub fn copyable_value(page: &RedisValuePage) -> Option<&str> {
+    if page.kind != "string" {
+        return None;
+    }
+    let value = &page.entries.first()?.value;
+    (!value.truncated && !value.binary).then_some(value.text.as_str())
+}
+
 /// The note above a value: how much of a truncated string is shown, or
 /// that binary members are base64. Above the value, never under it: a
 /// 256 KB preview is thousands of lines tall and a note at the bottom would
@@ -688,6 +700,32 @@ mod tests {
         };
         assert_eq!(key_label(&key), "\u{27e8}binary 3 bytes\u{27e9}");
         assert_eq!(key_label(&bytes("a\nb")), "a?b");
+    }
+
+    #[test]
+    fn only_a_whole_text_string_can_be_copied() {
+        let string = |value: RedisBytes| RedisValuePage {
+            entries: vec![RedisEntry {
+                field: None,
+                value,
+                score: None,
+            }],
+            ..page("string", 0, None, "0")
+        };
+        assert_eq!(copyable_value(&string(bytes("hello"))), Some("hello"));
+        let truncated = RedisBytes {
+            bytes: 5 * 1024 * 1024,
+            truncated: true,
+            ..bytes("preview")
+        };
+        assert_eq!(copyable_value(&string(truncated)), None);
+        let binary = RedisBytes {
+            binary: true,
+            ..bytes("AAEC")
+        };
+        assert_eq!(copyable_value(&string(binary)), None);
+        assert_eq!(copyable_value(&page("list", 1, Some(1), "0")), None);
+        assert_eq!(copyable_value(&page("string", 0, None, "0")), None);
     }
 
     #[test]

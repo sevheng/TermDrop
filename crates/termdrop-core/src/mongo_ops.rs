@@ -54,19 +54,23 @@ impl Core {
         output_dir: String,
         is_archive: bool,
     ) -> Result<(), String> {
-        let uri = load_mongo_uri(self, host_id)?;
-        with_mongo_op(self, &op_id, |cancelled, mongo_ops| {
+        // Registered before the keyring read, so a cancel sent meanwhile is
+        // not dropped as an unknown id.
+        let registry_id = op_id.clone();
+        with_mongo_op(self, &registry_id, |cancelled, mongo_ops| async move {
+            let uri = load_mongo_uri(self, host_id)?;
             mongodb::dump_collections(
                 events,
                 cancelled,
                 mongo_ops,
-                op_id.clone(),
+                op_id,
                 &uri,
                 &db,
                 collections,
                 &output_dir,
                 is_archive,
             )
+            .await
         })
         .await
     }
@@ -83,13 +87,16 @@ impl Core {
         is_archive: bool,
         drop_first: bool,
     ) -> Result<(), String> {
-        let uri = load_mongo_uri(self, host_id)?;
-        with_mongo_op(self, &op_id, |cancelled, mongo_ops| {
+        // Registered before the keyring read, so a cancel sent meanwhile is
+        // not dropped as an unknown id.
+        let registry_id = op_id.clone();
+        with_mongo_op(self, &registry_id, |cancelled, mongo_ops| async move {
+            let uri = load_mongo_uri(self, host_id)?;
             mongodb::restore_collections(
                 events,
                 cancelled,
                 mongo_ops,
-                op_id.clone(),
+                op_id,
                 &uri,
                 &db,
                 collections,
@@ -97,6 +104,7 @@ impl Core {
                 is_archive,
                 drop_first,
             )
+            .await
         })
         .await
     }
@@ -112,18 +120,22 @@ impl Core {
         input_path: String,
         drop_first: bool,
     ) -> Result<(), String> {
-        let uri = load_mongo_uri(self, host_id)?;
-        with_mongo_op(self, &op_id, |cancelled, mongo_ops| {
+        // Registered before the keyring read, so a cancel sent meanwhile is
+        // not dropped as an unknown id.
+        let registry_id = op_id.clone();
+        with_mongo_op(self, &registry_id, |cancelled, mongo_ops| async move {
+            let uri = load_mongo_uri(self, host_id)?;
             mongodb::restore_archive(
                 events,
                 cancelled,
                 mongo_ops,
-                op_id.clone(),
+                op_id,
                 &uri,
                 includes,
                 &input_path,
                 drop_first,
             )
+            .await
         })
         .await
     }

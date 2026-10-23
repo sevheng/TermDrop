@@ -18,6 +18,15 @@ use crate::state::{
 };
 use crate::{crypto, db, Core};
 
+/// Every keyring entry stored under a host's id, removed once its row is.
+pub fn delete_host_secrets(id: i64) {
+    crypto::delete_password(id).ok();
+    crypto::delete_secret(&mongo_account(id)).ok();
+    // Both of these were orphaned: the row went, the keyring entry stayed.
+    crypto::delete_secret(&redis_account(id)).ok();
+    crypto::delete_secret(&vnc_account(id)).ok();
+}
+
 impl Core {
     pub fn add_host(&self, host: &db::NewHost) -> Result<i64, String> {
         with_db(self, |conn| db::add_host(conn, host))
@@ -45,28 +54,42 @@ impl Core {
     }
 
     async fn update_host_rows(&self, id: i64, host: &db::NewHost) -> Result<usize, String> {
-        let rows = with_db(self, |conn| db::update_host(conn, id, host))?;
+        let rows = self.write_host_row(id, host)?;
+        self.forget_host_connections(id).await?;
+        Ok(rows)
+    }
+
+    /// The row half of an update: rewrite the columns and return how many
+    /// rows changed (0 when the host is gone). No connection is touched, so
+    /// this never waits; follow it with [`Self::forget_host_connections`].
+    pub fn write_host_row(&self, id: i64, host: &db::NewHost) -> Result<usize, String> {
+        with_db(self, |conn| db::update_host(conn, id, host))
+    }
+
+    /// Drop everything connected to a host's old address. This takes the
+    /// pool locks, which a connect in flight holds across its network work
+    /// (a tunnel handshake, a Redis connect), so it can wait for seconds:
+    /// a UI thread should run it in the background rather than block on it.
+    pub async fn forget_host_connections(&self, id: i64) -> Result<(), String> {
         // The address may have changed, and every one of these caches the old one.
         // Redis was missing here: an edited URI stayed invisible until the app was
         // restarted, and the stale tunnel stayed open behind it.
         forget_mongo_clients(self, id).await;
         forget_redis(self, id).await;
-        self.vnc_disconnect_host(id).await?;
-        Ok(rows)
+        self.vnc_disconnect_host(id).await
     }
 
     /// Delete a host and every secret stored under its id.
     pub async fn delete_host(&self, id: i64) -> Result<(), String> {
-        with_db(self, |conn| db::delete_host(conn, id))?;
-        forget_mongo_clients(self, id).await;
-        forget_redis(self, id).await;
-        self.vnc_disconnect_host(id).await?;
-        crypto::delete_password(id).ok();
-        crypto::delete_secret(&mongo_account(id)).ok();
-        // Both of these were orphaned: the row went, the keyring entry stayed.
-        crypto::delete_secret(&redis_account(id)).ok();
-        crypto::delete_secret(&vnc_account(id)).ok();
+        self.delete_host_row(id)?;
+        self.forget_host_connections(id).await?;
+        delete_host_secrets(id);
         Ok(())
+    }
+
+    /// The row half of a delete; see [`Self::write_host_row`].
+    pub fn delete_host_row(&self, id: i64) -> Result<(), String> {
+        with_db(self, |conn| db::delete_host(conn, id))
     }
 
     /// End every VNC session on a host and release its tunnel.
