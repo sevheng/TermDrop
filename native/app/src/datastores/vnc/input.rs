@@ -175,18 +175,7 @@ impl Input {
         if self.view_only {
             return (Vec::new(), false);
         }
-        let mut sends = Vec::new();
-        for (keysym, down) in modifier_changes(old, new) {
-            if down {
-                if !self.modifiers_down.contains(&keysym) {
-                    self.modifiers_down.push(keysym);
-                }
-                sends.push(Send::Key { keysym, down });
-            } else if let Some(i) = self.modifiers_down.iter().position(|k| *k == keysym) {
-                self.modifiers_down.remove(i);
-                sends.push(Send::Key { keysym, down });
-            }
-        }
+        let mut sends = self.press_modifiers(old, new);
         // Caps Lock arrives as a state, not a key: one press toggles the
         // remote's too. The first report only learns the state.
         if caps_was.is_some_and(|was| was != capslock) {
@@ -202,6 +191,24 @@ impl Input {
         (sends, false)
     }
 
+    /// Send the modifier presses and releases that take the remote from
+    /// `old` to `new`, tracking which ones this side holds down.
+    fn press_modifiers(&mut self, old: Modifiers, new: Modifiers) -> Vec<Send> {
+        let mut sends = Vec::new();
+        for (keysym, down) in modifier_changes(old, new) {
+            if down {
+                if !self.modifiers_down.contains(&keysym) {
+                    self.modifiers_down.push(keysym);
+                }
+                sends.push(Send::Key { keysym, down });
+            } else if let Some(i) = self.modifiers_down.iter().position(|k| *k == keysym) {
+                self.modifiers_down.remove(i);
+                sends.push(Send::Key { keysym, down });
+            }
+        }
+        sends
+    }
+
     pub fn key_down(&mut self, ks: &Keystroke, prefer_character_input: bool) -> KeyOutcome {
         let mut out = KeyOutcome {
             sends: Vec::new(),
@@ -209,6 +216,25 @@ impl Input {
         };
         if self.view_only {
             return out;
+        }
+        // The modifiers a key carries are the truth. A modifier pressed
+        // before the screen had focus (Ctrl held while clicking into it, or
+        // across a tab switch) reported its change to whatever was focused
+        // then, and GPUI does not repeat it, so without this Ctrl+C would
+        // reach the remote as a bare `c`. Only presses are taken from the
+        // key: GPUI drops Shift from a shifted symbol (`!` arrives without
+        // it), so a release here would undo a Shift that is still held.
+        let m = ks.modifiers;
+        let held = Modifiers {
+            control: self.modifiers.control || m.control,
+            alt: self.modifiers.alt || m.alt,
+            shift: self.modifiers.shift || m.shift,
+            platform: self.modifiers.platform || m.platform,
+            ..self.modifiers
+        };
+        if held != self.modifiers {
+            let old = std::mem::replace(&mut self.modifiers, held);
+            out.sends = self.press_modifiers(old, held);
         }
         // A dead key on Windows: GPUI reports it as its spacing accent with
         // `prefer_character_input`, which no other press without Ctrl, Alt
@@ -380,6 +406,40 @@ mod tests {
         middle: false,
         right: false,
     };
+
+    #[test]
+    fn a_modifier_held_before_focus_still_reaches_the_remote() {
+        // Ctrl went down while something else had focus, so no
+        // modifiers-changed event reached the screen; the key carries it.
+        let mut input = Input::new(false);
+        let mut ctrl_c = key("c", Some("c"));
+        ctrl_c.modifiers.control = true;
+        let out = input.key_down(&ctrl_c, false);
+        assert_eq!(
+            out.sends,
+            vec![
+                Send::Key {
+                    keysym: CONTROL_L,
+                    down: true
+                },
+                Send::Key {
+                    keysym: 'c' as u32,
+                    down: true
+                },
+            ]
+        );
+        // Not pressed twice, and released when the platform says so.
+        let again = input.key_down(&ctrl_c, false);
+        assert!(!again.sends.contains(&Send::Key {
+            keysym: CONTROL_L,
+            down: true
+        }));
+        let (sends, _) = input.modifiers_changed(Modifiers::default(), false);
+        assert!(sends.contains(&Send::Key {
+            keysym: CONTROL_L,
+            down: false
+        }));
+    }
 
     #[test]
     fn a_press_goes_out_at_its_own_position() {
