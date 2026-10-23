@@ -16,6 +16,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -30,6 +31,8 @@ use super::host_actions::{
 };
 use super::host_editor::open_host_editor;
 use super::ssh_import::open_ssh_import;
+use crate::app::display::{connected_rail_title, jump_label, subtitle_title};
+use crate::app::group_accent::group_accent_index;
 use crate::app::host_form::EditorKind;
 use crate::app::host_grouping::{filter_hosts, group_hosts};
 use crate::app::host_kind::{HostKind, IconTone};
@@ -48,6 +51,39 @@ use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
 use crate::ui::theme::{Palette, palette};
+
+/// What a host row carries while it is dragged to a group header, and the
+/// ghost under the pointer: the kind (or `user@host`) dimmed, then the name,
+/// as `HostRow.vue`'s drag image.
+#[derive(Clone)]
+struct DraggedHost {
+    id: i64,
+    name: String,
+    kind_label: String,
+}
+
+impl Render for DraggedHost {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *palette(cx);
+        h_flex()
+            .gap_1()
+            .px_2()
+            .py(px(2.))
+            .rounded_sm()
+            .bg(p.overlay)
+            .border_1()
+            .border_color(p.line)
+            .text_xs()
+            .text_color(p.ink)
+            .whitespace_nowrap()
+            .child(div().opacity(0.6).child(self.kind_label.clone()))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(self.name.clone()),
+            )
+    }
+}
 
 pub struct HostSidebar {
     model: Entity<AppModel>,
@@ -438,6 +474,7 @@ impl HostSidebar {
             HostKind::Mongodb => IconName::Database,
             HostKind::Redis => IconName::Layers,
             HostKind::Vnc => IconName::Monitor,
+            HostKind::Ssh | HostKind::Local if host.mac => IconName::Apple,
             HostKind::Ssh | HostKind::Local => IconName::Server,
         };
         let tone = match host.kind.icon_tone() {
@@ -446,12 +483,26 @@ impl HostSidebar {
             IconTone::Mongo => p.mongo,
             IconTone::Vnc => p.vnc,
         };
-        let subtitle: SharedString = if host.host.is_empty() {
-            host.address.clone().into()
-        } else if host.username.is_empty() {
-            host.host.clone().into()
-        } else {
-            format!("{}@{}", host.username, host.host).into()
+        let subtitle: SharedString = host.subtitle.clone().into();
+        let model_ref = self.model.read(cx);
+        let jump = jump_label(
+            host.jump_host_id,
+            host.jump_host_id
+                .and_then(|j| model_ref.host(j))
+                .map(|h| h.name.as_str()),
+        );
+        let subtitle_tip: SharedString = subtitle_title(&subtitle, jump.as_deref()).into();
+        let rail_tip: SharedString = connected_rail_title(state.tab_count).into();
+        let grouped = model_ref.view_mode() == ViewMode::Grouped;
+        let drag = DraggedHost {
+            id,
+            name: host.name.clone(),
+            kind_label: match host.kind {
+                HostKind::Mongodb => "MongoDB".into(),
+                HostKind::Redis => "Redis".into(),
+                HostKind::Vnc => "VNC".into(),
+                HostKind::Ssh | HostKind::Local => format!("{}@{}", host.username, host.host),
+            },
         };
         let age = if state.connected {
             String::new()
@@ -494,13 +545,17 @@ impl HostSidebar {
                 // never competes with the icon.
                 d.child(
                     div()
+                        .id(SharedString::from(format!("rail-{key}-{id}")))
                         .absolute()
                         .left_0()
                         .top_1()
                         .bottom_1()
                         .w(px(2.))
                         .rounded_full()
-                        .bg(p.good),
+                        .bg(p.good)
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(rail_tip.clone()).build(window, cx)
+                        }),
                 )
             })
             .child(Icon::new(icon).small().text_color(tone))
@@ -516,11 +571,27 @@ impl HostSidebar {
                             .child(host.name.clone()),
                     )
                     .child(
-                        div()
+                        h_flex()
+                            .id(SharedString::from(format!("subtitle-{key}-{id}")))
+                            .min_w_0()
+                            .gap_1()
                             .text_xs()
                             .text_color(p.ink_2)
-                            .truncate()
-                            .child(subtitle),
+                            // A jump host is an icon, not words: "via jump
+                            // host" pushed the address out of a sidebar-width
+                            // row. The tooltip names it.
+                            .when(jump.is_some(), |d| {
+                                d.child(
+                                    Icon::new(IconName::Route)
+                                        .xsmall()
+                                        .flex_none()
+                                        .text_color(p.ink_3),
+                                )
+                            })
+                            .child(div().min_w_0().truncate().child(subtitle))
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(subtitle_tip.clone()).build(window, cx)
+                            }),
                     ),
             )
             // Shown at rest, hidden under the hover buttons.
@@ -609,6 +680,12 @@ impl HostSidebar {
                         }),
                     ),
             )
+            // Dragging a row onto a group header moves it there. Only in the
+            // grouped view, the one with headers to drop on; a press that
+            // does not move is still a click.
+            .when(grouped, |d| {
+                d.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
+            })
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 this.focus_handle.focus(window, cx);
                 if e.click_count() >= 2 {
@@ -642,6 +719,8 @@ impl HostSidebar {
         };
         let model = self.model.clone();
         let menu_name = name.to_string();
+        let drop_name = name.to_string();
+        let ring = p.accent;
         div()
             .id(SharedString::from(format!("group-{name}")))
             .h(px(22.))
@@ -653,9 +732,18 @@ impl HostSidebar {
             .pr_2()
             .rounded_sm()
             .border_l_2()
-            .border_color(p.line)
+            // A rest-visible hue per group, hashed from the name so it
+            // survives renames and reorders of the groups around it.
+            .border_color(p.tag[group_accent_index(name)])
             .cursor_pointer()
             .hover(|s| s.bg(p.raised))
+            .drag_over::<DraggedHost>(move |s, _, _, _| s.border_1().border_color(ring))
+            .on_drop(cx.listener(move |this, drag: &DraggedHost, window, cx| {
+                let current = this.model.read(cx).host(drag.id).map(|h| h.group.clone());
+                if current.as_deref() != Some(drop_name.as_str()) {
+                    move_to_group(window, cx, &this.model, drag.id, &drop_name);
+                }
+            }))
             .child(
                 h_flex()
                     .gap_1()

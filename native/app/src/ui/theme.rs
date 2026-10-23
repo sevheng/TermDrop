@@ -62,6 +62,16 @@ pub struct Tokens {
     pub redis: Rgb,
     pub mongo: Rgb,
     pub vnc: Rgb,
+    /// Data syntax tones (`--td-syn-*`): JSON keys, types, values.
+    pub syn_blue: Rgb,
+    pub syn_cyan: Rgb,
+    pub syn_yellow: Rgb,
+    pub syn_teal: Rgb,
+    pub syn_purple: Rgb,
+    /// `--td-tag-1` .. `--td-tag-8`: the eight group-rail hues, each clearing
+    /// 3:1 against the sidebar surface. Picked by
+    /// [`crate::app::group_accent::group_accent_index`].
+    pub tag: [Rgb; 8],
 }
 
 pub const LIGHT: Tokens = Tokens {
@@ -98,6 +108,21 @@ pub const LIGHT: Tokens = Tokens {
     redis: [179, 32, 23],
     mongo: [21, 99, 58],
     vnc: [109, 40, 217],
+    syn_blue: [26, 95, 168],
+    syn_cyan: [24, 108, 134],
+    syn_yellow: [122, 84, 16],
+    syn_teal: [19, 107, 92],
+    syn_purple: [122, 62, 130],
+    tag: [
+        [44, 107, 181],
+        [37, 121, 76],
+        [107, 79, 181],
+        [168, 95, 33],
+        [138, 109, 0],
+        [176, 58, 58],
+        [27, 124, 119],
+        [168, 74, 128],
+    ],
 };
 
 /// `html.dark` in the CSS. The accent here is the brand `#3B9EFF`.
@@ -135,6 +160,21 @@ pub const DARK: Tokens = Tokens {
     redis: [240, 83, 63],
     mongo: [77, 208, 122],
     vnc: [167, 139, 250],
+    syn_blue: [127, 182, 236],
+    syn_cyan: [165, 214, 245],
+    syn_yellow: [227, 192, 139],
+    syn_teal: [111, 211, 190],
+    syn_purple: [211, 162, 216],
+    tag: [
+        [79, 143, 224],
+        [79, 176, 122],
+        [155, 127, 224],
+        [217, 136, 74],
+        [201, 162, 39],
+        [217, 106, 106],
+        [63, 175, 168],
+        [217, 122, 176],
+    ],
 };
 
 pub fn tokens(choice: ThemeChoice) -> &'static Tokens {
@@ -370,6 +410,13 @@ pub struct Palette {
     pub redis: Hsla,
     pub mongo: Hsla,
     pub vnc: Hsla,
+    pub syn_blue: Hsla,
+    pub syn_cyan: Hsla,
+    pub syn_yellow: Hsla,
+    pub syn_teal: Hsla,
+    pub syn_purple: Hsla,
+    /// The group-rail hues, `tag[group_accent_index(name)]`.
+    pub tag: [Hsla; 8],
 }
 
 impl Global for Palette {}
@@ -402,6 +449,12 @@ impl Palette {
             redis: hsla(t.redis),
             mongo: hsla(t.mongo),
             vnc: hsla(t.vnc),
+            syn_blue: hsla(t.syn_blue),
+            syn_cyan: hsla(t.syn_cyan),
+            syn_yellow: hsla(t.syn_yellow),
+            syn_teal: hsla(t.syn_teal),
+            syn_purple: hsla(t.syn_purple),
+            tag: t.tag.map(hsla),
         }
     }
 
@@ -457,6 +510,30 @@ mod tests {
     #[test]
     fn the_brand_accent_is_3b9eff_in_dark() {
         assert_eq!(hex(DARK.accent), "#3b9eff");
+    }
+
+    /// Every tag hue clears 3:1 against the sidebar surface in both themes,
+    /// the rule `tokens.css` states for them.
+    #[test]
+    fn group_rail_hues_clear_three_to_one_on_the_surface() {
+        fn lum([r, g, b]: Rgb) -> f64 {
+            let c = |v: u8| {
+                let v = f64::from(v) / 255.;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * c(r) + 0.7152 * c(g) + 0.0722 * c(b)
+        }
+        for t in [&LIGHT, &DARK] {
+            for tag in t.tag {
+                let (a, b) = (lum(tag), lum(t.surface));
+                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(ratio >= 3.0, "{tag:?} on {:?}: {ratio:.2}", t.surface);
+            }
+        }
     }
 
     #[test]

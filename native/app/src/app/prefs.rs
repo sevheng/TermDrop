@@ -16,11 +16,17 @@ pub const HOST_COLLAPSED_GROUPS: &str = "host-collapsed-groups";
 pub const HOST_CUSTOM_GROUPS: &str = "host-custom-groups";
 pub const THEME: &str = "theme";
 pub const FONT_SIZE: &str = "font_size";
+/// Stored and shown by the settings dialog. Nothing reads it yet, in either
+/// app: SFTP downloads always go to the Downloads folder.
+pub const DOWNLOAD_PATH: &str = "download_path";
 
 /// The drag limits MainWindow.vue clamps to.
 pub const SIDEBAR_RANGE: (f32, f32) = (150.0, 400.0);
 pub const SFTP_RANGE: (f32, f32) = (180.0, 420.0);
+/// What a stored font size is clamped to when read.
 pub const FONT_SIZE_RANGE: (u16, u16) = (8, 32);
+/// The settings dialog's slider: `SettingsPanel.vue`'s range input.
+pub const FONT_SIZE_SLIDER: (u16, u16) = (10, 24);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -170,10 +176,88 @@ impl Prefs {
     }
 }
 
+/// What the settings dialog edits until Save: `SettingsPanel.vue`'s three
+/// refs. Nothing is written while it is open; the theme is only previewed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsDraft {
+    pub font_size: u16,
+    pub download_path: String,
+    pub theme: ThemeChoice,
+}
+
+impl SettingsDraft {
+    /// The dialog's opening values. A stored size outside the slider's range
+    /// is kept until the slider moves, as Vue's `v-model` on a range input
+    /// keeps it: only the thumb is drawn at the end ([`Self::slider_value`]).
+    pub fn open(font_size: u16, download_path: Option<String>, theme: ThemeChoice) -> Self {
+        Self {
+            font_size,
+            download_path: download_path.unwrap_or_default(),
+            theme,
+        }
+    }
+
+    /// Where the slider's thumb sits.
+    pub fn slider_value(&self) -> u16 {
+        self.font_size.clamp(FONT_SIZE_SLIDER.0, FONT_SIZE_SLIDER.1)
+    }
+
+    /// The slider's label.
+    pub fn font_size_label(&self) -> String {
+        format!("Terminal Font Size: {}px", self.font_size)
+    }
+
+    /// Every setting Save writes, in `saveSettings`' keys and encodings. All
+    /// three are written each time, changed or not, as the Vue store does.
+    pub fn saved_values(&self) -> [(&'static str, String); 3] {
+        [
+            (FONT_SIZE, self.font_size.to_string()),
+            (DOWNLOAD_PATH, self.download_path.clone()),
+            (THEME, self.theme.as_str().to_string()),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn the_settings_draft_writes_what_save_settings_writes() {
+        let mut d = SettingsDraft::open(14, None, ThemeChoice::Dark);
+        assert_eq!(d.font_size_label(), "Terminal Font Size: 14px");
+        d.font_size = 18;
+        d.download_path = "/tmp/dl".into();
+        d.theme = ThemeChoice::Light;
+        assert_eq!(
+            d.saved_values(),
+            [
+                ("font_size", "18".to_string()),
+                ("download_path", "/tmp/dl".to_string()),
+                ("theme", "light".to_string()),
+            ]
+        );
+        // An unset path is saved as the empty string, "use the default".
+        let d = SettingsDraft::open(14, None, ThemeChoice::Dark);
+        assert_eq!(d.saved_values()[1], ("download_path", String::new()));
+    }
+
+    #[test]
+    fn the_slider_opens_inside_its_range() {
+        let big = SettingsDraft::open(30, None, ThemeChoice::Dark);
+        assert_eq!(big.slider_value(), 24);
+        // Untouched, Save keeps what was stored.
+        assert_eq!(big.saved_values()[0], ("font_size", "30".to_string()));
+        assert_eq!(
+            SettingsDraft::open(8, None, ThemeChoice::Dark).slider_value(),
+            10
+        );
+        assert_eq!(
+            SettingsDraft::open(12, Some("~/dl".into()), ThemeChoice::Dark).download_path,
+            "~/dl"
+        );
+    }
 
     fn decode(pairs: &[(&str, &str)]) -> Prefs {
         let map: HashMap<String, String> = pairs
