@@ -41,6 +41,23 @@ pub struct Update {
     pub bytes: usize,
     /// Parse, decode and apply, off the UI thread.
     pub apply: Duration,
+    /// The remote cursor's new shape, when this frame carried one.
+    pub cursor: Option<CursorSprite>,
+}
+
+/// The remote's cursor shape (the Cursor pseudo-encoding), ready to paint.
+///
+/// The Vue panel made it a CSS cursor. GPUI can only choose among the
+/// system's cursors, so the screen paints this over the image at the
+/// pointer instead, and the local arrow stays visible above it.
+#[derive(Clone)]
+pub struct CursorSprite {
+    /// Where the pointer sits inside the image.
+    pub hot: (u16, u16),
+    pub size: (u16, u16),
+    /// `None` when the remote hides its pointer (a zero-sized cursor): the
+    /// Vue panel set `cursor: none`; here nothing is painted.
+    pub image: Option<Arc<RenderImage>>,
 }
 
 pub enum Message {
@@ -106,6 +123,7 @@ fn run(
                 seq,
                 resized,
                 jpegs,
+                cursor,
             }) => {
                 let reset = std::mem::take(&mut first) || resized;
                 let dirty = fb.take_dirty();
@@ -120,6 +138,7 @@ fn run(
                     tiles,
                     bytes: bytes.len(),
                     apply,
+                    cursor: cursor.map(cursor_sprite),
                 })
             }
             Err(e) => Message::Corrupt(e),
@@ -132,13 +151,54 @@ fn run(
 }
 
 /// What applying a frame did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
     pub seq: u32,
     /// The desktop was resized (its last rectangle).
     pub resized: bool,
     /// JPEG rectangles it carried, for the debug log.
     pub jpegs: usize,
+    /// The last cursor shape it carried; only the last one counts.
+    pub cursor: Option<CursorShape>,
+}
+
+/// A cursor rectangle as the core sent it: `x`/`y` are the hotspot and
+/// the payload is `width * height` RGBA (alpha 0 or 255, from the mask).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorShape {
+    pub hot: (u16, u16),
+    pub size: (u16, u16),
+    /// BGRA with every transparent pixel zeroed, or `None` for a hidden
+    /// pointer (or a payload of the wrong length, which is treated as one
+    /// rather than ending the session: the cursor is cosmetic).
+    pub bgra: Option<Vec<u8>>,
+}
+
+/// The core's RGBA cursor image as the BGRA GPUI paints. Transparent
+/// pixels are zeroed so the image reads the same whether the compositor
+/// treats it as straight or premultiplied alpha.
+pub fn cursor_bgra(width: u16, height: u16, rgba: &[u8]) -> Option<Vec<u8>> {
+    let len = width as usize * height as usize * 4;
+    if len == 0 || rgba.len() != len {
+        return None;
+    }
+    let mut out = Vec::with_capacity(len);
+    for &[r, g, b, a] in rgba.as_chunks::<4>().0 {
+        out.extend_from_slice(&if a == 0 { [0; 4] } else { [b, g, r, a] });
+    }
+    Some(out)
+}
+
+fn cursor_sprite(shape: CursorShape) -> CursorSprite {
+    let image = shape.bgra.and_then(|bgra| {
+        image::RgbaImage::from_raw(shape.size.0 as u32, shape.size.1 as u32, bgra)
+            .map(|buffer| Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+    });
+    CursorSprite {
+        hot: shape.hot,
+        size: shape.size,
+        image,
+    }
 }
 
 /// Apply one message to `fb`.
@@ -148,6 +208,7 @@ pub fn apply(fb: &mut Framebuffer, bytes: &[u8]) -> Result<Applied, String> {
     // order; a later CopyRect may read what a JPEG wrote.
     let jpegs = decode_jpegs(&frame.rects);
     let mut resized = false;
+    let mut cursor = None;
     for (index, rect) in frame.rects.iter().enumerate() {
         match rect.op {
             Op::RawRgba => fb.put_rgba(rect.x, rect.y, rect.width, rect.height, rect.payload),
@@ -181,15 +242,24 @@ pub fn apply(fb: &mut Framebuffer, bytes: &[u8]) -> Result<Applied, String> {
                 *fb = Framebuffer::new(rect.width, rect.height);
                 resized = true;
             }
-            // The Vue panel made the remote cursor a CSS cursor; GPUI can
-            // only choose among the system's, so the local arrow stays.
-            Op::Cursor | Op::Unknown(_) => {}
+            // Not part of the framebuffer: the screen paints it at the
+            // pointer, so it tracks the mouse with no round trip, as the
+            // Vue panel's CSS cursor did.
+            Op::Cursor => {
+                cursor = Some(CursorShape {
+                    hot: (rect.x, rect.y),
+                    size: (rect.width, rect.height),
+                    bgra: cursor_bgra(rect.width, rect.height, rect.payload),
+                });
+            }
+            Op::Unknown(_) => {}
         }
     }
     Ok(Applied {
         seq: frame.seq,
         resized,
         jpegs: jpegs.len(),
+        cursor,
     })
 }
 
@@ -339,7 +409,8 @@ mod tests {
             Applied {
                 seq: 5,
                 resized: false,
-                jpegs: 0
+                jpegs: 0,
+                cursor: None,
             }
         );
         assert_eq!(fb.pixel(TILE + 5, 1), [0, 0, 255, 255]);
@@ -439,6 +510,60 @@ mod tests {
         let (tx, rx) = async_channel::unbounded::<Message>();
         drop(StopGuard(tx));
         assert!(rx.recv_blocking().is_err());
+    }
+
+    #[test]
+    fn a_cursor_is_kept_aside_not_drawn_and_the_last_one_wins() {
+        let mut fb = Framebuffer::new(4, 4);
+        fb.take_dirty();
+        let mut b = FrameBuilder::new(3);
+        b.push_cursor(0, 0, 1, 1, &[1, 1, 1, 255]);
+        // Red and opaque, then a transparent pixel with colour left in it.
+        b.push_cursor(2, 1, 2, 1, &[255, 0, 0, 255, 9, 9, 9, 0]);
+        let applied = apply(&mut fb, &b.finish()).unwrap();
+        assert_eq!(
+            applied.cursor,
+            Some(CursorShape {
+                hot: (2, 1),
+                size: (2, 1),
+                bgra: Some(vec![0, 0, 255, 255, 0, 0, 0, 0]),
+            })
+        );
+        assert!(fb.take_dirty().is_empty(), "the framebuffer is untouched");
+        assert_eq!(fb.pixel(0, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_hidden_or_malformed_cursor_has_no_image() {
+        let mut fb = Framebuffer::new(4, 4);
+        let mut b = FrameBuilder::new(0);
+        b.push_cursor(5, 6, 0, 0, &[]);
+        let hidden = apply(&mut fb, &b.finish()).unwrap().cursor.unwrap();
+        assert_eq!(
+            (hidden.hot, hidden.size, hidden.bgra),
+            ((5, 6), (0, 0), None)
+        );
+        // A payload that is not width * height * 4 is not trusted.
+        assert_eq!(cursor_bgra(2, 2, &[0; 12]), None);
+        assert_eq!(cursor_bgra(1, 1, &[1, 2, 3, 128]), Some(vec![3, 2, 1, 128]));
+        // A frame without one leaves the cursor as it was.
+        let mut b = FrameBuilder::new(1);
+        b.push_fill(0, 0, 1, 1, [1, 2, 3]);
+        assert_eq!(apply(&mut fb, &b.finish()).unwrap().cursor, None);
+    }
+
+    #[test]
+    fn the_thread_sends_the_cursor_as_an_image() {
+        let (mut sink, rx) = start(4, 4).unwrap();
+        let mut b = FrameBuilder::new(1);
+        b.push_cursor(1, 2, 2, 2, &[255; 16]);
+        assert!(sink.send(b.finish()));
+        let Message::Frame(update) = rx.recv_blocking().unwrap() else {
+            panic!("a good frame");
+        };
+        let sprite = update.cursor.expect("a cursor");
+        assert_eq!((sprite.hot, sprite.size), ((1, 2), (2, 2)));
+        assert!(sprite.image.is_some());
     }
 
     #[test]

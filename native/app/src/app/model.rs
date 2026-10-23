@@ -57,15 +57,74 @@ pub struct AppModel {
     right_panel_tab: PanelKind,
     tab_seq: u64,
     local_shells: Vec<LocalShellChoice>,
+    shell_detection: ShellDetection,
+    shells_detecting: bool,
 }
 
 /// A shell this machine has, as the new-terminal menu lists it. Only the id
 /// goes back to the backend, which resolves it against its own detection, so
 /// the UI can never name a program to run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LocalShellChoice {
     pub id: String,
     pub label: String,
+    /// The program and its arguments, for the menu row's tooltip only.
+    pub command_line: String,
+    /// The one Ctrl+Shift+T opens, marked `default` in the menu.
+    pub default: bool,
+}
+
+impl LocalShellChoice {
+    /// A menu entry for a detected shell: the tooltip is `program args...`,
+    /// as `[shell.program, ...shell.args].join(' ')`.
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        program: &str,
+        args: &[String],
+        default: bool,
+    ) -> Self {
+        let command_line = std::iter::once(program)
+            .chain(args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Self {
+            id: id.into(),
+            label: label.into(),
+            command_line,
+            default,
+        }
+    }
+}
+
+#[cfg(test)]
+mod local_shell_tests {
+    use super::LocalShellChoice;
+
+    #[test]
+    fn the_tooltip_is_the_program_and_its_arguments() {
+        let s = LocalShellChoice::new(
+            "wsl:Ubuntu",
+            "Ubuntu (WSL)",
+            "wsl.exe",
+            &["-d".into(), "Ubuntu".into()],
+            false,
+        );
+        assert_eq!(s.command_line, "wsl.exe -d Ubuntu");
+        let z = LocalShellChoice::new("zsh", "zsh", "/usr/bin/zsh", &[], true);
+        assert_eq!(z.command_line, "/usr/bin/zsh");
+        assert!(z.default);
+    }
+}
+
+/// Where shell detection is, for the new-terminal button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShellDetection {
+    /// Nothing detected yet: the first run is still going.
+    #[default]
+    Pending,
+    /// A list is known; another run may be refreshing it.
+    Known,
 }
 
 impl EventEmitter<AppEvent> for AppModel {}
@@ -87,6 +146,8 @@ impl AppModel {
             right_panel_tab: PanelKind::default(),
             tab_seq: 0,
             local_shells: Vec::new(),
+            shell_detection: ShellDetection::Pending,
+            shells_detecting: false,
         };
         // A failed load leaves the list empty and `hosts_loaded` false; the
         // sidebar then shows its loading state rather than "no hosts yet".
@@ -431,7 +492,32 @@ impl AppModel {
 
     pub fn set_local_shells(&mut self, shells: Vec<LocalShellChoice>, cx: &mut Context<Self>) {
         self.local_shells = shells;
+        self.shell_detection = ShellDetection::Known;
+        self.shells_detecting = false;
         cx.notify();
+    }
+
+    /// Detection failed: keep what was known, or an empty list ("No shells
+    /// found"), as the Vue store's `loadLocalShells` does.
+    pub fn shell_detection_failed(&mut self, cx: &mut Context<Self>) {
+        self.shell_detection = ShellDetection::Known;
+        self.shells_detecting = false;
+        cx.notify();
+    }
+
+    /// A detection run started (the button spins only while nothing is
+    /// known yet).
+    pub fn set_shells_detecting(&mut self, cx: &mut Context<Self>) {
+        self.shells_detecting = true;
+        cx.notify();
+    }
+
+    pub fn shell_detection(&self) -> ShellDetection {
+        self.shell_detection
+    }
+
+    pub fn shells_detecting(&self) -> bool {
+        self.shells_detecting
     }
 
     fn push_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
@@ -678,6 +764,29 @@ impl AppModel {
 
     pub fn font_size(&self) -> u16 {
         self.prefs.font_size
+    }
+
+    /// `download_path`, as the settings dialog shows it. `None` when unset.
+    pub fn download_path(&self) -> Option<String> {
+        self.setting(prefs::DOWNLOAD_PATH)
+    }
+
+    /// The settings dialog's Save: every value written, then the theme and
+    /// the terminals' font size follow (`terminal-settings-changed`, sent on
+    /// every save as the Vue dialog does). A failed write is reported and the
+    /// rest still go through.
+    pub fn save_settings(&mut self, draft: &prefs::SettingsDraft, cx: &mut Context<Self>) {
+        for (key, value) in draft.saved_values() {
+            self.save(key, &value, cx);
+        }
+        self.prefs.theme = draft.theme;
+        self.prefs.font_size = draft
+            .font_size
+            .clamp(prefs::FONT_SIZE_RANGE.0, prefs::FONT_SIZE_RANGE.1);
+        cx.emit(AppEvent::ThemeChanged(draft.theme));
+        cx.emit(AppEvent::FontSizeChanged(self.prefs.font_size));
+        cx.emit(AppEvent::SettingChanged(prefs::DOWNLOAD_PATH.to_string()));
+        cx.notify();
     }
 
     pub fn set_font_size(&mut self, size: u16, cx: &mut Context<Self>) {

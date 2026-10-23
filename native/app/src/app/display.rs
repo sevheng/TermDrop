@@ -141,9 +141,126 @@ pub fn vnc_display_target(vnc_host: Option<&str>, vnc_port: Option<u16>) -> Stri
     }
 }
 
+// ---- the host row's second line (HostRow.vue) ---------------------------
+
+/// An SSH row's subtitle: `user@host:port`. With no username the `@` is
+/// left out (Vue rendered `@host:22`); the editors require one, so only an
+/// imported or hand-written row can lack it.
+pub fn ssh_subtitle(username: &str, host: &str, port: u16) -> String {
+    if username.is_empty() {
+        format!("{host}:{port}")
+    } else {
+        format!("{username}@{host}:{port}")
+    }
+}
+
+/// A Redis or VNC row's subtitle: the address, plus ` · tunnelled` when it
+/// goes through an SSH host.
+pub fn with_tunnel_suffix(address: String, tunnelled: bool) -> String {
+    if tunnelled {
+        format!("{address} · tunnelled")
+    } else {
+        address
+    }
+}
+
+/// Whether an SSH host reads as a Mac, for the Apple icon: the Vue test
+/// `/\b(mac|darwin|osx)\b/` over the lower-cased name and address. `\b` is
+/// ASCII-only there, so `mac-mini` and `my.mac` match and `imac` or
+/// `macbook` do not.
+pub fn looks_like_mac(name: &str, host: &str) -> bool {
+    let combined = format!("{name} {host}").to_lowercase();
+    let bytes = combined.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    ["mac", "darwin", "osx"].iter().any(|word| {
+        combined.match_indices(word).any(|(i, _)| {
+            let end = i + word.len();
+            (i == 0 || !is_word(bytes[i - 1])) && (end == bytes.len() || !is_word(bytes[end]))
+        })
+    })
+}
+
+/// The jump-host tooltip: `Via <bastion>`, or a warning when the bastion
+/// row has since been deleted (the host is left pointing at nothing on
+/// purpose, so it never quietly connects direct). `None` without a jump host.
+pub fn jump_label(jump_host_id: Option<i64>, jump_name: Option<&str>) -> Option<String> {
+    jump_host_id?;
+    Some(match jump_name {
+        Some(name) => format!("Via {name}"),
+        None => "Via a jump host that no longer exists".to_string(),
+    })
+}
+
+/// The subtitle's tooltip: the subtitle itself, then the jump label.
+pub fn subtitle_title(subtitle: &str, jump_label: Option<&str>) -> String {
+    match jump_label {
+        Some(label) => format!("{subtitle} — {label}"),
+        None => subtitle.to_string(),
+    }
+}
+
+/// The connected rail's tooltip.
+pub fn connected_rail_title(tab_count: usize) -> String {
+    if tab_count > 1 {
+        format!("{tab_count} open tabs")
+    } else {
+        "Connected".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_subtitle_carries_the_port() {
+        assert_eq!(ssh_subtitle("deploy", "10.0.1.4", 22), "deploy@10.0.1.4:22");
+        assert_eq!(ssh_subtitle("", "10.0.1.4", 2222), "10.0.1.4:2222");
+    }
+
+    #[test]
+    fn tunnelled_rows_say_so() {
+        assert_eq!(
+            with_tunnel_suffix("redis://h:6379".into(), true),
+            "redis://h:6379 · tunnelled"
+        );
+        assert_eq!(with_tunnel_suffix("h:5901".into(), false), "h:5901");
+    }
+
+    #[test]
+    fn macs_are_recognised_by_whole_word() {
+        assert!(looks_like_mac("Mac mini", "10.0.0.2"));
+        assert!(looks_like_mac("build", "mac-builder.local"));
+        assert!(looks_like_mac("Darwin box", ""));
+        assert!(looks_like_mac("x", "osx"));
+        assert!(!looks_like_mac("MacMini", ""));
+        assert!(!looks_like_mac("imac", "macbook.lan"));
+        assert!(!looks_like_mac("web-01", "10.0.1.4"));
+    }
+
+    #[test]
+    fn jump_labels_name_the_bastion_or_its_absence() {
+        assert_eq!(jump_label(None, Some("b")), None);
+        assert_eq!(
+            jump_label(Some(3), Some("bastion")).as_deref(),
+            Some("Via bastion")
+        );
+        assert_eq!(
+            jump_label(Some(3), None).as_deref(),
+            Some("Via a jump host that no longer exists")
+        );
+        assert_eq!(
+            subtitle_title("u@h:22", Some("Via bastion")),
+            "u@h:22 — Via bastion"
+        );
+        assert_eq!(subtitle_title("u@h:22", None), "u@h:22");
+    }
+
+    #[test]
+    fn connected_rail_counts_tabs() {
+        assert_eq!(connected_rail_title(1), "Connected");
+        assert_eq!(connected_rail_title(3), "3 open tabs");
+    }
 
     #[test]
     fn mongo_shows_host_and_port_without_credentials() {

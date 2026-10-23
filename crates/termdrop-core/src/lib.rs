@@ -19,6 +19,7 @@ pub mod docker;
 pub mod error;
 pub mod events;
 pub mod exec_ops;
+pub mod forward_ops;
 pub mod hosts;
 pub mod local_pty;
 pub mod local_shells;

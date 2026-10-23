@@ -20,11 +20,13 @@ pub mod keys;
 pub mod mouse;
 mod palette;
 pub mod paste;
+mod search;
 pub mod url;
 mod view;
 
 pub use feed::{FrameStats, TerminalFeed};
 pub use palette::Palette;
+pub use search::SearchDirection;
 pub use view::{
     init, TerminalEvent, TerminalOptions, TerminalView, DEFAULT_FONT_FAMILY, KEY_CONTEXT,
     NERD_SYMBOLS_FAMILY,

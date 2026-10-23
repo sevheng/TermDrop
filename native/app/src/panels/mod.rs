@@ -13,7 +13,7 @@ pub mod docker;
 pub mod security;
 pub mod sftp;
 pub mod terminal_insert;
-mod tunnels;
+pub mod tunnels;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

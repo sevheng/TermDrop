@@ -423,6 +423,11 @@ impl TerminalTab {
         }
         match result {
             Ok(()) => {
+                // Vue's `onReconnected` cleared the terminal: only the line
+                // the cursor is on (the new prompt, or the blank line below
+                // the old output) is kept, so Find and Select All no longer
+                // reach the dead session.
+                self.terminal.update(cx, |view, cx| view.clear(cx));
                 // An SSH reconnect replaces the session's output channel; a
                 // local one carries it over, and attaching again is harmless.
                 self.attach_output(&session_id, cx);

@@ -10,16 +10,24 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyView, App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement,
-    Render, SharedString, Styled, Subscription, Task, Window, div, px,
+    AnyView, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
+    StatefulInteractiveElement as _, Styled, Subscription, Task, WeakEntity, Window, div, px,
 };
 use termdrop_core::CoreEvent;
-use termdrop_terminal::{Palette as TermPalette, TerminalEvent, TerminalOptions, TerminalView};
+use termdrop_terminal::{
+    Palette as TermPalette, SearchDirection, TerminalEvent, TerminalOptions, TerminalView,
+};
 
 use super::SharedHub;
+use super::status_bar::{Link, StatusBar};
 use crate::app::prefs::ThemeChoice;
 use crate::app::tabs::Tab;
 use crate::app::{AppEvent, AppModel};
@@ -96,6 +104,12 @@ pub struct TerminalTab {
     /// A panel's pane under the terminal: the Docker panel's logs or exec
     /// view. Owned here, so it goes with the tab.
     bottom_pane: Option<AnyView>,
+    /// The host status bar (and the system panel it opens), SSH tabs only.
+    status_bar: Option<Entity<StatusBar>>,
+    /// The find bar (Ctrl+F): open, its query box, and "Aa".
+    find_open: bool,
+    find_input: Entity<InputState>,
+    find_case: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -155,10 +169,33 @@ impl TerminalTab {
         );
 
         let tab_id = tab.id.clone();
+        let status_bar = match target {
+            Target::Ssh { host_id } => Some(StatusBar::new(
+                services.clone(),
+                model.clone(),
+                tab_id.clone(),
+                host_id,
+                window,
+                cx,
+            )),
+            Target::Local { .. } => None,
+        };
         cx.new(|cx| {
+            let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find..."));
             let subscriptions = vec![
                 cx.subscribe_in(&model, window, Self::on_app_event),
                 cx.subscribe_in(&terminal, window, Self::on_terminal_event),
+                // Enter finds the next match, Shift+Enter the previous.
+                cx.subscribe(&find_input, |this, _, event: &InputEvent, cx| {
+                    if let InputEvent::PressEnter { shift, .. } = event {
+                        let direction = if *shift {
+                            SearchDirection::Previous
+                        } else {
+                            SearchDirection::Next
+                        };
+                        this.find(direction, cx);
+                    }
+                }),
             ];
             // Deferred: this runs inside the window's handling of the tab
             // opening, and connecting updates the model.
@@ -181,6 +218,10 @@ impl TerminalTab {
                 sftp: Arc::default(),
                 sftp_task: None,
                 bottom_pane: None,
+                status_bar,
+                find_open: false,
+                find_input,
+                find_case: false,
                 _subscriptions: subscriptions,
             }
         })
@@ -222,6 +263,14 @@ impl TerminalTab {
             Status::Connected => (true, false),
             Status::Ended(_) | Status::Failed(_) => (false, false),
         };
+        let link = match status {
+            Status::Connecting => Link::Connecting,
+            Status::Connected => Link::Connected,
+            Status::Ended(_) | Status::Failed(_) => Link::Ended,
+        };
+        if let Some(bar) = &self.status_bar {
+            bar.update(cx, |bar, cx| bar.set_link(link, cx));
+        }
         self.status = status;
         let id = self.tab_id.clone();
         self.model
@@ -311,6 +360,8 @@ impl TerminalTab {
         }
         self.sftp_task = None;
         self.bottom_pane = None;
+        // Its polls stop with it.
+        self.status_bar = None;
         let sftp_id = {
             let mut slot = lock(&self.sftp);
             slot.closed = true;
@@ -375,6 +426,154 @@ impl TerminalTab {
         }
     }
 
+    // ---- find bar ----------------------------------------------------------
+
+    /// `openSearch`: show the bar and put the cursor in it.
+    fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.find_open = true;
+        self.find_input
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// `closeSearch`: hide the bar, empty it, drop the highlights and give
+    /// the keyboard back to the terminal.
+    fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.find_open = false;
+        self.find_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.terminal.update(cx, |t, cx| t.clear_search(cx));
+        window.focus(&self.terminal.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// `findNext` / `findPrevious`; an empty query does nothing.
+    fn find(&mut self, direction: SearchDirection, cx: &mut Context<Self>) {
+        let query = self.find_input.read(cx).value().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let case = self.find_case;
+        self.terminal
+            .update(cx, |t, cx| t.find(&query, case, direction, cx));
+    }
+
+    /// The terminal's own shortcuts, taken before the keys reach the
+    /// program, as `attachCustomKeyEventHandler` did (see `tab_shortcut`).
+    fn on_key_capture(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ks = &event.keystroke;
+        let m = &ks.modifiers;
+        match tab_shortcut(m.control, m.shift, &ks.key, self.find_open) {
+            Some(TabShortcut::SelectAll) => {
+                self.terminal.update(cx, |t, cx| t.select_all(cx));
+            }
+            Some(TabShortcut::OpenFind) => self.open_find(window, cx),
+            Some(TabShortcut::CloseFind) => self.close_find(window, cx),
+            None => return,
+        }
+        cx.stop_propagation();
+    }
+
+    fn render_find_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *palette(cx);
+        let glyph = |id: &'static str, text: &'static str| {
+            let ink = p.ink;
+            div()
+                .id(id)
+                .px_1()
+                .text_xs()
+                .text_color(p.ink_2)
+                .cursor_pointer()
+                .hover(move |s| s.text_color(ink))
+                .child(text)
+        };
+        h_flex()
+            .id("terminal-find")
+            // Clicks on the bar are its own, not the terminal's under it.
+            .occlude()
+            .absolute()
+            .top_2()
+            .right_2()
+            .gap_2()
+            .p_2()
+            .bg(p.surface)
+            .border_1()
+            .border_color(p.line)
+            .rounded_sm()
+            .shadow_lg()
+            .child(
+                div()
+                    .w(px(160.))
+                    .child(Input::new(&self.find_input).xsmall()),
+            )
+            .child(
+                glyph("find-prev", "\u{2191}")
+                    .tooltip(|window, cx| Tooltip::new("Previous").build(window, cx))
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.find(SearchDirection::Previous, cx)),
+                    ),
+            )
+            .child(
+                glyph("find-next", "\u{2193}")
+                    .tooltip(|window, cx| Tooltip::new("Next").build(window, cx))
+                    .on_click(cx.listener(|this, _, _, cx| this.find(SearchDirection::Next, cx))),
+            )
+            .child(
+                Checkbox::new("find-case")
+                    .xsmall()
+                    .label("Aa")
+                    .checked(self.find_case)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.find_case = *checked;
+                        // The highlights were for the other case rule; the
+                        // next Enter draws them again.
+                        this.terminal.update(cx, |t, cx| t.clear_search(cx));
+                        cx.notify();
+                    })),
+            )
+            .child(
+                glyph("find-close", "\u{d7}")
+                    .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
+            )
+    }
+
+    /// The right-click menu (`showContextMenu`): Copy, Paste, Select All,
+    /// and on an SSH tab a "Forward ..." item when the selection names a
+    /// port. While the program takes the mouse the click is reported to it
+    /// instead and no menu opens, unless Shift is held.
+    fn context_menu(this: &WeakEntity<Self>, menu: PopupMenu, cx: &mut App) -> PopupMenu {
+        let Ok((terminal, host_id, services)) = this.read_with(cx, |tab, _| {
+            let host_id = match tab.target {
+                Target::Ssh { host_id } => Some(host_id),
+                Target::Local { .. } => None,
+            };
+            (tab.terminal.clone(), host_id, tab.services.clone())
+        }) else {
+            return menu;
+        };
+        let selection = terminal.read(cx).selection_text().unwrap_or_default();
+        let (copy, paste, all) = (terminal.clone(), terminal.clone(), terminal);
+        let menu = menu
+            .item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
+                copy.update(cx, |t, cx| t.copy(cx));
+            }))
+            .item(PopupMenuItem::new("Paste").on_click(move |_, _, cx| {
+                paste.update(cx, |t, cx| t.paste_from_clipboard(cx));
+            }))
+            .item(PopupMenuItem::new("Select All").on_click(move |_, _, cx| {
+                all.update(cx, |t, cx| t.select_all(cx));
+            }));
+        match host_id.and_then(|host_id| forward_menu_item(services, host_id, &selection)) {
+            Some(item) => menu.separator().item(item),
+            None => menu,
+        }
+    }
+
     fn banner(&self) -> Option<(SharedString, &'static str)> {
         match &self.status {
             Status::Connecting | Status::Connected => None,
@@ -383,6 +582,30 @@ impl TerminalTab {
             Status::Failed(e) => Some((e.clone().into(), "Retry")),
         }
     }
+}
+
+/// The "Forward ..." item for the terminal's selection (TUN-4), on an SSH
+/// tab: `detectForwardInfo(selection)` names a port, and the click opens
+/// the forward editor for this tab's host prefilled as
+/// `createForwardFromSelection` did. No item when nothing is detected.
+fn forward_menu_item(
+    services: Arc<Services>,
+    host_id: i64,
+    selection: &str,
+) -> Option<PopupMenuItem> {
+    let hint = crate::panels::tunnels::detect_forward(selection)?;
+    let prefill = hint.prefill();
+    Some(
+        PopupMenuItem::new(hint.label).on_click(move |_, window, cx| {
+            crate::panels::tunnels::open_forward_editor(
+                window,
+                cx,
+                services.clone(),
+                host_id,
+                Some(prefill.clone()),
+            );
+        }),
+    )
 }
 
 impl Render for TerminalTab {
@@ -416,7 +639,25 @@ impl Render for TerminalTab {
                         ),
                 )
             })
-            .child(div().flex_1().min_h_0().child(self.terminal.clone()))
+            .child(
+                div()
+                    .id("terminal-area")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .capture_key_down(cx.listener(Self::on_key_capture))
+                    .child(
+                        div()
+                            .id("terminal-surface")
+                            .size_full()
+                            .child(self.terminal.clone())
+                            .context_menu({
+                                let this = cx.entity().downgrade();
+                                move |menu, _, cx| Self::context_menu(&this, menu, cx)
+                            }),
+                    )
+                    .when(self.find_open, |d| d.child(self.render_find_bar(cx))),
+            )
             .when_some(self.bottom_pane.clone(), |col, pane| {
                 // The pane sizes itself (its own height and resize edge).
                 col.child(
@@ -427,5 +668,71 @@ impl Render for TerminalTab {
                         .child(pane),
                 )
             })
+            .when_some(self.status_bar.clone(), |col, bar| col.child(bar))
+    }
+}
+
+/// A key the terminal tab takes for itself before the program sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabShortcut {
+    SelectAll,
+    OpenFind,
+    CloseFind,
+}
+
+/// `attachCustomKeyEventHandler`'s rules, modifier for modifier: Ctrl+Shift+A
+/// selects everything and any Ctrl+F (with Shift, Alt or neither) opens the
+/// find bar; Esc closes an open find bar whatever else is held.
+fn tab_shortcut(control: bool, shift: bool, key: &str, find_open: bool) -> Option<TabShortcut> {
+    let key = key.to_lowercase();
+    if control && shift && key == "a" {
+        return Some(TabShortcut::SelectAll);
+    }
+    if control && key == "f" {
+        return Some(TabShortcut::OpenFind);
+    }
+    if find_open && key == "escape" {
+        return Some(TabShortcut::CloseFind);
+    }
+    None
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::{TabShortcut, tab_shortcut};
+
+    #[test]
+    fn every_ctrl_f_chord_opens_find_as_in_xterm_handler() {
+        assert_eq!(
+            tab_shortcut(true, false, "f", false),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(
+            tab_shortcut(true, true, "f", false),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(
+            tab_shortcut(true, false, "F", true),
+            Some(TabShortcut::OpenFind)
+        );
+        assert_eq!(tab_shortcut(false, false, "f", false), None);
+    }
+
+    #[test]
+    fn select_all_needs_ctrl_shift_and_escape_needs_an_open_bar() {
+        assert_eq!(
+            tab_shortcut(true, true, "a", false),
+            Some(TabShortcut::SelectAll)
+        );
+        assert_eq!(tab_shortcut(true, false, "a", false), None);
+        assert_eq!(
+            tab_shortcut(false, false, "escape", true),
+            Some(TabShortcut::CloseFind)
+        );
+        assert_eq!(
+            tab_shortcut(false, true, "escape", true),
+            Some(TabShortcut::CloseFind)
+        );
+        assert_eq!(tab_shortcut(false, false, "escape", false), None);
     }
 }

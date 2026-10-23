@@ -20,6 +20,7 @@ use crate::keys::{self, KeyModes};
 use crate::mouse::{mouse_report, ReportButton, ReportEncoding, ReportKind, ReportModifiers};
 use crate::palette::Palette;
 use crate::paste::{paste_chunks, paste_payload};
+use crate::search::{self, ActiveSearch, SearchDirection};
 use crate::url::{is_openable, url_at};
 
 /// The terminal font: JetBrains Mono, as in the Tauri app.
@@ -146,6 +147,9 @@ pub struct TerminalView {
     /// IME composition in progress, shown at the cursor until committed.
     pub(crate) marked_text: Option<String>,
     pub(crate) hovered_url: Option<HoveredUrl>,
+    /// The find bar's query, while it has one: its on-screen matches are
+    /// highlighted.
+    pub(crate) search: Option<ActiveSearch>,
     selecting: bool,
     /// Fractional wheel lines carried to the next event.
     scroll_lines: f32,
@@ -261,6 +265,7 @@ impl TerminalView {
                 cursor_cell: None,
                 marked_text: None,
                 hovered_url: None,
+                search: None,
                 selecting: false,
                 scroll_lines: 0.0,
                 last_report_cell: None,
@@ -281,13 +286,22 @@ impl TerminalView {
 
     /// Readies the view for a new session in place of one that ended
     /// (reconnect): modes the old program left on are cleared and the parser
-    /// starts clean, while the screen and scrollback stay.
+    /// starts clean. The screen and scrollback stay until the new session is
+    /// up, when the tab calls `clear`.
     pub fn reset_for_new_session(&mut self, cx: &mut Context<Self>) {
         self.shared.reset_for_new_session();
         self.paste_task = None;
         self.selecting = false;
         self.last_report_cell = None;
         self.exited = false;
+        cx.notify();
+    }
+
+    /// Drops everything but the cursor's line, as xterm.js's `clear()`
+    /// (see `Shared::clear_keeping_cursor_line`).
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.shared.clear_keeping_cursor_line();
+        self.selecting = false;
         cx.notify();
     }
 
@@ -328,6 +342,61 @@ impl TerminalView {
             .term
             .selection_to_string()
             .filter(|s| !s.is_empty())
+    }
+
+    /// Finds `query` (a literal, not a pattern) from the selection onwards,
+    /// selects the match and scrolls to it, wrapping at either end: xterm.js's
+    /// `findNext` / `findPrevious`. Until [`Self::clear_search`] every match
+    /// on screen is highlighted. Returns whether anything matched; an empty
+    /// query does nothing.
+    pub fn find(
+        &mut self,
+        query: &str,
+        case_sensitive: bool,
+        direction: SearchDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let wanted = search::pattern(query, case_sensitive);
+        if wanted.is_none() {
+            return false;
+        }
+        if self.search.as_ref().map(|s| &s.pattern) != wanted.as_ref() {
+            self.search = ActiveSearch::new(query, case_sensitive);
+        }
+        let Some(active) = self.search.as_mut() else {
+            return false;
+        };
+        let found = search::find(
+            &mut self.shared.state.lock().term,
+            &mut active.regex,
+            direction,
+        );
+        cx.notify();
+        found.is_some()
+    }
+
+    /// Drops the find bar's highlights (`clearDecorations`). The selection a
+    /// search made stays, as it does in xterm.js.
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        if self.search.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Selects the whole buffer, scrollback included (`term.selectAll()`).
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        search::select_all(&mut self.shared.state.lock().term);
+        cx.notify();
+    }
+
+    /// Copies the selection to the clipboard, if there is one.
+    pub fn copy(&mut self, cx: &mut Context<Self>) {
+        self.copy_selection(cx);
+    }
+
+    /// Pastes the clipboard's text, as Ctrl+Shift+V does.
+    pub fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        self.paste_clipboard(cx);
     }
 
     /// Sends the user's input to the program, the way typing does: the view
