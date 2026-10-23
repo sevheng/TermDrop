@@ -6,8 +6,6 @@
 //! every 5 s only while the panel is on screen: a hidden poll would hold the
 //! exec session for nothing, which is why the Vue panel stopped on
 //! deactivation.
-//!
-//! Only this folder is the Docker agent's to edit.
 
 mod logic;
 mod pane;
@@ -16,7 +14,7 @@ use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext as _, Context, Entity, InteractiveElement as _,
@@ -38,7 +36,7 @@ use crate::ui::dialogs::{ConfirmOptions, confirm};
 use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
-use crate::ui::theme::{Palette, palette};
+use crate::ui::theme::{Palette, mono_font, palette};
 use crate::ui::toast::{ToastKind, toast};
 
 /// The panel's view, built the first time the Docker tab is shown for a host.
@@ -360,13 +358,8 @@ impl DockerPanel {
         let pane = DockerPane::new(self.ctx.clone(), kind, name, shell, cx);
         // The tab owns the pane from here; the panel keeps nothing.
         match self.ctx.show_terminal_pane(pane.clone().into(), cx) {
-            Some(tab_id) => pane.update(cx, |p, cx| p.shown_in(tab_id, follow, window, cx)),
-            None => toast(
-                window,
-                cx,
-                "Open a terminal on this host to show the pane",
-                ToastKind::Warning,
-            ),
+            Ok(tab_id) => pane.update(cx, |p, cx| p.shown_in(tab_id, follow, window, cx)),
+            Err(why) => toast(window, cx, why.message(), ToastKind::Warning),
         }
     }
 
@@ -383,36 +376,23 @@ impl DockerPanel {
                 EmptyState::loading("docker-loading", "Loading containers\u{2026}")
                     .into_any_element()
             }
-            ListView::Problem(Problem::NotInstalled) => {
-                let state = if self.installing {
-                    EmptyState::loading(
-                        "docker-installing",
-                        "Installing\u{2026} this may take a minute",
-                    )
-                } else {
-                    EmptyState::empty(
-                        "docker-install",
-                        "Docker is not installed",
-                        "Install Docker",
-                        cx.listener(|this, _, window, cx| this.ask_install(window, cx)),
-                    )
-                    .icon(Icon::new(IconName::Container))
-                    .hint("This host does not have Docker available")
-                };
-                v_flex()
-                    .items_center()
-                    .child(state)
-                    .child(
-                        text_2xs(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_color(p.ink_3)
-                                .mt_2(),
-                        )
-                        .child(INSTALL_COMMAND),
-                    )
-                    .into_any_element()
-            }
+            ListView::Problem(Problem::NotInstalled) => EmptyState::empty(
+                "docker-install",
+                "Docker is not installed",
+                "Install Docker",
+                cx.listener(|this, _, window, cx| this.ask_install(window, cx)),
+            )
+            .icon(Icon::new(IconName::Container))
+            .hint("This host does not have Docker available")
+            .child(
+                text_2xs(div().font_family(mono_font(cx)).text_color(p.ink_3))
+                    .child(INSTALL_COMMAND),
+            )
+            .pending(
+                self.installing
+                    .then_some("Installing\u{2026} this may take a minute"),
+            )
+            .into_any_element(),
             ListView::Problem(Problem::DaemonNotRunning) => self.problem_state(
                 "docker-daemon",
                 "Docker daemon is not running",
@@ -467,7 +447,8 @@ impl DockerPanel {
     }
 
     /// A problem the user fixes in a terminal: the command stays copyable
-    /// text rather than being flattened into prose. Refresh re-checks.
+    /// text rather than being flattened into prose, and is the state's
+    /// whole answer (Vue offers no button here either).
     #[allow(clippy::too_many_arguments)]
     fn problem_state(
         &self,
@@ -480,42 +461,23 @@ impl DockerPanel {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        v_flex()
-            .items_center()
-            .child(
-                EmptyState::empty(
-                    id,
-                    title,
-                    "Refresh",
-                    cx.listener(|this, _, _, cx| this.load(false, cx)),
-                )
-                .icon(Icon::new(IconName::Container))
-                .hint(hint),
-            )
-            .child(
-                v_flex()
-                    .max_w(px(320.))
-                    .mt_3()
-                    .px_3()
-                    .py_2()
-                    .gap_1()
-                    .bg(p.surface)
-                    .border_1()
-                    .border_color(p.line)
-                    .rounded_sm()
-                    .child(text_2xs(div().text_color(p.ink_3)).child(lead))
-                    .child(
-                        text_2xs(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_color(p.good),
-                        )
-                        .child(command),
-                    )
-                    .when_some(after, |col, after| {
-                        col.child(text_2xs(div().text_color(p.ink_3)).child(after))
-                    }),
-            )
+        let how = v_flex()
+            .max_w(px(320.))
+            .px_3()
+            .py_2()
+            .gap_1()
+            .bg(p.surface)
+            .border_1()
+            .border_color(p.line)
+            .rounded_sm()
+            .child(text_2xs(div().text_color(p.ink_3)).child(lead))
+            .child(text_2xs(div().font_family(mono_font(cx)).text_color(p.good)).child(command))
+            .when_some(after, |col, after| {
+                col.child(text_2xs(div().text_color(p.ink_3)).child(after))
+            });
+        EmptyState::steps(id, title, how)
+            .icon(Icon::new(IconName::Container))
+            .hint(hint)
             .into_any_element()
     }
 
@@ -602,11 +564,10 @@ impl Render for DockerPanel {
         let p = *palette(cx);
         let meta = count_label(self.containers.len());
         let header = PanelHeader::new("Docker")
-            .when(!meta.is_empty(), |h| {
-                h.action(text_2xs(div().text_color(p.ink_3).mr_1()).child(meta))
-            })
-            .action(
+            .meta(meta)
+            .badge(
                 Checkbox::new("docker-show-all")
+                    .xsmall()
                     .label("Show all")
                     .checked(self.show_all)
                     .on_click(
@@ -615,7 +576,7 @@ impl Render for DockerPanel {
             )
             .action(
                 IconButton::new("docker-refresh", IconName::RefreshCw, "Refresh containers")
-                    .disabled(self.loading)
+                    .pending(self.loading)
                     .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
             );
         v_flex().size_full().bg(p.canvas).child(header).child(

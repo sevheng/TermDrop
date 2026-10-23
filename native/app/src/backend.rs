@@ -278,6 +278,13 @@ pub trait TabContentFactory: 'static {
 
     /// Try the tab's SFTP connection again after it failed.
     fn retry_sftp(&self, _tab: &Tab, _window: &mut Window, _cx: &mut App) {}
+
+    /// Views the panels float over the window (the SFTP editor), drawn above
+    /// the content and below dialogs and notifications. Each decides for
+    /// itself whether it is visible.
+    fn floating(&self) -> Vec<AnyView> {
+        Vec::new()
+    }
 }
 
 /// The default factory: a labelled placeholder per tab kind.

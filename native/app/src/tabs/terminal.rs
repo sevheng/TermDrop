@@ -272,8 +272,17 @@ impl TerminalTab {
                 }
                 self.set_status(Status::Connected, cx);
             }
-            CoreEvent::PtyDisconnected { .. } => self.set_status(Status::Ended(None), cx),
-            CoreEvent::PtyError { error, .. } => self.set_status(Status::Ended(Some(error)), cx),
+            // A pane under the terminal (docker logs/exec) goes with the
+            // shell, as Vue's `onDisconnected` closed it; dropping it ends
+            // its PTY.
+            CoreEvent::PtyDisconnected { .. } => {
+                self.bottom_pane = None;
+                self.set_status(Status::Ended(None), cx);
+            }
+            CoreEvent::PtyError { error, .. } => {
+                self.bottom_pane = None;
+                self.set_status(Status::Ended(Some(error)), cx);
+            }
             // The reconnect call's own result re-attaches output; the
             // connected event that follows flips the status.
             _ => {}

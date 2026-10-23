@@ -38,6 +38,10 @@ pub enum AppEvent {
     HostsChanged,
     ThemeChanged(ThemeChoice),
     FontSizeChanged(u16),
+    /// A setting written through [`AppModel::set_setting`] changed, by key.
+    /// Panels that share a setting (every SFTP panel's `sftp-columns`)
+    /// follow each other through this.
+    SettingChanged(String),
     /// Something the user should hear about; the window shows it as a toast.
     Error(String),
 }
@@ -628,6 +632,32 @@ impl AppModel {
     }
 
     // ---- settings ------------------------------------------------------
+
+    /// A raw setting from the store (the `settings` table), for a panel's
+    /// own preference. `None` when unset or unreadable.
+    pub fn setting(&self, key: &str) -> Option<String> {
+        match self.store.get_setting(key) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("Could not read {key}: {e}");
+                None
+            }
+        }
+    }
+
+    /// Save a raw setting and tell every subscriber
+    /// ([`AppEvent::SettingChanged`]), so other views showing it follow.
+    /// Nothing is sent when the value is unchanged.
+    pub fn set_setting(&mut self, key: &str, value: &str, cx: &mut Context<Self>) {
+        if self.setting(key).as_deref() == Some(value) {
+            return;
+        }
+        if let Err(e) = self.store.set_setting(key, value) {
+            cx.emit(AppEvent::Error(format!("Could not save {key}: {e}")));
+            return;
+        }
+        cx.emit(AppEvent::SettingChanged(key.to_string()));
+    }
 
     pub fn theme(&self) -> ThemeChoice {
         self.prefs.theme

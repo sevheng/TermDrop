@@ -24,6 +24,7 @@ pub struct IconButton {
     tone: Option<Hsla>,
     active: bool,
     disabled: bool,
+    pending: bool,
 }
 
 impl IconButton {
@@ -44,6 +45,7 @@ impl IconButton {
             tone: None,
             active: false,
             disabled: false,
+            pending: false,
         }
     }
 
@@ -70,6 +72,13 @@ impl IconButton {
         self
     }
 
+    /// Busy: a spinner in place of the icon, and not clickable, while what
+    /// it started runs (a refresh). Vue's `pending`.
+    pub fn pending(mut self, pending: bool) -> Self {
+        self.pending = pending;
+        self
+    }
+
     pub fn label(&self) -> &SharedString {
         &self.label
     }
@@ -88,7 +97,8 @@ impl RenderOnce for IconButton {
             .tooltip(self.label.clone())
             .accessibility_label(self.label)
             .selected(self.active)
-            .disabled(self.disabled);
+            .loading(self.pending)
+            .disabled(self.disabled || self.pending);
         if let Some(on_click) = self.on_click {
             button = button.on_click(move |e, w, cx| on_click(e, w, cx));
         }

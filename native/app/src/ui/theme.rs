@@ -447,6 +447,13 @@ pub fn ui_font(cx: &App) -> SharedString {
     Theme::global(cx).font_family.clone()
 }
 
+/// The monospace family for code in the UI: a command, a path, a key
+/// fingerprint, file contents. Vue's `font-mono`. Pair it with a text tier
+/// (`text_xs`, `common::text_2xs`); it sets only the family.
+pub fn mono_font(cx: &App) -> SharedString {
+    Theme::global(cx).mono_font_family.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

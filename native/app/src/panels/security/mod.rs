@@ -14,8 +14,6 @@
 //!   else**, which types it with no newline after a one-time confirm. The
 //!   command shown and sent is `check.remediation.command` exactly as the
 //!   core built it from its own literals; nothing here builds one.
-//!
-//! Only this folder is the Security agent's to edit.
 
 mod report;
 
@@ -24,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext as _, ClipboardItem, Context, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement, Render, SharedString,
@@ -35,7 +33,6 @@ use termdrop_core::security::{SecurityCheck, SecurityReport};
 use self::report::{Audit, AuditState, Grade, Status, Tone};
 use super::PanelContext;
 use super::common::{row_separator, text_2xs};
-use super::terminal_insert::can_receive_command;
 use crate::ui::empty_state::EmptyState;
 use crate::ui::icon_button::IconButton;
 use crate::ui::panel_header::PanelHeader;
@@ -132,39 +129,16 @@ impl SecurityPanel {
         cx.notify();
     }
 
-    /// Whether the active tab can take a typed command: a connected shell
-    /// on this host (`canReceiveCommand`). `insert_command` checks again.
-    fn can_send(&self, cx: &App) -> bool {
-        self.ctx
-            .model
-            .read(cx)
-            .active_tab()
-            .is_some_and(|t| t.host_id == Some(self.ctx.host_id) && can_receive_command(Some(t)))
-    }
-
     fn header(&self, cx: &mut Context<Self>) -> PanelHeader {
-        let p = *palette(cx);
         let mut header = PanelHeader::new("Security");
         if let Some(r) = self.audit.report() {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let meta: Vec<String> = [
-                report::updated_label(r.generated_at, now),
-                report::checks_label(r),
-            ]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
-            if !meta.is_empty() {
-                header = header.action(
-                    text_2xs(div())
-                        .mr_1()
-                        .text_color(p.ink_3)
-                        .child(meta.join(" \u{b7} ")),
-                );
-            }
+            header = header
+                .subtitle(report::updated_label(r.generated_at, now))
+                .meta(report::checks_label(r));
         }
         header.action(
             IconButton::new(
@@ -172,7 +146,7 @@ impl SecurityPanel {
                 Icon::new(IconName::RefreshCw),
                 "Re-run the audit",
             )
-            .disabled(self.audit.is_loading())
+            .pending(self.audit.is_loading())
             .on_click(cx.listener(|this, _, _, cx| this.run(true, cx))),
         )
     }
@@ -186,12 +160,10 @@ impl SecurityPanel {
                         .hint("Switch tabs freely \u{2014} results will appear here"),
                 )
                 .into_any_element(),
-            // EmptyState has no error kind (Vue's `state="error"`); an empty
-            // state with the alert icon and Retry is how it reads there.
             AuditState::Failed(error) => div()
                 .p_2()
                 .child(
-                    EmptyState::empty(
+                    EmptyState::error(
                         "security-error",
                         "Audit failed",
                         "Retry",
@@ -220,7 +192,7 @@ impl SecurityPanel {
 
     fn report_view(&self, r: &SecurityReport, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *palette(cx);
-        let can_send = self.can_send(cx);
+        let can_send = self.ctx.can_insert(cx);
         let rows: Vec<AnyElement> = r
             .checks
             .iter()
@@ -242,7 +214,7 @@ impl SecurityPanel {
     ) -> AnyElement {
         let status = Status::parse(&check.status);
         let (badge_bg, tone) = tone_colors(status.tone(), p);
-        let mono = cx.theme().mono_font_family.clone();
+        let mono = crate::ui::theme::mono_font(cx);
 
         let mut col = v_flex()
             .flex_1()

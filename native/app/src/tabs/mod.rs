@@ -299,4 +299,8 @@ impl TabContentFactory for CoreContent {
             view.update(cx, |view, cx| view.retry_sftp(window, cx));
         }
     }
+
+    fn floating(&self) -> Vec<AnyView> {
+        self.links.floating()
+    }
 }

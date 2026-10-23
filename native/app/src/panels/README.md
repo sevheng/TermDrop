@@ -7,19 +7,18 @@ selected tab (in memory, SFTP at launch, one choice for all SSH tabs, as
 Vue's `rightPanelTab`), when each panel is built and when it is dropped.
 Tunnels shows a "not in the native app yet" state.
 
-Each of the other three is one folder here with one entry point, already
-registered in `DefaultPanels`:
+SFTP, Docker and Security are built. Each is one folder here with one entry
+point, registered in `DefaultPanels`:
 
 ```rust
 // panels/sftp/mod.rs, panels/docker/mod.rs, panels/security/mod.rs
 pub fn build(ctx: PanelContext, window: &mut Window, cx: &mut App) -> AnyView
 ```
 
-**Edit only inside your own folder** (add files under it freely), plus at
-most one dependency line in `native/app/Cargo.toml`. Everything shared is
-listed below. If something you need is missing from it, say so rather than
-editing `mod.rs`, `common.rs`, `tabs/` or `shell/`: the other two panel
-agents are working at the same time.
+A panel keeps to its own folder and reaches the rest of the app only
+through what is listed below. When something shared is missing, add it here
+(`mod.rs`, `common.rs`, `ui/`) for every panel rather than working around it
+inside one.
 
 ## `PanelContext`
 
@@ -49,10 +48,13 @@ impl PanelContext {
     pub fn is_shown(&self, cx: &App) -> bool;               // this panel is on screen now
     pub fn host_name(&self, cx: &App) -> Option<String>;
     pub fn active_session_id(&self, cx: &App) -> Option<String>;
+    pub fn can_insert(&self, cx: &App) -> bool;             // insert_command would type now
     pub fn insert_command(&self, command: &str, window: &mut Window, cx: &mut App)
         -> Result<(), InsertRefused>;                      // NoShell | NotInsertable
-    pub fn show_terminal_pane(&self, pane: AnyView, cx: &mut App) -> Option<String>; // tab id
+    pub fn show_terminal_pane(&self, pane: AnyView, cx: &mut App)
+        -> Result<String, PaneRefused>;                    // tab id | NoTerminal (.message())
     pub fn close_terminal_pane(&self, tab_id: &str, cx: &mut App);
+    pub fn float(&self, view: AnyView) -> FloatingHandle;   // non-modal window over the app
 }
 
 pub enum EventKey {
@@ -101,6 +103,26 @@ cx.observe(&ctx.model, |this: &mut MyPanel, _, cx| {
 })
 ```
 
+### Hearing about changes
+
+`ctx.model` emits `AppEvent`s (`cx.subscribe(&ctx.model, ...)`):
+`ThemeChanged`, `FontSizeChanged`, `TabClosed`, `ActiveTabChanged`, and
+`SettingChanged(key)` for anything written with `AppModel::set_setting`.
+Read and write a panel's own preference with `model.setting(key)` /
+`model.update(cx, |m, cx| m.set_setting(key, value, cx))`, never through
+`store()` directly, so other views showing the same setting follow (two SFTP
+panels share `sftp-columns`).
+
+### Floating windows
+
+`ctx.float(view)` draws `view` over the whole window, above panels and
+terminals and below dialogs, notifications, menus and tooltips, so a dialog
+the view opens appears over it. It is drawn every frame whatever is on
+screen: render nothing while `!ctx.is_shown(cx)` to hide with the panel.
+Position it with `anchored().position(..)` in window coordinates and
+`occlude()` it. Keep the `FloatingHandle` in the panel; dropping it removes
+the view. The SFTP editor is the one user.
+
 ### Shared helpers
 
 - `panels::common`: `format_bytes`, `format_rate`, `format_speed`,
@@ -113,10 +135,19 @@ cx.observe(&ctx.model, |this: &mut MyPanel, _, cx| {
 - `termdrop_core::sftp_ops::shell_escape` for any path or name put in a
   remote command (Vue's `utils/shell.js`; the same quoting, except that
   the core also quotes `~` and leaves non-ASCII letters bare).
-- `crate::ui`: `EmptyState` (`empty` / `filtered` / `loading`: keep the three
-  distinct, and an empty state offers its fix), `PanelHeader`, `IconButton`
-  (requires a label), `dialogs::{confirm, prompt}`, `toast`, `file_dialog`
-  (native open/save dialogs), `theme::palette(cx)`.
+- `crate::ui`:
+  - `EmptyState`: `empty` / `filtered` / `loading` / `error`, kept
+    distinct. Every one but loading carries its fix: an action (add, clear
+    the filter, retry), or `steps(id, title, how)` when the fix is done
+    outside the app (start a daemon). `.child(..)` adds content under the
+    hint, `.pending(Some(label))` disables the action with a spinner.
+  - `PanelHeader`: title, `.subtitle(..)` (`.subtitle_mono()`), `.badge(..)`
+    on the left, `.meta(..)` (tabular figures) and `.action(..)` on the
+    right. Empty strings show nothing.
+  - `IconButton` (requires a label; `.pending(bool)` for a spinner),
+    `dialogs::{confirm, prompt}`, `toast`, `file_dialog` (native open/save
+    dialogs), `theme::palette(cx)`, `theme::mono_font(cx)` for code, paths
+    and commands.
 - Colours are tokens only (`palette(cx).ink_2`, `.line`, `.accent`...),
   never literals. A filled control takes `accent_solid` / `bad_solid`, never
   the bright tone under a white label. Text sizes are the named tiers
@@ -169,8 +200,9 @@ Port of `SftpPanel.vue`, `FloatingEditor.vue`, `FilePreviewDialog.vue`,
 
 Calls on one SFTP session are serialised by the core (one mutex per session),
 so a large transfer delays a listing, as in the Tauri app.
-The column choice is the `sftp-columns` setting (`model.read(cx).store()`'s
-`get_setting` / `set_setting`, JSON as `usePrefs.js` writes it).
+The column choice is the `sftp-columns` setting (`model.setting` /
+`set_setting`, JSON as `usePrefs.js` writes it), followed through
+`AppEvent::SettingChanged`.
 
 ## Docker (`docker/`)
 
@@ -207,11 +239,13 @@ Logs / exec pane (the Vue `docker-pane-open` flow):
 4. Then `ctx.services.bridge.attach_exec_pty(&core, &pty, view.read(cx).feed())`:
    it replays output that arrived before the attach, so nothing is lost.
 5. `ctx.show_terminal_pane(pane_view.into(), cx)` puts the pane under the
-   active terminal and returns its tab id for `close_terminal_pane`. The tab
-   owns the pane from then on; hold only a `WeakEntity`. End the PTY in the
-   pane's own release hook (`cx.on_release`): `core.exec_pty_disconnect(&pty)`
-   (via `spawn_blocking`) and `bridge.detach_exec_pty(&pty)`. That runs when
-   the pane is replaced, closed or its tab closes.
+   active terminal and returns its tab id for `close_terminal_pane` (or why
+   it could not: `PaneRefused::message()` is the toast). The tab owns the
+   pane from then on; hold only a `WeakEntity`. End the PTY in the pane's
+   own release hook (`cx.on_release`): `core.exec_pty_disconnect(&pty)` (via
+   `spawn_blocking`) and `bridge.detach_exec_pty(&pty)`. That runs when the
+   pane is replaced, closed, its tab closes, or its shell disconnects or
+   fails (the tab drops the pane then, as Vue's `onDisconnected` did).
 
 ## Security (`security/`)
 

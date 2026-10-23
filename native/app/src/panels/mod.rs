@@ -21,7 +21,7 @@ use std::future::Future;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use gpui_kit::{AnyView, App, AppContext as _, Context, Entity, WeakEntity, Window};
+use gpui_kit::{AnyView, App, Context, Entity, WeakEntity, Window};
 use termdrop_core::{Core, CoreEvent, Events, PtyKind};
 
 use crate::app::AppModel;
@@ -246,6 +246,10 @@ pub(crate) struct PanelLinks {
     /// The "typed, not run" explanation is shown before the first insert of
     /// the run only, as `MainWindow.vue`'s `terminalInsertConfirmed`.
     insert_confirmed: Cell<bool>,
+    /// Views floating over the window ([`PanelContext::float`]), in the order
+    /// they were added, each under its handle's token.
+    floating: RefCell<Vec<(u64, AnyView)>>,
+    next_float: Cell<u64>,
 }
 
 impl PanelLinks {
@@ -254,7 +258,53 @@ impl PanelLinks {
             hub,
             terminals,
             insert_confirmed: Cell::new(false),
+            floating: RefCell::default(),
+            next_float: Cell::new(0),
         })
+    }
+
+    /// The floating views, for the window to draw over its content.
+    pub(crate) fn floating(&self) -> Vec<AnyView> {
+        self.floating
+            .borrow()
+            .iter()
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+}
+
+/// Keeps a view floating over the window; dropping it takes the view down.
+/// Store it in the panel that floated the view.
+#[must_use = "dropping the handle removes the floating view at once"]
+pub struct FloatingHandle {
+    links: Weak<PanelLinks>,
+    token: u64,
+}
+
+impl Drop for FloatingHandle {
+    fn drop(&mut self) {
+        if let Some(links) = self.links.upgrade()
+            && let Ok(mut floating) = links.floating.try_borrow_mut()
+        {
+            floating.retain(|(t, _)| *t != self.token);
+        }
+    }
+}
+
+/// Why [`PanelContext::show_terminal_pane`] showed nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaneRefused {
+    /// The active tab is not an SSH tab on this panel's host, or its
+    /// terminal has gone.
+    NoTerminal,
+}
+
+impl PaneRefused {
+    /// What to tell the user, as a warning toast.
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::NoTerminal => "Open a terminal on this host to show the pane",
+        }
     }
 }
 
@@ -432,6 +482,34 @@ impl PanelContext {
         view.read(cx).session_id()
     }
 
+    /// Whether [`Self::insert_command`] would type into the active tab right
+    /// now: it is a connected shell on this host. For deciding whether to
+    /// offer "Send to terminal" at all; the insert checks again when called.
+    pub fn can_insert(&self, cx: &App) -> bool {
+        self.active_terminal(cx)
+            .is_some_and(|(tab, _)| terminal_insert::can_receive_command(Some(&tab)))
+    }
+
+    /// Float `view` over the window: above every panel and terminal, below
+    /// dialogs, notifications, menus and tooltips. Non-modal, for a tool
+    /// window such as the SFTP editor; it positions itself (normally with
+    /// `anchored()` in window coordinates) and should `occlude()` so clicks
+    /// do not reach what is under it.
+    ///
+    /// The window draws it every frame whether or not this panel is shown,
+    /// so the view decides: render nothing while [`Self::is_shown`] is false
+    /// to hide with the panel. Keep the handle in the panel; dropping it (the
+    /// panel going with its tab or host) removes the view.
+    pub fn float(&self, view: AnyView) -> FloatingHandle {
+        let token = self.links.next_float.get() + 1;
+        self.links.next_float.set(token);
+        self.links.floating.borrow_mut().push((token, view));
+        FloatingHandle {
+            links: Rc::downgrade(&self.links),
+            token,
+        }
+    }
+
     /// Type `command` at the active terminal's prompt, for the user to
     /// review and submit: the port of `onSendToTerminal` plus the
     /// terminal's `onInsertCommand`.
@@ -497,10 +575,13 @@ impl PanelContext {
     /// replaced, closed or the tab closes. Keep only a `WeakEntity` to it,
     /// and end whatever it runs (an exec PTY) in its own release hook
     /// (`cx.on_release`), not in the Docker panel.
-    pub fn show_terminal_pane(&self, pane: AnyView, cx: &mut App) -> Option<String> {
-        let (tab, view) = self.active_terminal(cx)?;
+    ///
+    /// The tab also closes the pane itself when its shell disconnects or
+    /// fails, as Vue's `onDisconnected` closed the docker pane.
+    pub fn show_terminal_pane(&self, pane: AnyView, cx: &mut App) -> Result<String, PaneRefused> {
+        let (tab, view) = self.active_terminal(cx).ok_or(PaneRefused::NoTerminal)?;
         view.update(cx, |t, cx| t.set_bottom_pane(Some(pane), cx));
-        Some(tab.id)
+        Ok(tab.id)
     }
 
     /// Remove the pane from the tab [`Self::show_terminal_pane`] put it in.
@@ -605,41 +686,6 @@ impl PanelKey {
     }
 }
 
-/// A placeholder body for a panel not built yet, shared by the stubs.
-pub(crate) fn placeholder(title: &'static str, hint: String, cx: &mut App) -> AnyView {
-    cx.new(|_| Placeholder { title, hint }).into()
-}
-
-struct Placeholder {
-    title: &'static str,
-    hint: String,
-}
-
-impl gpui_kit::Render for Placeholder {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui_kit::IntoElement {
-        use gpui_kit::{ParentElement as _, Styled as _};
-        let p = *crate::ui::theme::palette(cx);
-        gpui_kit::div()
-            .size_full()
-            .p_3()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                gpui_kit::div()
-                    .text_sm()
-                    .text_color(p.ink)
-                    .child(self.title),
-            )
-            .child(
-                gpui_kit::div()
-                    .text_xs()
-                    .text_color(p.ink_2)
-                    .child(self.hint.clone()),
-            )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +766,14 @@ mod tests {
             id: "s".into(),
         };
         assert_eq!(EventKey::of(&shell), None);
+    }
+
+    #[test]
+    fn a_refused_pane_says_what_to_do() {
+        assert_eq!(
+            PaneRefused::NoTerminal.message(),
+            "Open a terminal on this host to show the pane"
+        );
     }
 
     #[test]

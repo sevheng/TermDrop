@@ -24,7 +24,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Anchor, AnyElement, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity,
@@ -45,7 +45,8 @@ use self::transfers::{Finished, LINGER, Transfers};
 use super::common::{
     format_bytes, format_file_date, format_permissions, format_speed, list_head, list_row, text_2xs,
 };
-use super::{EventKey, PanelContext, PanelSubscription};
+use super::{EventKey, FloatingHandle, PanelContext, PanelSubscription};
+use crate::app::AppEvent;
 use crate::ui::dialogs::{ConfirmOptions, PromptOptions, confirm, prompt};
 use crate::ui::empty_state::EmptyState;
 use crate::ui::file_dialog::pick_file;
@@ -99,7 +100,7 @@ pub struct SftpPanel {
     /// Uploads run one at a time, as the Vue loop awaited each.
     upload_queue: VecDeque<Upload>,
     uploading: bool,
-    was_shown: bool,
+    _floating: FloatingHandle,
     _progress: PanelSubscription,
     _subscriptions: Vec<Subscription>,
 }
@@ -138,18 +139,16 @@ impl SftpPanel {
                     cx.notify();
                 }
             }),
-            // The column choice is one setting for every SFTP panel; another
-            // panel may have changed it while this one was hidden.
-            cx.observe(&ctx.model, |this, _, cx| {
-                let shown = this.ctx.is_shown(cx);
-                if shown && !this.was_shown {
+            // The column choice is one setting for every SFTP panel: follow
+            // the others.
+            cx.subscribe(&ctx.model, |this, _, event: &AppEvent, cx| {
+                if matches!(event, AppEvent::SettingChanged(key) if key == model::COLUMNS_KEY) {
                     this.columns = read_columns(&this.ctx, cx);
                     cx.notify();
                 }
-                this.was_shown = shown;
             }),
-            cx.observe(&editor, |_, _, cx| cx.notify()),
         ];
+        let floating = ctx.float(editor.clone().into());
         let columns = read_columns(&ctx, cx);
         let mut this = Self {
             ctx,
@@ -168,7 +167,7 @@ impl SftpPanel {
             list_task: None,
             upload_queue: VecDeque::new(),
             uploading: false,
-            was_shown: true,
+            _floating: floating,
             _progress: progress,
             _subscriptions: subscriptions,
         };
@@ -274,15 +273,9 @@ impl SftpPanel {
         let on = !self.columns.columns.get(column);
         self.columns.columns.set(column, on);
         let json = self.columns.to_json();
-        if let Err(e) = self
-            .ctx
+        self.ctx
             .model
-            .read(cx)
-            .store()
-            .set_setting(model::COLUMNS_KEY, &json)
-        {
-            tracing::warn!("saving sftp-columns failed: {e}");
-        }
+            .update(cx, |m, cx| m.set_setting(model::COLUMNS_KEY, &json, cx));
         cx.notify();
     }
 
@@ -1113,7 +1106,7 @@ impl SftpPanel {
         let cols = self.columns.columns;
         let visible = self.visible();
         let panel = cx.entity().downgrade();
-        let mono = cx.theme().mono_font_family.clone();
+        let mono = crate::ui::theme::mono_font(cx);
         range
             .filter_map(|index| {
                 let file = self.files.get(*visible.get(index)?)?.clone();
@@ -1124,6 +1117,7 @@ impl SftpPanel {
                 let menu_file = file.clone();
                 let row = h_flex()
                     .id(SharedString::from(format!("sftp-row-{}", file.path)))
+                    .w_full()
                     .h(px(ROW_H))
                     .px_2()
                     .text_xs()
@@ -1214,7 +1208,7 @@ impl SftpPanel {
             .collect()
     }
 
-    fn render_list(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn render_list(&self, cx: &mut Context<Self>) -> AnyElement {
         if self.loading {
             return EmptyState::loading("sftp-loading", "Reading directory\u{2026}")
                 .compact()
@@ -1222,7 +1216,7 @@ impl SftpPanel {
         }
         if let Some(error) = &self.list_error {
             let panel = cx.entity().downgrade();
-            return EmptyState::empty(
+            return EmptyState::error(
                 "sftp-error",
                 "Could not list this directory",
                 "Retry",
@@ -1230,7 +1224,6 @@ impl SftpPanel {
                     let _ = panel.update(cx, |this, cx| this.reload(window, cx));
                 },
             )
-            .icon(Icon::new(IconName::TriangleAlert).text_color(p.bad))
             .hint(error.clone())
             .compact()
             .into_any_element();
@@ -1393,14 +1386,7 @@ impl SftpPanel {
 }
 
 fn read_columns(ctx: &PanelContext, cx: &App) -> ColumnsPref {
-    let raw = ctx
-        .model
-        .read(cx)
-        .store()
-        .get_setting(model::COLUMNS_KEY)
-        .ok()
-        .flatten();
-    ColumnsPref::parse(raw.as_deref())
+    ColumnsPref::parse(ctx.model.read(cx).setting(model::COLUMNS_KEY).as_deref())
 }
 
 impl Render for SftpPanel {
@@ -1431,10 +1417,9 @@ impl Render for SftpPanel {
                     .border_color(p.line)
                     .child(Input::new(&self.filter).xsmall()),
             )
-            .child(div().flex_1().min_h_0().child(self.render_list(&p, cx)))
+            .child(div().flex_1().min_h_0().child(self.render_list(cx)))
             .when(!self.transfers.is_empty(), |d| {
                 d.child(self.render_transfers(&p))
             })
-            .child(self.editor.clone())
     }
 }

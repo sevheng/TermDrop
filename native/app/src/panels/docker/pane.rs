@@ -1,7 +1,8 @@
 //! The logs / exec pane under the terminal: the Docker pane of
 //! `TerminalTab.vue`. The Docker panel builds it and hands it to the active
 //! terminal tab (`PanelContext::show_terminal_pane`), which owns it from then
-//! on; the pane ends its own PTY when it is released.
+//! on, and drops it when it is closed, replaced, its tab closes or its shell
+//! disconnects; the pane ends its own PTY when it is released.
 //!
 //! Each run (opening, or toggling Follow on a logs pane, which Vue did by
 //! reopening the pane) is one exec PTY with a fresh terminal view.
@@ -81,10 +82,9 @@ impl DockerPane {
         let model = ctx.model.clone();
         cx.new(|cx| {
             cx.on_release(|this: &mut Self, _| this.end_run()).detach();
-            let subscriptions = vec![
-                cx.subscribe(&model, Self::on_app_event),
-                cx.observe(&model, Self::on_model_changed),
-            ];
+            // The tab under the pane drops it when its shell disconnects
+            // (`TerminalTab::on_core_event`), which ends the PTY on release.
+            let subscriptions = vec![cx.subscribe(&model, Self::on_app_event)];
             Self {
                 ctx,
                 kind,
@@ -323,24 +323,6 @@ impl DockerPane {
                 terminal.update(cx, |t, cx| t.set_palette(palette, cx));
             }
             _ => {}
-        }
-    }
-
-    /// The shell under the pane disconnected: close it, as Vue's
-    /// `onDisconnected` did.
-    fn on_model_changed(&mut self, model: Entity<AppModel>, cx: &mut Context<Self>) {
-        let Some(tab_id) = self.tab_id.as_deref() else {
-            return;
-        };
-        if self.run.is_none() {
-            return;
-        }
-        let ended = model
-            .read(cx)
-            .tab(tab_id)
-            .is_none_or(|t| !t.connected && !t.connecting);
-        if ended {
-            self.close(cx);
         }
     }
 }

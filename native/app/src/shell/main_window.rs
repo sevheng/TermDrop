@@ -151,7 +151,8 @@ impl MainWindow {
             AppEvent::Error(message) => toast(window, cx, message.clone(), ToastKind::Error),
             AppEvent::ActiveTabChanged(_)
             | AppEvent::HostsChanged
-            | AppEvent::FontSizeChanged(_) => {}
+            | AppEvent::FontSizeChanged(_)
+            | AppEvent::SettingChanged(_) => {}
         }
         cx.notify();
     }
@@ -455,7 +456,7 @@ impl MainWindow {
                         let factory = self.factory.clone();
                         let model = self.model.clone();
                         let tab_id = tab.id.clone();
-                        EmptyState::empty(
+                        EmptyState::error(
                             "sftp-failed",
                             "SFTP is not available",
                             "Retry",
@@ -546,8 +547,10 @@ impl Render for MainWindow {
         window.set_window_title(&title);
         let ui_font = theme::ui_font(cx);
 
+        let floating = self.factory.floating();
         v_flex()
             .id("main-window")
+            .relative()
             .size_full()
             .bg(p.canvas)
             .text_color(p.ink)
@@ -680,6 +683,17 @@ impl Render for MainWindow {
                                 ),
                         )
                     }),
+            )
+            // Panels' floating views (the SFTP editor): over the content,
+            // under the dialog and notification layers, which the root draws
+            // after this view. The layer itself takes no input.
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .children(floating),
             )
     }
 }

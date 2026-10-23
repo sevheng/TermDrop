@@ -5,15 +5,15 @@
 //! server without asking (size and mtime from `sftp_stat_file`, taken at
 //! load and after each save).
 //!
-//! It is drawn from inside the SFTP panel as a deferred, window-anchored
-//! overlay, so it hides with the panel and comes back with it, as the Vue
-//! editor did inside its `KeepAlive`. Deferred draws paint above the dialog
-//! layer, so the editor hides while a dialog is open (see `render`).
+//! It floats over the window (`PanelContext::float`): above the panels and
+//! terminals, below dialogs and notifications, so its own "Unsaved Changes"
+//! question appears over it. It draws nothing while its SFTP panel is not on
+//! screen, so it hides with the panel and comes back with it, as the Vue
+//! editor did inside its `KeepAlive`.
 
 use std::cell::Cell;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
 use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
@@ -22,7 +22,7 @@ use gpui_kit::{
     App, AppContext as _, Context, CursorStyle, DragMoveEvent, Empty, Entity, InteractiveElement,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
     SharedString, StatefulInteractiveElement as _, Styled, Subscription, Task, Window, anchored,
-    deferred, div, point, px,
+    div, point, px,
 };
 use termdrop_core::sftp::SftpStat;
 
@@ -125,8 +125,14 @@ impl FloatingEditor {
         self.doc.is_some()
     }
 
-    /// Ask before dropping unsaved changes; `then(true)` when the buffer may
-    /// go (it was clean, or the user said discard). `confirmDiscard`.
+    fn is_dirty(&self) -> bool {
+        self.doc.as_ref().is_some_and(|d| d.dirty)
+    }
+
+    /// Ask before dropping unsaved changes; `then(true)` when the user said
+    /// discard. `confirmDiscard`. Callers handle a clean buffer themselves,
+    /// without asking: `then` runs outside this view's update, and calling it
+    /// inside would update the view while it is already being updated.
     fn confirm_discard(
         &self,
         window: &mut Window,
@@ -167,6 +173,13 @@ impl FloatingEditor {
         cx: &mut Context<Self>,
         then: impl FnOnce(bool, &mut Window, &mut App) + 'static,
     ) {
+        if !self.is_dirty() {
+            self.close_now(cx);
+            // After this update: `then` may read the panel that is updating
+            // this view.
+            window.defer(cx, move |window, cx| then(true, window, cx));
+            return;
+        }
         let this = cx.entity().downgrade();
         self.confirm_discard(window, cx, move |yes, window, cx| {
             if yes {
@@ -191,6 +204,10 @@ impl FloatingEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.is_dirty() {
+            self.load(name, path, window, cx);
+            return;
+        }
         let this = cx.entity().downgrade();
         self.confirm_discard(window, cx, move |yes, window, cx| {
             if yes {
@@ -381,15 +398,13 @@ impl FloatingEditor {
 }
 
 impl Render for FloatingEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(doc) = self.doc.as_ref() else {
             return div().into_any_element();
         };
-        // A deferred overlay paints after everything else, the dialog layer
-        // included, so it would sit on top of its own "Unsaved Changes"
-        // question. Step aside while any dialog is open; the buffer, place
-        // and size are kept.
-        if window.has_active_dialog(cx) {
+        // Drawn by the window whatever is showing: hide with the panel. The
+        // buffer, place and size are kept.
+        if !self.ctx.is_shown(cx) {
             return div().into_any_element();
         }
         let p = *palette(cx);
@@ -552,8 +567,6 @@ impl Render for FloatingEditor {
             .child(footer)
             .child(grip);
 
-        deferred(anchored().position(origin).child(frame))
-            .with_priority(1)
-            .into_any_element()
+        anchored().position(origin).child(frame).into_any_element()
     }
 }

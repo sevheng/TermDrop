@@ -25,7 +25,7 @@ use std::rc::Rc;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::{
     App, ClipboardItem, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div,
     px,
@@ -157,7 +157,7 @@ pub fn open_host_key_dialog(
 
     window.open_dialog(cx, move |dialog, _, cx| {
         let p = *palette(cx);
-        let mono = cx.theme().mono_font_family.clone();
+        let mono = crate::ui::theme::mono_font(cx);
         let prompt = prompt.clone();
         let place = format!("{}:{}", prompt.host, prompt.port);
         let refused = !prompt.verdict.can_accept();
