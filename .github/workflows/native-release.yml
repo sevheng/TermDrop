@@ -1,0 +1,199 @@
+name: Native Preview Release
+
+# Packages the GPUI Kit app (native/) as "TermDrop Native Preview" and, for a
+# native-v* tag, publishes it as a GitHub prerelease. It is kept entirely apart
+# from the Tauri release (release.yml, tags v*):
+#
+# - native-v* tags do not match release.yml's v* filter, and v* tags do not
+#   match this one.
+# - The release is a prerelease with make_latest false, so GitHub's
+#   releases/latest, which the Tauri updater's latest.json is fetched from,
+#   keeps pointing at the Tauri release.
+# - Nothing here writes a latest.json or an updater signature; a step fails
+#   the run if either turns up among the files.
+#
+# workflow_dispatch builds and uploads the packages as workflow artifacts only,
+# with no release, to test packaging without a tag. See native/RELEASING.md.
+on:
+  push:
+    tags:
+      - 'native-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            label: macos-aarch64
+            formats: app,dmg
+          - platform: windows-2022
+            label: windows-x64
+            # NSIS, not WiX: an MSI needs a purely numeric version and the
+            # preview's is 0.6.0-preview.N.
+            formats: nsis
+          - platform: ubuntu-22.04
+            label: linux-x64
+            formats: deb,appimage
+    runs-on: ${{ matrix.platform }}
+    env:
+      # linuxdeploy is an AppImage itself; run it without FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: native-release
+
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libdbus-1-dev libgtk-3-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev \
+            libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libzstd-dev \
+            libfuse2 file
+
+      - name: Read the version
+        id: version
+        run: |
+          # [workspace.package] version, the only top-level `version =` line.
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not read the version from native/Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Packaging TermDrop Native Preview $version"
+
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "native-v${{ steps.version.outputs.version }}" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version ${{ steps.version.outputs.version }} (expected native-v${{ steps.version.outputs.version }}). Bump native/Cargo.toml or fix the tag."
+            exit 1
+          fi
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build
+        run: cargo build --release --locked -p termdrop-gpui
+
+      # No signing key is passed, so nothing is signed: no updater .sig files.
+      - name: Package
+        run: cargo packager --release -p termdrop-gpui --formats ${{ matrix.formats }} --out-dir "$GITHUB_WORKSPACE/dist"
+
+      - name: Check the MongoDB tools are inside
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -la
+          case "${{ runner.os }}" in
+            macOS)
+              app="TermDrop Native Preview.app"
+              test -x "$app/Contents/MacOS/termdrop-native"
+              test -x "$app/Contents/Resources/mongodump"
+              test -x "$app/Contents/Resources/mongorestore"
+              ;;
+            Windows)
+              listing=$(7z l ./*.exe)
+              grep -q 'mongodump.exe' <<<"$listing"
+              grep -q 'mongorestore.exe' <<<"$listing"
+              grep -q 'termdrop-native.exe' <<<"$listing"
+              ;;
+            Linux)
+              listing=$(dpkg-deb -c ./*.deb)
+              grep -Eq '(^| |\./)usr/lib/termdrop-native/mongodump$' <<<"$listing"
+              grep -Eq '(^| |\./)usr/lib/termdrop-native/mongorestore$' <<<"$listing"
+              dpkg-deb -f ./*.deb Package Version Depends
+              appimage=$(ls ./*.AppImage)
+              chmod +x "$appimage"
+              (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$appimage" --appimage-extract >/dev/null)
+              test -x "$RUNNER_TEMP/squashfs-root/usr/lib/termdrop-native/mongodump"
+              test -x "$RUNNER_TEMP/squashfs-root/usr/lib/termdrop-native/mongorestore"
+              ;;
+          esac
+
+      # One flat folder of the files to ship, with no spaces in their names
+      # (GitHub would turn them into dots). The .app goes out inside the dmg.
+      - name: Collect
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          for f in *.dmg *.exe *.deb *.AppImage; do
+            [[ -f "$f" ]] || continue
+            cp "$f" "$GITHUB_WORKSPACE/out/${f// /-}"
+          done
+          ls -la "$GITHUB_WORKSPACE/out"
+          if ls "$GITHUB_WORKSPACE/out" | grep -Eiq 'latest\.json|\.sig$'; then
+            echo "::error::An updater manifest or signature was produced; the preview must not ship one."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termdrop-native-preview-${{ steps.version.outputs.version }}-${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/native-v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Prepare
+        id: prep
+        run: |
+          set -euo pipefail
+          ls -la out
+          if ls out | grep -Eiq 'latest\.json|\.sig$'; then
+            echo "::error::An updater manifest or signature reached the release; refusing to publish."
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#native-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create the prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: TermDrop Native Preview ${{ steps.prep.outputs.version }}
+          prerelease: true
+          make_latest: false
+          draft: false
+          fail_on_unmatched_files: true
+          files: out/*
+          body: |
+            **This is a preview of TermDrop's new native app (GPUI), not the regular TermDrop release.** For the regular app, use the latest release that is not marked *Pre-release*.
+
+            - **It installs beside TermDrop, not over it.** It is a separate app, "TermDrop Native Preview" (`com.termdrop.native-preview`), with its own install folder, Start menu entry and uninstaller. Your installed TermDrop is not touched.
+            - **It shares your data with TermDrop.** Hosts, saved passwords (the same keyring entries), settings and trusted host keys are the same ones. Neither app notices changes the other makes while both are open, so use one app at a time, especially when editing hosts.
+            - **No auto-update.** The preview never updates itself, and the TermDrop updater never offers it. Download each new preview from this page.
+            - **Not ported yet:** the Tunnels (port forwarding) panel. Use TermDrop for tunnels.
+            - **Unsigned builds.** As with the TermDrop builds, macOS Gatekeeper and Windows SmartScreen will warn. On macOS, right-click the app and choose Open (or run `xattr -dr com.apple.quarantine "/Applications/TermDrop Native Preview.app"`); on Windows, choose More info, then Run anyway.
+
+            Downloads: macOS (Apple silicon) `.dmg`; Windows `.exe` installer (per user, no admin needed); Linux `.AppImage` or `.deb` (package `termdrop-native-preview`).
